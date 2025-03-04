@@ -128,7 +128,7 @@ if __name__ == "__main__":
     if args.backend == "rascil":
         backend = SimulatorBackend.RASCIL
         from karabo.simulation.telescope import RASCILTelescopes
-        teslescope_types = get_args(RASCILTelescopes)
+        telescope_types = get_args(RASCILTelescopes)
         if args.telescope in telescope_types:
             telescope = Telescope.constructor(args.telescope)
         else:
