@@ -1,0 +1,19 @@
+#######################
+# From scratch        #
+#######################
+get https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh
+source ~/miniconda3/bin/activate
+conda init bash
+conda install -n base conda-libmamba-solver
+# setup virtual environment
+conda create -n karabo python=3.9
+conda activate karabo
+conda config --env --set solver libmamba
+conda config --env --set channel_priority true
+# install karabo
+conda install -c nvidia/label/cuda-11.7.0 -c i4ds -c conda-forge karabo-pipeline
+conda install matplotlib astropy numpy
+pip install git+https://github.com/i4Ds/Karabo-Pipeline.git
+pip install --upgrade pip setuptools wheel
+pip install git+https://gitlab.com/ska-telescope/external/rascil.git
