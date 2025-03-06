@@ -7,13 +7,32 @@ source ~/miniconda3/bin/activate
 conda init bash
 conda install -n base conda-libmamba-solver
 # setup virtual environment
-conda create -n karabo python=3.9
+conda create -n karabo python=3.9.21
 conda activate karabo
-conda config --env --set solver libmamba
-conda config --env --set channel_priority true
 # install karabo
-conda install -c nvidia/label/cuda-11.7.0 -c i4ds -c conda-forge karabo-pipeline
-conda install matplotlib astropy numpy
-pip install git+https://github.com/i4Ds/Karabo-Pipeline.git
+conda config --add channels ids4
+conda config --add  nvidia/label/cuda-11.7.0 
+conda install karabo-pipeline
+
+
+#### RASCIL ####
+# Ensure CMake is installed
+apt install cmake   # Debian/Ubuntu style
+#dnf install cmake   # Redhat style
 pip install --upgrade pip setuptools wheel
 pip install git+https://gitlab.com/ska-telescope/external/rascil.git
+
+#### OSKAR ####
+wget https://github.com/OxfordSKA/OSKAR/archive/refs/tags/2.8.3.tar.gz
+tar vxfz 2.8.3.tar.gz
+cd OSKAR-2.8.3
+mkdir build && cd build
+mkdir ~/oskar-bin 2> /dev/null
+cmake -DCMAKE_INSTALL_PREFIX=~/oskar-bin -DFIND_CUDA=OFF ../
+make -j8
+make install
+export OSKAR_INC_DIR=~/oskar-bin/include
+export OSKAR_LIB_DIR=~/oskar-bin/lib
+pip install --use-pep517 'git+https://github.com/OxfordSKA/OSKAR.git@master#egg=oskarpy&subdirectory=python
+pip install ska-sdp-datamodels --extra-index-url https://artefact.skao.int/repository/pypi-internal/simple
+
