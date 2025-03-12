@@ -176,3 +176,5 @@ cython_debug/
 index.sh
 index.html
 **.fits
+
+**/simulations/

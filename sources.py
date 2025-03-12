@@ -95,16 +95,6 @@ def calculate_lst(longitude, latitude, observation_time_local):
         "Dec_zenith": latitude
     }
 
-# Example usage
-longitude = 116.76444824  # degrees East
-latitude = -26.82472208   # degrees South
-observation_time_local = "2025-03-06 23:59:00"  # Local time at the telescope
-
-result = calculate_lst(longitude, latitude, observation_time_local)
-print(f"Local Sidereal Time (LST): {result['LST']} h")
-print(f"RA of the zenith: {result['RA_zenith']:.4f}°")
-print(f"Dec of the zenith: {result['Dec_zenith']:.4f}°")
-
 
 
 if __name__ == "__main__":
@@ -206,6 +196,8 @@ if __name__ == "__main__":
                 y0 = result["Dec_zenith"]
                 sky_data[:, 0] += x0
                 sky_data[:, 1] += y0
+                points = [(x, y) for x, y, _ in sky_data]
+                x0, y0 = optimal_manhattan_point(points)
 
             
         elif (args.asksrc):
