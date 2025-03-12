@@ -162,6 +162,9 @@ def simulation(request):
         maxflux = float(request.POST.get('maxflux', 10))
         observation_time_local = request.POST.get('observation_time_local', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         observation_time_local = datetime.strptime(observation_time_local, '%Y-%m-%d %H:%M:%S')
+        cleaned = request.POST.get('cleaned', 'off')
+        printlog(cleaned, t0)
+        cleaned = cleaned == 'on'
 
         # add current path to the output file
         # fout = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'simulations' , fout)
@@ -232,7 +235,7 @@ def simulation(request):
 
         # Get current path
         current_path = os.path.dirname(os.path.realpath(__file__))
-        visibility_path = os.path.join(current_path,"aux.MS") # path to the visibility file; if you use the WSCLEAN backend, the path must be absolute
+        visibility_path = os.path.join(current_path, 'MSDIRS', f"{uuid_simulation}.MS") # path to the visibility file; if you use the WSCLEAN backend, the path must be absolute
         simulation.run_simulation(telescope, sky, observation, visibility_path=visibility_path)
         visibilities = Visibility(visibility_path)
 
@@ -281,6 +284,43 @@ def simulation(request):
         #     with open(fout.replace(".png", "_sources.json"), "w") as f:
         #         f.write(json.dumps(json_data, indent=4))
         #     printlog (f"Saved sources to {fout.replace('.png', '_sources.json')}", t0)
+        printlog(cleaned, t0)
+        if cleaned:
+            printlog ("Cleaning the image...", t0)
+            if backend_name.lower() in ["rascil", "all"]:
+                try:
+                    deconvolved, restored, residual = RascilImageCleaner(
+                        RascilImageCleanerConfig(
+                            imaging_npixel=imaging_npixel,
+                            imaging_cellsize=imaging_cellsize,
+                            ingest_vis_nchan=1,
+                            # clean_nmajor=1,
+                            # clean_algorithm="mmclean",
+                            # clean_scales=[10, 30, 60],
+                            clean_threshold=0.12e-3,
+                            clean_nmoment=5,
+                            # clean_psf_support=640,
+                            clean_restored_output="integrated",
+                            use_dask=False,
+                        )
+                    ).create_cleaned_image(visibilities)
+                    restored.plot(title=f"Cleaned image (RASCIL) {backend_name.upper()} ({telescope.name.upper()})", filename=fout.replace(".png", "_cleaned.png"), wcs_enabled=True, xlabel='RA', ylabel='DEC')
+                    printlog (f"Saved cleaned image to {fout.replace('.png', '_cleaned.png')}", t0)
+                except Exception as e:
+                    printlog (f"Error cleaning the image: {e}", t0)
+                    printlog ("Using WSCLEAN instead", t0)
+                    config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=imaging_cellsize)
+                    cleaner = WscleanImageCleaner(config)
+                    cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path=fout.replace(".png", "_wccleaned.fits"))
+                    cleaned.plot(title=f"Cleaned image (WSCLEAN) {args.backend.upper()} ({telescope.name.upper()})", filename=fout.replace(".png", "_cleaned.png"), wcs_enabled=True, xlabel='RA', ylabel='DEC')
+                    printlog (f"Saved cleaned image to {fout.replace('.png', '_cleaned.png')}", t0)
+            if backend_name.lower() in ["oskar", "all", "wsclean"]:
+                printlog ("Cleaning not supported for OSKAR, using WSCLEAN", t0)
+                config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=imaging_cellsize)
+                cleaner = WscleanImageCleaner(config)
+                cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path=fout.replace(".png", "_wccleaned.fits"))
+                cleaned.plot(title=f"Cleaned image (WSCLEAN) {backend_name.upper()} ({telescope.name.upper()})", filename=fout.replace(".png", "_cleaned.png"), wcs_enabled=True, xlabel='RA', ylabel='DEC')
+                printlog (f"Saved cleaned image to {fout.replace('.png', '_cleaned.png')}", t0)
 
         image1 = os.path.join('static','simulations', uuid_simulation, os.path.basename(fout))
         image2 = os.path.join('static','simulations', uuid_simulation, os.path.basename(fout.replace(".png", "_sources.png")))
