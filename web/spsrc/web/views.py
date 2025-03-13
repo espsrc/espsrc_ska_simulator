@@ -1,7 +1,7 @@
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
-# import BASE_DIR from settings
 from django.conf import settings
+from django.views.decorators.csrf import csrf_exempt
 
 import os
 def show_exc(exception):
@@ -129,7 +129,8 @@ def index(request):
         return render(request, 'web/index.html', {'telescopes_oskar': telescopes_oskar, 'telescopes_rascil': telescopes_rascil, 'backend_names': backend_names})
     except Exception as e:
         return render(request, 'exception.html', {'msg': show_exc(e)})
-    
+
+@csrf_exempt
 def simulation(request):
     error = True
     image1 = None
@@ -146,6 +147,10 @@ def simulation(request):
         N_srcs = int(request.POST.get('N_srcs', 5))
         rms = float(request.POST.get('rms', 0))
         pixel = float(request.POST.get('pixel', 0.5))
+        tofits = (request.POST.get('tofits', 'off') == 'on')
+
+
+
         # cfg is a JSON File with the configuration (FILE input type)
         cfg = request.FILES.get('cfg', None)
         if cfg:
@@ -153,25 +158,19 @@ def simulation(request):
         else:
             pass
 
-        fout = request.POST.get('fout', f'sim{time.time():.0f}.png')
-        if not fout:
-            fout = f'sim{time.time():.0f}.png'
-        if not fout.endswith('.png'):
-            fout += '.png'
     
         maxflux = float(request.POST.get('maxflux', 10))
         observation_time_local = request.POST.get('observation_time_local', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         observation_time_local = datetime.strptime(observation_time_local, '%Y-%m-%d %H:%M:%S')
         cleaned = request.POST.get('cleaned', 'off')
-        printlog(cleaned, t0)
         cleaned = cleaned == 'on'
 
-        # add current path to the output file
-        # fout = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'simulations' , fout)
         uuid_simulation = str(uuid.uuid4())
         folder_name = os.path.join(settings.BASE_DIR, 'static', 'simulations', uuid_simulation)
+        dirty_path = os.path.join(folder_name, "dirty.png")
+        sources_path = os.path.join(folder_name, "sources.png")
+        cleaned_path = os.path.join(folder_name, "cleaned.png")
         os.makedirs(folder_name, exist_ok=True)
-        fout = os.path.join(folder_name, fout)
 
         if backend_name.lower() == "rascil":
             backend = SimulatorBackend.RASCIL
@@ -228,7 +227,7 @@ def simulation(request):
         
         sky = SkyModel(wcs=wcs)
         sky.add_point_sources(sky_data)
-        sky.explore_sky([x0, y0],wcs=wcs, filename=fout.replace(".png", "_sources.png"), xlabel='RA', ylabel='DEC', vmin=0)
+        sky.explore_sky([x0, y0],wcs=wcs, filename=sources_path, xlabel='RA', ylabel='DEC', vmin=0)
 
         # run a single simulation with the provided configuration 
         simulation = InterferometerSimulation()
@@ -266,8 +265,8 @@ def simulation(request):
             dirty.data[0] += noise_matrix
 
 
-        printlog(f"Saving dirty image to {fout}", t0)
-        dirty.plot(title=f"Dirty image {backend_name.upper()} ({telescope.name.upper()})", filename=fout, wcs_enabled=True, xlabel='RA', ylabel='DEC', vmax=maxflux * 1.05, vmin=0)
+        printlog(f"Saving dirty image to dirty.png", t0)
+        dirty.plot(title=f"Dirty image {backend_name.upper()} ({telescope.name.upper()})", filename=dirty_path, wcs_enabled=True, xlabel='RA', ylabel='DEC', vmax=maxflux * 1.05, vmin=0)
 
         printlog (f"Sky Model with {len(sky_data)} sources", t0)
         printlog (f"Optimal phase center: {x0}, {y0}", t0)
@@ -284,7 +283,7 @@ def simulation(request):
         #     with open(fout.replace(".png", "_sources.json"), "w") as f:
         #         f.write(json.dumps(json_data, indent=4))
         #     printlog (f"Saved sources to {fout.replace('.png', '_sources.json')}", t0)
-        printlog(cleaned, t0)
+
         if cleaned:
             printlog ("Cleaning the image...", t0)
             if backend_name.lower() in ["rascil", "all"]:
@@ -304,34 +303,50 @@ def simulation(request):
                             use_dask=False,
                         )
                     ).create_cleaned_image(visibilities)
-                    restored.plot(title=f"Cleaned image (RASCIL) {backend_name.upper()} ({telescope.name.upper()})", filename=fout.replace(".png", "_cleaned.png"), wcs_enabled=True, xlabel='RA', ylabel='DEC')
-                    printlog (f"Saved cleaned image to {fout.replace('.png', '_cleaned.png')}", t0)
+                    restored.plot(title=f"Cleaned image (RASCIL) {backend_name.upper()} ({telescope.name.upper()})", filename=cleaned_path, wcs_enabled=True, xlabel='RA', ylabel='DEC')
+                    printlog (f"Saved cleaned image to cleaned.png", t0)
                 except Exception as e:
                     printlog (f"Error cleaning the image: {e}", t0)
                     printlog ("Using WSCLEAN instead", t0)
                     config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=imaging_cellsize)
                     cleaner = WscleanImageCleaner(config)
-                    cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path=fout.replace(".png", "_wccleaned.fits"))
-                    cleaned.plot(title=f"Cleaned image (WSCLEAN) {args.backend.upper()} ({telescope.name.upper()})", filename=fout.replace(".png", "_cleaned.png"), wcs_enabled=True, xlabel='RA', ylabel='DEC')
-                    printlog (f"Saved cleaned image to {fout.replace('.png', '_cleaned.png')}", t0)
+                    if (tofits):
+                        cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path="wscleaned.fits")
+                    else:
+                        cleaned = cleaner.create_cleaned_image(visibilities)
+                    cleaned.plot(title=f"Cleaned image (WSCLEAN) {backend_name.upper()} ({telescope.name.upper()})", filename=cleaned_path, wcs_enabled=True, xlabel='RA', ylabel='DEC')
+                    printlog (f"Saved cleaned image to cleaned.png", t0)
             if backend_name.lower() in ["oskar", "all", "wsclean"]:
                 printlog ("Cleaning not supported for OSKAR, using WSCLEAN", t0)
                 config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=imaging_cellsize)
                 cleaner = WscleanImageCleaner(config)
-                cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path=fout.replace(".png", "_wccleaned.fits"))
-                cleaned.plot(title=f"Cleaned image (WSCLEAN) {backend_name.upper()} ({telescope.name.upper()})", filename=fout.replace(".png", "_cleaned.png"), wcs_enabled=True, xlabel='RA', ylabel='DEC')
-                printlog (f"Saved cleaned image to {fout.replace('.png', '_cleaned.png')}", t0)
+                if (tofits):
+                    cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path="wccleaned.fits")
+                else:
+                    cleaned = cleaner.create_cleaned_image(visibilities)
+                
+                cleaned.plot(title=f"Cleaned image (WSCLEAN) {backend_name.upper()} ({telescope.name.upper()})", filename=cleaned_path, wcs_enabled=True, xlabel='RA', ylabel='DEC')
+                printlog (f"Saved cleaned image to cleaned.png", t0)
 
-        image1 = os.path.join('static','simulations', uuid_simulation, os.path.basename(fout))
-        image2 = os.path.join('static','simulations', uuid_simulation, os.path.basename(fout.replace(".png", "_sources.png")))
-        image3 = os.path.join('static','simulations', uuid_simulation, os.path.basename(fout.replace(".png", "_cleaned.png")))
+        image1 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "dirty.png")
+        image2 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "sources.png")
+        image3 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "cleaned.png")
+        
 
-
-        return JsonResponse({'error': False, 'error_msg': 'Ok', 'image1': image1, 'image2': image2, 'image3': image3})
+        return JsonResponse({'error': False, 'error_msg': 'Ok', 'image1': image1, 'image2': image2, 'image3': image3, 'uuid': uuid_simulation}) 
     except Exception as e:
         return JsonResponse({'error': True, 'error_msg': show_exc(e)})
 
-
-    return JsonResponse({'error': True, 'error_msg': 'Ok', 'image1': image1, 'image2': image2, 'image3': image3})
-    return HttpResponse("Hello, world. You're at the simulation page.")
-    return render(request, 'web/simulation.html')
+@csrf_exempt
+def load(request):
+    try:
+        uuid_simulation = request.POST.get('uuid', None)
+        if uuid_simulation:
+            image1 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "dirty.png")
+            image2 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "sources.png")
+            image3 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "cleaned.png")
+            return JsonResponse({'error': False, 'error_msg': 'Ok', 'image1': image1, 'image2': image2, 'image3': image3, 'uuid': uuid_simulation}) 
+        else:
+            return JsonResponse({'error': True, 'error_msg': 'UUID not found'})
+    except Exception as e:
+        return JsonResponse({'error': True, 'error_msg': show_exc(e)})
