@@ -1,5 +1,5 @@
 from django.http import HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 
@@ -120,7 +120,7 @@ def calculate_lst(longitude, latitude, observation_time_local):
     }
 
 
-def index(request):
+def index(request, json_data=None):
     try:
         telescopes_rascil = get_args(RASCILTelescopes)
         telescopes_oskar = get_args(OSKARTelescopesWithoutVersionType) # + get_args(OSKARTelescopesWithVersionType)
@@ -144,19 +144,21 @@ def simulation(request):
         telescope_name = request.POST.get('telescope')
         backend_name = request.POST.get('backend')
         fov = float(request.POST.get('fov', 20))
-        N_srcs = int(request.POST.get('N_srcs', 5))
+        ra_list = request.POST.getlist('ra[]', None)
+        dec_list = request.POST.getlist('dec[]', None)
+        flux_list = request.POST.getlist('flux[]', None)
+        frequency = float(request.POST.get('freq', 1))
+
+        if not (ra_list and dec_list and flux_list):
+            N_srcs = int(request.POST.get('N_srcs', 5))
+        else:
+            N_srcs = len(ra_list)
+            ra_list = [float(x) for x in ra_list]
+            dec_list = [float(x) for x in dec_list]
+            flux_list = [float(x) for x in flux_list]
         rms = float(request.POST.get('rms', 0))
         pixel = float(request.POST.get('pixel', 0.5))
         tofits = (request.POST.get('tofits', 'off') == 'on')
-
-
-
-        # cfg is a JSON File with the configuration (FILE input type)
-        cfg = request.FILES.get('cfg', None)
-        if cfg:
-            cfg = cfg.read().decode('utf-8')
-        else:
-            pass
 
     
         maxflux = float(request.POST.get('maxflux', 10))
@@ -170,6 +172,7 @@ def simulation(request):
         dirty_path = os.path.join(folder_name, "dirty.png")
         sources_path = os.path.join(folder_name, "sources.png")
         cleaned_path = os.path.join(folder_name, "cleaned.png")
+        cfg_path = os.path.join(folder_name, "cfg.json")
         os.makedirs(folder_name, exist_ok=True)
 
         if backend_name.lower() == "rascil":
@@ -191,19 +194,27 @@ def simulation(request):
                 telescope = Telescope.constructor("LOFAR", backend=backend)
         printlog (f"Telescope loaded: {telescope.name.upper()}", t0)
 
-        printlog (f"Generating {N_srcs} random sources", t0)
         limit = fov/2
         result = calculate_lst(telescope.centre_longitude, telescope.centre_latitude, observation_time_local.strftime("%Y-%m-%d %H:%M:%S"))
         x0 = result["RA_zenith"]
         y0 = result["Dec_zenith"]
         # Random sources [x0, y0, flux]; x0, y0 is the limited between -20, 20. Flux is limited between [0.1, 10] 
-        sky_data = np.random.rand(N_srcs, 3) * 2*limit - limit
-        sky_data[:, 2] = ((sky_data[:, 2] + limit) / (2*limit)) * (maxflux - 0.1) + 0.1
-        sky_data[:, 0] += x0
-        sky_data[:, 1] += y0
+        if ra_list and dec_list and flux_list:
+            sky_data = np.zeros((N_srcs, 3))
+            for i in range(N_srcs):
+                sky_data[i, 0] = (x0 * int(request.POST.get("position"),0)) +   ra_list[i]
+                sky_data[i, 1] = (y0 * int(request.POST.get("position"),0)) + dec_list[i]
+                sky_data[i, 2] = flux_list[i]
+            # Check if the sources are in the field of view
+        else:
+            printlog (f"Generating {N_srcs} random sources", t0)
+            sky_data = np.random.rand(N_srcs, 3) * 2*limit - limit
+            sky_data[:, 2] = ((sky_data[:, 2] + limit) / (2*limit)) * (maxflux - 0.1) + 0.1
+            sky_data[:, 0] += x0
+            sky_data[:, 1] += y0
 
         observation = Observation(
-            start_frequency_hz=1e6,
+            start_frequency_hz=frequency * 1e6,
             start_date_and_time=observation_time_local,
             phase_centre_ra_deg = x0,
             phase_centre_dec_deg = y0,
@@ -278,7 +289,11 @@ def simulation(request):
         sources = []
         for i, src in enumerate(sky_data):
             sources.append({"ra": src[0], "dec": src[1], "flux": src[2], "mute":False, "name":f"source_{i:03}"})
-        json_data = {"sources": sources, "phase_center": {"ra": x0, "dec": y0}, "observation_date": observation_time_local.strftime("%Y-%m-%d %H:%M:%S")}
+        json_data = {"sources": sources, "phase_center": {"ra": x0, "dec": y0}, "observation_date": observation_time_local.strftime("%Y-%m-%d %H:%M:%S"), "frequency": frequency, "fov": fov, "pixel": pixel, "telescope": telescope_name, "backend": backend_name, "simulation": uuid_simulation, "rms": rms, "cleaned": cleaned}
+        with open(cfg_path, "w") as f:
+            f.write(json.dumps(json_data, indent=4))
+        printlog (f"Saved configuration file to {cfg_path}", t0)
+
         # if (cfg is None):
         #     with open(fout.replace(".png", "_sources.json"), "w") as f:
         #         f.write(json.dumps(json_data, indent=4))
@@ -327,10 +342,15 @@ def simulation(request):
                 
                 cleaned.plot(title=f"Cleaned image (WSCLEAN) {backend_name.upper()} ({telescope.name.upper()})", filename=cleaned_path, wcs_enabled=True, xlabel='RA', ylabel='DEC')
                 printlog (f"Saved cleaned image to cleaned.png", t0)
+            image3 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "cleaned.png")
+        else:
+            printlog ("Cleaning not requested", t0)
+            image3 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "dirty.png")
+
+
 
         image1 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "dirty.png")
         image2 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "sources.png")
-        image3 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "cleaned.png")
         
 
         return JsonResponse({'error': False, 'error_msg': 'Ok', 'image1': image1, 'image2': image2, 'image3': image3, 'uuid': uuid_simulation}) 
@@ -350,3 +370,22 @@ def load(request):
             return JsonResponse({'error': True, 'error_msg': 'UUID not found'})
     except Exception as e:
         return JsonResponse({'error': True, 'error_msg': show_exc(e)})
+
+@csrf_exempt
+def upload_config(request):
+    try:
+        if request.method == 'POST':
+            # Get the uploaded file
+            uploaded_json_file = request.FILES['cfg']
+            # Save the file to a temporary location
+            json_data = json.loads(uploaded_json_file.read().decode('utf-8'))
+            sources = json_data['sources']
+            #send json_data to index as post
+            json_data = json.dumps(json_data)
+            return JsonResponse({'error': False, 'error_msg': 'Ok', 'json_data': json_data})
+
+        elif request.method == 'GET':
+            return JsonResponse({'error': True, 'error_msg': 'GET method not allowed'})
+    except Exception as e:
+        return JsonResponse({'error': True, 'error_msg': show_exc(e)})
+    
