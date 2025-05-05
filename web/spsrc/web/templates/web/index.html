@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Observation Form</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
         body {
@@ -16,7 +17,7 @@
             display: flex;
         }
         .form-section {
-            width: 40%;
+            width: 50%;
             padding: 20px;
             background-color: #ffffff;
             box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
@@ -31,7 +32,7 @@
         }
 
         .image-section {
-            width: 60%;
+            width: 50%;
             display: flex;
             flex-direction: column;
             padding: 20px;
@@ -62,169 +63,248 @@
             background-color: rgba(255, 255, 255, 0.8);
             display: none;
         }
+        .header-section {
+
+            background: linear-gradient(135deg, #0b0b23 60%, #8a005a);
+            background-color: #ffffff;
+            box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+
+        }
     </style>
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
+    <div class="row header-section">
+        <div class="col-12 p-2">
+            <img src="{% static 'images/logo-dia.svg' %}" alt="SKAO Logo" class="img-fluid d-block p-2" width="200" >
+        </div>
+    </div>
+    <div class="row content">
+        <div class="container">
 
-<div class="container">
-    <!-- Form Section -->
-    <div class="form-section">
-        <div class="row">
-            <div class="col-12 mb-3">
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="card-title">Configuration File</h5>
-                        <p class="card-text">Upload a configuration file to simulate an observation.</p>
-                    </div>
-                    <div class="card-body">
-                        <form id="configForm" method="POST" enctype="multipart/form-data" action="{% url 'upload-config' %}">
-                            {% csrf_token %}
-                            <div class="mb-3">
-                                <label for="configFile" class="form-label">Configuration File</label>
-                                <input type="file" class="form-control" id="configFile" name="cfg">
+            <!-- Form Section -->
+            <div class="form-section">
+                <div class="row">
+                    <div class="col-12 mb-3">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title">Configuration File</h5>
+                                <p class="card-text">Upload a configuration file to simulate an observation.</p>
                             </div>
-                            <button type="submit" class="btn btn-primary w-100">Upload</button>
+                            <div class="card-body">
+                                <form id="configForm" method="POST" enctype="multipart/form-data" action="{% url 'upload-config' %}">
+                                    {% csrf_token %}
+                                    <div class="mb-3">
+                                        <label for="configFile" class="form-label">Configuration File</label>
+                                        <input type="file" class="form-control" id="configFile" name="cfg">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary w-100">Upload</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <form id="observationForm" method="POST" enctype="multipart/form-data" action="{% url 'simulation' %}">
+                            {% csrf_token %}
+                            <div class="card mb-3">
+                                <div class="card-header">
+                                    <h5 class="card-title">Sources</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3" id="sources-list">
+                                        <div class="row mb-3">
+                                            <div class="col">
+                                                <label for="ra" class="form-label">RA</label>
+                                            </div>
+                                            <div class="col">
+                                                <label for="dec" class="form-label">Dec</label>
+                                            </div>
+                                            <div class="col">
+                                                <label for="flux" class="form-label">Flux</label>
+                                            </div>
+                                            <div class="col">
+                                                <label for="flux" class="form-label">Q</label>
+                                            </div>
+                                            <div class="col">
+                                                <label for="flux" class="form-label">U</label>
+                                            </div>
+                                            <div class="col">
+                                                <label for="flux" class="form-label">V</label>
+                                            </div>
+                                            <div class="col-2">
+                                                <label for="position" class="form-label">Position</label>
+                                            </div>
+                                            <div class="col">
+                                                &nbsp;
+                                            </div>
+        
+                                        </div>
+                                        <div class="row mb-3" id="add-source">
+                                            <button type="button" class="btn btn-secondary m-1 col" id="btn-add-source">Add Source</button>
+                                            <button type="button" class="btn btn-secondary m-1 col" id="btn-remove-source">Remove All Sources</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5 class="card-title">Observation Form</h5>
+                                    <p class="card-text">Fill the form to simulate an observation.</p>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3 row">
+                                        <div class="col-5">
+                                            <label for="backend" class="form-label">Backend</label>
+                                            <select class="form-select" id="backend" name="backend" required>
+                                                {% for option in backend_names %}
+                                                    <option value="{{ option }}">{{ option }}</option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+                                        <div class="col-5">
+                                            <label for="telescope" class="form-label">Telescope</label>
+                                            <select class="form-select" id="telescope" required name="telescope">
+                                            </select>
+                                        </div>
+                                        <div class="col-2">
+                                            <label for="cleaned" class="form-label">Clean Image</label>
+                                            <select class="form-select" id="cleaned" name="cleaned">
+                                                <option value="off">No</option>
+                                                <option value="on">Yes</option>
+                                            </select>
+                                        </div>
+                                    </div>
+        
+        
+                                    
+                                    {% comment %} <div class="mb-3">
+                                        <label for="version" class="form-label">Version</label>
+                                        <select class="form-select" id="version" required>
+                                            <option value="">Select...</option>
+                                            <option value="v1">v1</option>
+                                            <option value="v2">v2</option>
+                                            <option value="v3">v3</option>
+                                        </select>
+                                    </div> {% endcomment %}
+        
+        
+                                    <div class="mb-3 row">
+                                        <div class="col-4">
+                                            <label for="pixel" class="form-label">Pixel Size (arcseconds)</label>
+                                            <input type="number" class="form-control" id="pixel" step="0.01" required name="pixel" value="1">
+                                        </div>
+        
+                                        <div class="col-4">
+                                            <label for="frequency" class="form-label">Frequency (MHz)</label>
+                                            <input type="number" class="form-control" id="frequency" step="0.001" required name="freq" value=1>
+                                        </div>
+        
+                                        <div class="col-4">
+                                            <label for="numSources" class="form-label">Number of Sources</label>
+                                            <input type="number" class="form-control" id="N_srcs" required name="N_srcs">
+                                        </div>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary w-100">Simulate</button>
+                                </div>
+                            </div>
                         </form>
+        
+                    </div>
+                    <div class="col-12">
+                        <div class="card mt-3">
+                            <div class="card-header">
+                                <h5 class="card-title">Load previous simulation</h5>
+                            </div>
+                            <div class="card-body">
+                                <form method="POST" action="{% url 'load' %}" id="form-load">
+                                    {% csrf_token %}
+                                    <div class="mb-3">
+                                        <label for="uuid" class="form-label">Simulation UUID</label>
+                                        <input type="text" class="form-control" id="uuid" name="uuid" required>
+        
+                                    </div>
+                                    <button type="submit" class="btn btn-primary w-100">Load</button>
+                                </form>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
-            <div class="col-12">
-                <form id="observationForm" method="POST" enctype="multipart/form-data" action="{% url 'simulation' %}">
-                    {% csrf_token %}
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            <h5 class="card-title">Sources</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="mb-3" id="sources-list">
-                                <div class="row mb-3">
-                                    <div class="col-4">
-                                        <label for="ra" class="form-label">RA</label>
-                                    </div>
-                                    <div class="col-4">
-                                        <label for="dec" class="form-label">Dec</label>
-                                    </div>
-                                    <div class="col-4">
-                                        <label for="flux" class="form-label">Flux</label>
-                                    </div>
-                                </div>
-                                <button type="button" class="btn btn-secondary mt-3" id="add-source">Add Source</button>
-                            </div>
-                        </div>
+        
+            <!-- Image Section -->
+            <div class="image-section">
+                <div id="imageContainer">
+                    <h2 class="text-center" id="btn-download-div" style="display:none;"><a href="#" class="btn btn-secondary" id="btn-download">Download Config File</a></h2>
+                    <h2 class="text-center">Simulation Images</h2>
+                    <h3 class="text-center" id="uuid-label"></h3>
+                    <img src="{% static 'images/skao-logo.png' %}" class="top-image" alt="Main Image" width="100%">
+                    <div class="bottom-images">
+                        <img src="{% static 'images/skao-logo.png' %}" alt="Image 1" width="100%">
+                        <img src="{% static 'images/skao-logo.png' %}" alt="Image 2" width="100%" >
                     </div>
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title">Observation Form</h5>
-                            <p class="card-text">Fill the form to simulate an observation.</p>
-                        </div>
-                        <div class="card-body">
-                            <div class="mb-3">
-                                <label for="backend" class="form-label">Backend</label>
-                                <select class="form-select" id="backend" name="backend" required>
-                                    {% for option in backend_names %}
-                                        <option value="{{ option }}">{{ option }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-
-                            <div class="mb-3">
-                                <label for="telescope" class="form-label">Telescope</label>
-                                <select class="form-select" id="telescope" required name="telescope">
-                                </select>
-                            </div>
-                            
-                            {% comment %} <div class="mb-3">
-                                <label for="version" class="form-label">Version</label>
-                                <select class="form-select" id="version" required>
-                                    <option value="">Select...</option>
-                                    <option value="v1">v1</option>
-                                    <option value="v2">v2</option>
-                                    <option value="v3">v3</option>
-                                </select>
-                            </div> {% endcomment %}
-
-
-                            <div class="mb-3 row">
-                                <div class="col-6">
-                                    <label for="pixel" class="form-label">Pixel Size (arcseconds)</label>
-                                    <input type="number" class="form-control" id="pixel" step="0.01" required name="pixel">
-                                </div>
-                                <div class="col-6">
-                                    <label for="position" class="form-label">Position Sources</label>
-                                    <select class="form-select" id="position" required name="position">
-                                        <option value="0">Absolute</option>
-                                        <option value="1">Relative</option>
-
-                                    </select>
-                                </div>
-
-                            </div>
-
-                            <div class="mb-3">
-                                <label for="numSources" class="form-label">Number of Sources</label>
-                                <input type="number" class="form-control" id="N_srcs" required name="N_srcs">
-                            </div>
-
-                            <div class="mb-3">
-                                <label for="frequency" class="form-label">Frequency (MHz)</label>
-                                <input type="number" class="form-control" id="frequency" step="0.001" required name="freq" value=1>
-                            </div>
-
-                            <div class="mb-3">
-                                <label for="cleaned" class="form-label">Clean Image</label>
-                                <input type="checkbox" class="form-check-input" id="cleaned" name="cleaned" value="on">
-                            </div>
-
-                            <button type="submit" class="btn btn-primary w-100">Simulate</button>
-                        </div>
+                </div>
+                <div class="spinner-container p-5" id="spinner">
+                    <div class="text-center">
+                    <div class="spinner-border" style="width: 5rem; height: 5rem;" role="status">
+                        <span class="visually-hidden">Loading...</span>
                     </div>
-                </form>
-
-            </div>
-            <div class="col-12">
-                <div class="card mt-3">
-                    <div class="card-header">
-                        <h5 class="card-title">Load previous simulation</h5>
-                    </div>
-                    <div class="card-body">
-                        <form method="POST" action="{% url 'load' %}" id="form-load">
-                            {% csrf_token %}
-                            <div class="mb-3">
-                                <label for="uuid" class="form-label">Simulation UUID</label>
-                                <input type="text" class="form-control" id="uuid" name="uuid" required>
-
-                            </div>
-                            <button type="submit" class="btn btn-primary w-100">Load</button>
-                        </form>
                     </div>
                 </div>
             </div>
+        
         </div>
     </div>
 
-    <!-- Image Section -->
-    <div class="image-section">
-        <div id="imageContainer">
-            <h2 class="text-center">Simulation Images</h2>
-            <h3 class="text-center" id="uuid-label"></h3>
-            <img src="{% static 'images/skao-logo.png' %}" class="top-image" alt="Main Image" width="100%">
-            <div class="bottom-images">
-                <img src="{% static 'images/skao-logo.png' %}" alt="Image 1" width="100%">
-                <img src="{% static 'images/skao-logo.png' %}" alt="Image 2" width="100%" >
-            </div>
-        </div>
-        <div class="spinner-container p-5" id="spinner">
-            <div class="text-center">
-            <div class="spinner-border" style="width: 5rem; height: 5rem;" role="status">
-                <span class="visually-hidden">Loading...</span>
-              </div>
-            </div>
-        </div>
-    </div>
-</div>
+
+
+
 
 <script>
+    var sources = [];
+    function addSource(newSource) {
+        if (newSource == null) {
+            newSource = {
+                "ra": "",
+                "dec": "",
+                "flux": "",
+                "q": "",
+                "u": "",
+                "v": "",
+                "position": "0",
+            };
+        }
+        else {
+            // Check if newSource has a field called Q
+            optionalFields = ["q", "u", "v", "position"];
+            for (var i = 0; i < optionalFields.length; i++) {
+                if (!newSource.hasOwnProperty(optionalFields[i])) {
+                    newSource[optionalFields[i]] = "0";
+                }
+            }
+        }
+        var sourceDiv = $('<div class="row mb-3 item-source"></div>');
+        sourceDiv.append('<div class="col"><input type="text" class="form-control" id="ra' + sources.length + '" name="ra[]" value="' + newSource["ra"] + '" required></div>');
+        sourceDiv.append('<div class="col"><input type="text" class="form-control" id="dec' + sources.length + '" name="dec[]" value="' + newSource["dec"] + '"  required></div>');
+        sourceDiv.append('<div class="col"><input type="text" class="form-control" id="flux' + sources.length + '" name="flux[]" value="' + newSource["flux"] + '"  required></div>');
+        sourceDiv.append('<div class="col"><input type="text" class="form-control" id="q' + sources.length + '" name="q[]" value="' + newSource["q"] + '"  required></div>');
+        sourceDiv.append('<div class="col"><input type="text" class="form-control" id="u' + sources.length + '" name="u[]" value="' + newSource["u"] + '"  required></div>');
+        sourceDiv.append('<div class="col"><input type="text" class="form-control" id="v' + sources.length + '" name="v[]" value="' + newSource["v"] + '"  required></div>');
+        sourceDiv.append('<div class="col-2"><select class="form-select" id="position' + sources.length + '" name="position[]" required><option value="0" ' + (newSource["position"] == "0" ? "selected" : "") + '>Absolute</option><option value="1" ' + (newSource["position"] == "1" ? "selected" : "") + '>Relative</option></select></div>');
+        sourceDiv.append('<div class="col"><button type="button" class="btn btn-danger remove-source"><i class="fas fa-trash"></i></button></div>');
+
+        sourceDiv.find('.remove-source').on('click', function() {
+
+            var index = $(this).closest('.item-source').index() - 1;
+            $(this).closest('.item-source').remove();
+            sources.splice(index, 1); // Remove the source from the sources array
+            $('#N_srcs').val(sources.length);
+        });
+        $('#add-source').before(sourceDiv);
+        sources.push(newSource);
+
+        N_srcs_element = $('#N_srcs');
+        N_srcs_element.val(sources.length);
+    }
     $(document).ready(function(){
         sources = [];
         $('bottom-images img').on('error', function() {
@@ -233,13 +313,13 @@
               $(this).data('error-handled', true);
             }
           });
-        $('#add-source').on('click', function() {
-            var sourceDiv = $('<div class="row mb-3"></div>');
-            sourceDiv.append('<div class="col-4"><input type="text" class="form-control" id="ra' + sources.length + '" name="ra[]" required></div>');
-            sourceDiv.append('<div class="col-4"><input type="text" class="form-control" id="dec' + sources.length + '" name="dec[]" required></div>');
-            sourceDiv.append('<div class="col-4"><input type="text" class="form-control" id="flux' + sources.length + '" name="flux[]" required></div>');
-            $('#add-source').before(sourceDiv);
+        $('#btn-add-source').on('click', function() {
+            addSource(null);
         });
+        $('#btn-remove-source').on('click', function() {
+            $('.item-source').remove();
+        });
+
         $("#observationForm").on("submit", function(event) {
             event.preventDefault();
             $("#imageContainer").hide();
@@ -259,6 +339,8 @@
                         alert("Error: " + response.error_msg);
                     } else {
                         // replace the images in the image section
+                        $("#btn-download").attr("href", response.cfg_path);
+                        $("#btn-download-div").show();
                         $(".top-image").attr("src", response.image1);
                         $(".bottom-images img").eq(0).attr("src", response.image2);
                         $(".bottom-images img").eq(1).attr("src", response.image3);
@@ -296,29 +378,44 @@
                             var sources = json_data["sources"];
                             $("#sources-list").empty();
                             var headerDiv = $('<div class="row mb-3"></div>');
-                            headerDiv.append('<div class="col-4"><label for="ra" class="form-label">RA</label></div>');
-                            headerDiv.append('<div class="col-4"><label for="dec" class="form-label">Dec</label></div>');
-                            headerDiv.append('<div class="col-4"><label for="flux" class="form-label">Flux</label></div>');
+                            headerDiv.append('<div class="col"><label for="ra" class="form-label">RA</label></div>');
+                            headerDiv.append('<div class="col"><label for="dec" class="form-label">Dec</label></div>');
+                            headerDiv.append('<div class="col"><label for="flux" class="form-label">Flux</label></div>');
+                            headerDiv.append('<div class="col"><label for="flux" class="form-label">Q</label></div>');
+                            headerDiv.append('<div class="col"><label for="flux" class="form-label">U</label></div>');
+                            headerDiv.append('<div class="col"><label for="flux" class="form-label">V</label></div>');
+                            headerDiv.append('<div class="col-2"><label for="flux" class="form-label">Position</label></div>');
+                            headerDiv.append('<div class="col">&nbsp;</div>');
+
+                            var toolsDiv = $('<div class="row" id="add-source"></div>');
+                            var addSourceButton = $('<button type="button" class="btn btn-secondary m-1 col" id="btn-add-source">Add Source</button>');
+                            var addRemoveButton = $('<button type="button" class="btn btn-secondary m-1 col" id="btn-remove-source">Remove All Sources</button>');
+                            addRemoveButton.on('click', function() {
+                                $('.item-source').remove();
+                                $('#N_srcs').val(0);
+                                $('#N_srcs').attr('readonly', false);
+                                $('#N_srcs').attr('style', 'background-color: #ffffff;');
+                                sources = [];
+                            });
+                            addSourceButton.on('click', function() {
+                                addSource(null);
+                            });
+                            toolsDiv.append(addSourceButton);
+                            toolsDiv.append(addRemoveButton);
                             $('#sources-list').append(headerDiv);
+
+                            $('#sources-list').append(toolsDiv);
+
                             for (var i = 0; i < sources.length; i++) {
                                 var source = sources[i];
-                                var sourceDiv = $('<div class="row mb-3"></div>');
-                                sourceDiv.append('<div class="col-4"><input type="text" class="form-control" id="ra' + i + '" name="ra[]' + '" value="' + source.ra + '" required></div>');
-                                sourceDiv.append('<div class="col-4"><input type="text" class="form-control" id="dec' + i + '" name="dec[]' + '" value="' + source.dec + '" required></div>');
-                                sourceDiv.append('<div class="col-4"><input type="text" class="form-control" id="flux' + i + '" name="flux[]' + '" value="' + source.flux + '" required></div>');
-                                $('#sources-list').append(sourceDiv);
+                                addSource(source);
                             }
-                            // Add a button to add new source
-                            var addSourceButton = $('<button type="button" class="btn btn-secondary mt-3" id="add-source">Add Source</button>');
-                            $('#sources-list').append(addSourceButton);
-                            $('#add-source').on('click', function() {
-                                var sourceDiv = $('<div class="row mb-3"></div>');
-                                sourceDiv.append('<div class="col-4"><input type="text" class="form-control" id="ra' + sources.length + '" name="ra[]" required></div>');
-                                sourceDiv.append('<div class="col-4"><input type="text" class="form-control" id="dec' + sources.length + '" name="dec[]" required></div>');
-                                sourceDiv.append('<div class="col-4"><input type="text" class="form-control" id="flux' + sources.length + '" name="flux[]" required></div>');
-                                $('#add-source').before(sourceDiv);
-                            });
-                                
+
+                            N_srcs_element = $('#N_srcs');
+                            N_srcs_element.val(sources.length);
+                            N_srcs_element.attr('readonly', true);
+                            N_srcs_element.attr('style', 'background-color: #e9ecef;');
+
                         } else {
                             alert("Error: No sources found in the configuration file.");
                         }

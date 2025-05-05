@@ -143,11 +143,13 @@ def simulation(request):
 
         telescope_name = request.POST.get('telescope')
         backend_name = request.POST.get('backend')
-        fov = float(request.POST.get('fov', 20))
+#        fov = float(request.POST.get('fov', 20))
         ra_list = request.POST.getlist('ra[]', None)
         dec_list = request.POST.getlist('dec[]', None)
         flux_list = request.POST.getlist('flux[]', None)
+        pos_list = request.POST.getlist('position[]', None)
         frequency = float(request.POST.get('freq', 1))
+        delta_freq = float(request.POST.get('delta_freq', 15000))
 
         if not (ra_list and dec_list and flux_list):
             N_srcs = int(request.POST.get('N_srcs', 5))
@@ -156,6 +158,7 @@ def simulation(request):
             ra_list = [float(x) for x in ra_list]
             dec_list = [float(x) for x in dec_list]
             flux_list = [float(x) for x in flux_list]
+            pos_list = [int(x) for x in pos_list]
         rms = float(request.POST.get('rms', 0))
         pixel = float(request.POST.get('pixel', 0.5))
         tofits = (request.POST.get('tofits', 'off') == 'on')
@@ -200,22 +203,28 @@ def simulation(request):
         y0 = result["Dec_zenith"]
         # Random sources [x0, y0, flux]; x0, y0 is the limited between -20, 20. Flux is limited between [0.1, 10] 
         if ra_list and dec_list and flux_list:
-            sky_data = np.zeros((N_srcs, 3))
+            sky_data = np.zeros((N_srcs, 7))
             for i in range(N_srcs):
-                sky_data[i, 0] = (x0 * int(request.POST.get("position"),0)) +   ra_list[i]
-                sky_data[i, 1] = (y0 * int(request.POST.get("position"),0)) + dec_list[i]
+                sky_data[i, 0] = (x0 * pos_list[i]) +   ra_list[i]
+                sky_data[i, 1] = (y0 * pos_list[i]) + dec_list[i]
                 sky_data[i, 2] = flux_list[i]
+                sky_data[:, 6] = frequency * 1e6
+
             # Check if the sources are in the field of view
         else:
             printlog (f"Generating {N_srcs} random sources", t0)
-            sky_data = np.random.rand(N_srcs, 3) * 2*limit - limit
+            sky_data = np.random.rand(N_srcs, 7) * 2*limit - limit
             sky_data[:, 2] = ((sky_data[:, 2] + limit) / (2*limit)) * (maxflux - 0.1) + 0.1
             sky_data[:, 0] += x0
             sky_data[:, 1] += y0
+            sky_data[:, 3:6] = 0
+            sky_data[:, 6] = frequency * 1e6
 
         observation = Observation(
             start_frequency_hz=frequency * 1e6,
             start_date_and_time=observation_time_local,
+            frequency_increment_hz=delta_freq,
+            number_of_channels=4,
             phase_centre_ra_deg = x0,
             phase_centre_dec_deg = y0,
         )
@@ -351,10 +360,14 @@ def simulation(request):
 
         image1 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "dirty.png")
         image2 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "sources.png")
+        cfg_path = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "cfg.json")
+
+        
         
 
-        return JsonResponse({'error': False, 'error_msg': 'Ok', 'image1': image1, 'image2': image2, 'image3': image3, 'uuid': uuid_simulation}) 
+        return JsonResponse({'error': False, 'error_msg': 'Ok', 'image1': image1, 'image2': image2, 'image3': image3, 'uuid': uuid_simulation, 'cfg_path': cfg_path, 'sources':sources}) 
     except Exception as e:
+        printlog(show_exc(e), t0)
         return JsonResponse({'error': True, 'error_msg': show_exc(e)})
 
 @csrf_exempt
@@ -376,6 +389,9 @@ def upload_config(request):
     try:
         if request.method == 'POST':
             # Get the uploaded file
+            if ('cfg' not in request.FILES):
+                return JsonResponse({'error': True, 'error_msg': 'No file uploaded'})
+            
             uploaded_json_file = request.FILES['cfg']
             # Save the file to a temporary location
             json_data = json.loads(uploaded_json_file.read().decode('utf-8'))
