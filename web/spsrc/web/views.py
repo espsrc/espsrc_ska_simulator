@@ -143,7 +143,7 @@ def simulation(request):
 
         telescope_name = request.POST.get('telescope')
         backend_name = request.POST.get('backend')
-#        fov = float(request.POST.get('fov', 20))
+        fov = float(request.POST.get('fov', 20))
         ra_list = request.POST.getlist('ra[]', None)
         dec_list = request.POST.getlist('dec[]', None)
         flux_list = request.POST.getlist('flux[]', None)
@@ -332,7 +332,7 @@ def simulation(request):
                 except Exception as e:
                     printlog (f"Error cleaning the image: {e}", t0)
                     printlog ("Using WSCLEAN instead", t0)
-                    config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=imaging_cellsize)
+                    config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=imaging_cellsize.to(u.rad).value)
                     cleaner = WscleanImageCleaner(config)
                     if (tofits):
                         cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path="wscleaned.fits")
