@@ -2,6 +2,7 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
+from matplotlib.colors import PowerNorm
 
 import os
 def show_exc(exception):
@@ -148,8 +149,10 @@ def simulation(request):
         dec_list = request.POST.getlist('dec[]', None)
         flux_list = request.POST.getlist('flux[]', None)
         pos_list = request.POST.getlist('position[]', None)
-        frequency = float(request.POST.get('freq', 1))
-        delta_freq = float(request.POST.get('delta_freq', 15000))
+        frequency = float(request.POST.get('freq', 1)) * u.MHz
+        delta_freq = float(request.POST.get('delta_freq', 1)) * u.MHz
+        n_channels = int(request.POST.get('channels', 4)) 
+
 
         if not (ra_list and dec_list and flux_list):
             N_srcs = int(request.POST.get('N_srcs', 5))
@@ -160,8 +163,11 @@ def simulation(request):
             flux_list = [float(x) for x in flux_list]
             pos_list = [int(x) for x in pos_list]
         rms = float(request.POST.get('rms', 0))
-        pixel = float(request.POST.get('pixel', 0.5))
+        pixel_size = float(request.POST.get('pixel', 0.5))
+
+        pixel_size = pixel_size * u.arcsec
         tofits = (request.POST.get('tofits', 'off') == 'on')
+        tofits = True
 
     
         maxflux = float(request.POST.get('maxflux', 10))
@@ -208,28 +214,32 @@ def simulation(request):
                 sky_data[i, 0] = (x0 * pos_list[i]) +   ra_list[i]
                 sky_data[i, 1] = (y0 * pos_list[i]) + dec_list[i]
                 sky_data[i, 2] = flux_list[i]
-                sky_data[:, 6] = frequency * 1e6
+                sky_data[:, 6] = frequency.to(u.Hz).value
 
             # Check if the sources are in the field of view
         else:
             printlog (f"Generating {N_srcs} random sources", t0)
             sky_data = np.random.rand(N_srcs, 7) * 2*limit - limit
-            sky_data[:, 2] = ((sky_data[:, 2] + limit) / (2*limit)) * (maxflux - 0.1) + 0.1
+            sky_data[:, 2] = np.random.rand(N_srcs) * maxflux
             sky_data[:, 0] += x0
             sky_data[:, 1] += y0
             sky_data[:, 3:6] = 0
-            sky_data[:, 6] = frequency * 1e6
+            sky_data[:, 6] = frequency.to(u.Hz).value
+
+        print ("Flux: ", sky_data[:, 2])
+
+        start_freq = frequency - (n_channels/2) * delta_freq
 
         observation = Observation(
-            start_frequency_hz=frequency * 1e6,
+            start_frequency_hz=start_freq.to(u.Hz).value,
             start_date_and_time=observation_time_local,
-            frequency_increment_hz=delta_freq,
-            number_of_channels=4,
+            frequency_increment_hz=delta_freq.to(u.Hz).value,
+            number_of_channels=n_channels,
             phase_centre_ra_deg = x0,
             phase_centre_dec_deg = y0,
         )
 
-        imaging_cellsize = (pixel *  u.arcsec).to(u.deg).value
+        imaging_cellsize = pixel_size.to(u.deg).value
         imaging_npixel = 2048
         maxflux = np.max(sky_data[:, 2])
 
@@ -258,11 +268,6 @@ def simulation(request):
         simulation.run_simulation(telescope, sky, observation, visibility_path=visibility_path)
         visibilities = Visibility(visibility_path)
 
-
-        # Create the dirty image
-        imaging_cellsize = (pixel *  u.arcsec).to(u.deg).value
-        imaging_npixel = 2048
-
         if backend_name.lower() == "rascil":
             config = RascilDirtyImagerConfig(
                     imaging_npixel=imaging_npixel,
@@ -286,7 +291,7 @@ def simulation(request):
 
 
         printlog(f"Saving dirty image to dirty.png", t0)
-        dirty.plot(title=f"Dirty image {backend_name.upper()} ({telescope.name.upper()})", filename=dirty_path, wcs_enabled=True, xlabel='RA', ylabel='DEC', vmax=maxflux * 1.05, vmin=0)
+        dirty.plot(title=f"Dirty image {backend_name.upper()} ({telescope.name.upper()})", filename=dirty_path, wcs_enabled=True, xlabel='RA', ylabel='DEC', norm=PowerNorm(0.3))
 
         printlog (f"Sky Model with {len(sky_data)} sources", t0)
         printlog (f"Optimal phase center: {x0}, {y0}", t0)
@@ -298,7 +303,7 @@ def simulation(request):
         sources = []
         for i, src in enumerate(sky_data):
             sources.append({"ra": src[0], "dec": src[1], "flux": src[2], "mute":False, "name":f"source_{i:03}"})
-        json_data = {"sources": sources, "phase_center": {"ra": x0, "dec": y0}, "observation_date": observation_time_local.strftime("%Y-%m-%d %H:%M:%S"), "frequency": frequency, "fov": fov, "pixel": pixel, "telescope": telescope_name, "backend": backend_name, "simulation": uuid_simulation, "rms": rms, "cleaned": cleaned}
+        json_data = {"sources": sources, "phase_center": {"ra": x0, "dec": y0}, "observation_date": observation_time_local.strftime("%Y-%m-%d %H:%M:%S"), "frequency": frequency.to(u.Hz).value, "fov": fov, "pixel": pixel_size.value, "telescope": telescope_name, "backend": backend_name, "simulation": uuid_simulation, "rms": rms, "cleaned": cleaned}
         with open(cfg_path, "w") as f:
             f.write(json.dumps(json_data, indent=4))
         printlog (f"Saved configuration file to {cfg_path}", t0)
@@ -316,7 +321,7 @@ def simulation(request):
                         RascilImageCleanerConfig(
                             imaging_npixel=imaging_npixel,
                             imaging_cellsize=imaging_cellsize,
-                            ingest_vis_nchan=1,
+                            ingest_vis_nchan=n_channels,
                             # clean_nmajor=1,
                             # clean_algorithm="mmclean",
                             # clean_scales=[10, 30, 60],
@@ -332,24 +337,30 @@ def simulation(request):
                 except Exception as e:
                     printlog (f"Error cleaning the image: {e}", t0)
                     printlog ("Using WSCLEAN instead", t0)
-                    config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=imaging_cellsize.to(u.rad).value)
+                    config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=pixel_size.to(u.rad).value)
                     cleaner = WscleanImageCleaner(config)
                     if (tofits):
-                        cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path="wscleaned.fits")
+                        print ("Saving fits....")
+                        path_fits = os.path.join(folder_name, "wscleaned.fits")
+                        cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path=path_fits)
                     else:
                         cleaned = cleaner.create_cleaned_image(visibilities)
                     cleaned.plot(title=f"Cleaned image (WSCLEAN) {backend_name.upper()} ({telescope.name.upper()})", filename=cleaned_path, wcs_enabled=True, xlabel='RA', ylabel='DEC')
                     printlog (f"Saved cleaned image to cleaned.png", t0)
             if backend_name.lower() in ["oskar", "all", "wsclean"]:
                 printlog ("Cleaning not supported for OSKAR, using WSCLEAN", t0)
-                config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=imaging_cellsize)
+                print(f"DBG::: {imaging_cellsize}")
+                config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=pixel_size.to(u.rad).value)
                 cleaner = WscleanImageCleaner(config)
                 if (tofits):
-                    cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path="wccleaned.fits")
+                    path_fits = os.path.join(folder_name, "wscleaned.fits")
+                    print (f"Saving fits in {path_fits}")
+                    cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path=path_fits)
                 else:
                     cleaned = cleaner.create_cleaned_image(visibilities)
                 
-                cleaned.plot(title=f"Cleaned image (WSCLEAN) {backend_name.upper()} ({telescope.name.upper()})", filename=cleaned_path, wcs_enabled=True, xlabel='RA', ylabel='DEC')
+                gamma = 0.3
+                cleaned.plot(title=f"Cleaned image (WSCLEAN) {backend_name.upper()} ({telescope.name.upper()})", filename=cleaned_path, wcs_enabled=True, xlabel='RA', ylabel='DEC', norm=PowerNorm(gamma))
                 printlog (f"Saved cleaned image to cleaned.png", t0)
             image3 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "cleaned.png")
         else:

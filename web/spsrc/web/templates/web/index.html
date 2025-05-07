@@ -189,18 +189,28 @@
         
         
                                     <div class="mb-3 row">
-                                        <div class="col-4">
-                                            <label for="pixel" class="form-label">Pixel Size (arcseconds)</label>
+                                        <div class="col-2">
+                                            <label for="pixel" class="form-label">Pixel Size [arcs]</label>
                                             <input type="number" class="form-control" id="pixel" step="0.01" required name="pixel" value="1">
                                         </div>
         
-                                        <div class="col-4">
-                                            <label for="frequency" class="form-label">Frequency (MHz)</label>
+                                        <div class="col-2">
+                                            <label for="frequency" class="form-label">Freq [MHz]</label>
                                             <input type="number" class="form-control" id="frequency" step="0.001" required name="freq" value=1>
                                         </div>
+                                        <div class="col-2">
+                                            <label for="channels" class="form-label">N channels</label>
+                                            <input type="number" class="form-control" id="channels" required name="channels" value=1>
+                                        </div>
+                                        <div class="col-2">
+                                            <label for="freq_width" class="form-label">Channel width (MHz)</label>
+                                            <input type="number" class="form-control" id="freq_width" step="0.001" required name="delta_freq" value=1>
+                                        </div>
+                                    </div>
+                                    <div class="mb-3 row">
         
-                                        <div class="col-4">
-                                            <label for="numSources" class="form-label">Number of Sources</label>
+                                        <div class="col-2">
+                                            <label for="numSources" class="form-label">Num Sources</label>
                                             <input type="number" class="form-control" id="N_srcs" required name="N_srcs">
                                         </div>
                                     </div>
