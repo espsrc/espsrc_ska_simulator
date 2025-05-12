@@ -3,6 +3,7 @@ from django.shortcuts import redirect, render
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from matplotlib.colors import PowerNorm
+from datetime import timedelta
 
 import os
 def show_exc(exception):
@@ -141,18 +142,23 @@ def simulation(request):
     try:
         t0 = time.time()
         # Get the parameters from the form
-
         telescope_name = request.POST.get('telescope')
         backend_name = request.POST.get('backend')
-        fov = float(request.POST.get('fov', 20))
+        fov = float(request.POST.get('fov', 0))
         ra_list = request.POST.getlist('ra[]', None)
         dec_list = request.POST.getlist('dec[]', None)
         flux_list = request.POST.getlist('flux[]', None)
         pos_list = request.POST.getlist('position[]', None)
         frequency = float(request.POST.get('freq', 1)) * u.MHz
         delta_freq = float(request.POST.get('delta_freq', 1)) * u.MHz
-        n_channels = int(request.POST.get('channels', 4)) 
+        n_channels = int(request.POST.get('channels', 4))
+        number_of_timesteps  = int(request.POST.get('steps', 256))
 
+
+        if fov == 0:
+            # Convert frequency to wavelength
+            wavelength = frequency.to(u.m, equivalencies=u.spectral())
+            fov = (1.22 * wavelength / (13 * u.m)) * u.rad
 
         if not (ra_list and dec_list and flux_list):
             N_srcs = int(request.POST.get('N_srcs', 5))
@@ -203,7 +209,7 @@ def simulation(request):
                 telescope = Telescope.constructor("LOFAR", backend=backend)
         printlog (f"Telescope loaded: {telescope.name.upper()}", t0)
 
-        limit = fov/2
+        limit = pixel_size.to(u.deg).value * 2048
         result = calculate_lst(telescope.centre_longitude, telescope.centre_latitude, observation_time_local.strftime("%Y-%m-%d %H:%M:%S"))
         x0 = result["RA_zenith"]
         y0 = result["Dec_zenith"]
@@ -218,49 +224,58 @@ def simulation(request):
 
             # Check if the sources are in the field of view
         else:
-            printlog (f"Generating {N_srcs} random sources", t0)
-            sky_data = np.random.rand(N_srcs, 7) * 2*limit - limit
-            sky_data[:, 2] = np.random.rand(N_srcs) * maxflux
-            sky_data[:, 0] += x0
-            sky_data[:, 1] += y0
-            sky_data[:, 3:6] = 0
-            sky_data[:, 6] = frequency.to(u.Hz).value
-
-        print ("Flux: ", sky_data[:, 2])
+            if telescope.name.upper() != "MEERKATL":
+                printlog (f"Generating {N_srcs} random sources", t0)
+                sky_data = np.zeros((N_srcs, 7))
+                sky_data[:, 0] = x0 + np.random.uniform(-limit, limit, N_srcs)
+                sky_data[:, 1] = y0 + np.random.uniform(-limit, limit, N_srcs)
+                sky_data[:, 2] = np.random.uniform(0.1, maxflux, N_srcs)
+                sky_data[:, 3:6] = 0
+                sky_data[:, 6] = frequency.to(u.Hz).value
+            else:
+                sky = SkyModel.get_MIGHTEE_Sky()
 
         start_freq = frequency - (n_channels/2) * delta_freq
+        imaging_cellsize = pixel_size.to(u.deg).value
+        imaging_npixel = 2048
+
+        if telescope.name.upper() != "MEERKATs":
+            wcs = WCS(naxis=2)
+            wcs.wcs.ctype = ['RA---SIN', 'DEC--SIN']
+            wcs.wcs.crval = [x0, y0]
+            wcs.wcs.crpix = [imaging_npixel//2, imaging_npixel//2]
+            wcs.wcs.cdelt = [-imaging_cellsize, +imaging_cellsize]
+            wcs.wcs.radesys = 'ICRS'
+            wcs.wcs.equinox = 2000.0
+            
+            sky = SkyModel(wcs=wcs)
+            sky.add_point_sources(sky_data)
+            sky.explore_sky([x0, y0],wcs=wcs, filename=sources_path, xlabel='RA', ylabel='DEC', vmin=0)
+
+        print (f"Imaging cellsize: {imaging_cellsize} deg")
+        print (f"Imaging npixel: {imaging_npixel}")
+        print ("Sky Center: ", sky.wcs.wcs.crval)
+
 
         observation = Observation(
             start_frequency_hz=start_freq.to(u.Hz).value,
             start_date_and_time=observation_time_local,
             frequency_increment_hz=delta_freq.to(u.Hz).value,
+            length = timedelta(seconds=number_of_timesteps * 7.997),
+            number_of_time_steps=number_of_timesteps,
             number_of_channels=n_channels,
             phase_centre_ra_deg = x0,
             phase_centre_dec_deg = y0,
         )
 
-        imaging_cellsize = pixel_size.to(u.deg).value
-        imaging_npixel = 2048
-        maxflux = np.max(sky_data[:, 2])
-
-        print (f"Imaging cellsize: {imaging_cellsize} deg")
-        print (f"Imaging npixel: {imaging_npixel}")
-
-
-        wcs = WCS(naxis=2)
-        wcs.wcs.ctype = ['RA---SIN', 'DEC--SIN']
-        wcs.wcs.crval = [x0, y0]
-        wcs.wcs.crpix = [imaging_npixel//2, imaging_npixel//2]
-        wcs.wcs.cdelt = [-imaging_cellsize, +imaging_cellsize]
-        wcs.wcs.radesys = 'ICRS'
-        wcs.wcs.equinox = 2000.0
-        
-        sky = SkyModel(wcs=wcs)
-        sky.add_point_sources(sky_data)
-        sky.explore_sky([x0, y0],wcs=wcs, filename=sources_path, xlabel='RA', ylabel='DEC', vmin=0)
-
         # run a single simulation with the provided configuration 
-        simulation = InterferometerSimulation()
+        simulation = InterferometerSimulation(
+            channel_bandwidth_hz=delta_freq.to(u.Hz).value,
+            station_type="Gaussian beam",
+            gauss_beam_fwhm_deg=fov.to(u.deg).value,
+            gauss_ref_freq_hz=frequency.to(u.Hz).value,
+            use_gpus=False,
+        )
 
         # Get current path
         current_path = os.path.dirname(os.path.realpath(__file__))
@@ -292,6 +307,9 @@ def simulation(request):
 
         printlog(f"Saving dirty image to dirty.png", t0)
         dirty.plot(title=f"Dirty image {backend_name.upper()} ({telescope.name.upper()})", filename=dirty_path, wcs_enabled=True, xlabel='RA', ylabel='DEC', norm=PowerNorm(0.3))
+        if tofits:
+            printlog (f"Saving dirty image to dirty.fits", t0)
+            dirty.write_to_file(os.path.join(folder_name, f"{uuid_simulation}_dirty.fits"), overwrite=True)
 
         printlog (f"Sky Model with {len(sky_data)} sources", t0)
         printlog (f"Optimal phase center: {x0}, {y0}", t0)
@@ -303,7 +321,7 @@ def simulation(request):
         sources = []
         for i, src in enumerate(sky_data):
             sources.append({"ra": src[0], "dec": src[1], "flux": src[2], "mute":False, "name":f"source_{i:03}"})
-        json_data = {"sources": sources, "phase_center": {"ra": x0, "dec": y0}, "observation_date": observation_time_local.strftime("%Y-%m-%d %H:%M:%S"), "frequency": frequency.to(u.Hz).value, "fov": fov, "pixel": pixel_size.value, "telescope": telescope_name, "backend": backend_name, "simulation": uuid_simulation, "rms": rms, "cleaned": cleaned}
+        json_data = {"sources": sources, "phase_center": {"ra": x0, "dec": y0}, "observation_date": observation_time_local.strftime("%Y-%m-%d %H:%M:%S"), "frequency": frequency.to(u.Hz).value, "fov": fov.value, "pixel": pixel_size.value, "telescope": telescope_name, "backend": backend_name, "simulation": uuid_simulation, "rms": rms, "cleaned": cleaned}
         with open(cfg_path, "w") as f:
             f.write(json.dumps(json_data, indent=4))
         printlog (f"Saved configuration file to {cfg_path}", t0)
@@ -341,7 +359,7 @@ def simulation(request):
                     cleaner = WscleanImageCleaner(config)
                     if (tofits):
                         print ("Saving fits....")
-                        path_fits = os.path.join(folder_name, "wscleaned.fits")
+                        path_fits = os.path.join(folder_name, f"{uuid_simulation}_wscleaned.fits")
                         cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path=path_fits)
                     else:
                         cleaned = cleaner.create_cleaned_image(visibilities)
@@ -353,7 +371,7 @@ def simulation(request):
                 config = WscleanImageCleanerConfig(imaging_npixel=imaging_npixel, imaging_cellsize=pixel_size.to(u.rad).value)
                 cleaner = WscleanImageCleaner(config)
                 if (tofits):
-                    path_fits = os.path.join(folder_name, "wscleaned.fits")
+                    path_fits = os.path.join(folder_name, f"{uuid_simulation}_wscleaned.fits")
                     print (f"Saving fits in {path_fits}")
                     cleaned = cleaner.create_cleaned_image(visibilities, output_fits_path=path_fits)
                 else:
@@ -373,6 +391,7 @@ def simulation(request):
         image2 = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "sources.png")
         cfg_path = os.path.join(settings.STATIC_URL,'simulations', uuid_simulation, "cfg.json")
 
+        print("Simulation finished")
         
         
 
