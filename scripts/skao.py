@@ -399,6 +399,8 @@ if __name__ == "__main__":
             imager = OskarDirtyImager(config=config)
             dirty_image = imager.create_dirty_image(visibilities)
             dirty_png_path = os.path.join(root_path, f'{prefix}_dirty.png')
+            dirty_image.plot(title=f"Dirty image {backend.name} ({telescope.name.upper()})", wcs_enabled=True, xlabel='RA', ylabel='DEC')
+
             dirty_image.plot(title=f"Dirty image {backend.name} ({telescope.name.upper()})", filename=dirty_png_path, wcs_enabled=True, xlabel='RA', ylabel='DEC')
             printlog (log_file, f"Dirty image (PNG) saved in {dirty_png_path}")
 
