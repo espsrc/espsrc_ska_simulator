@@ -182,3 +182,7 @@ index.sh
 clean.sh
 index.html
 **.tmp
+
+**notes.txt
+web/spsrc/*.sh
+web/spsrc/satic/simulations
