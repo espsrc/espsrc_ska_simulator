@@ -41,150 +41,150 @@ from karabo.simulation.telescope import RASCILTelescopes
 
 import argparse
 
-def printlog(fname, *args):
-    # Print to console and log file
-    print (f'[{datetime.now()}]',*args)
-    with open(fname, 'a') as f:
-        print(f'[{datetime.now()}]', *args, file=f)
-        f.flush()
-        os.fsync(f.fileno())
-        f.close()
+# def printlog(fname, *args):
+#     # Print to console and log file
+#     print (f'[{datetime.now()}]',*args)
+#     with open(fname, 'a') as f:
+#         print(f'[{datetime.now()}]', *args, file=f)
+#         f.flush()
+#         os.fsync(f.fileno())
+#         f.close()
 
-def show_exc(exception):
-    exc_type, exc_obj, tb = sys.exc_info()
-    f = tb.tb_frame
-    lineno = tb.tb_lineno
-    filename = f.f_code.co_filename
-    filename_rel = os.path.relpath(filename, os.path.dirname(__file__))
-    app_folder = os.path.basename(os.path.dirname(__file__))
-    return f'EXCEPTION IN ({filename_rel}, LINE {lineno}): {exception} (APP: {app_folder})'
+# def show_exc(exception):
+#     exc_type, exc_obj, tb = sys.exc_info()
+#     f = tb.tb_frame
+#     lineno = tb.tb_lineno
+#     filename = f.f_code.co_filename
+#     filename_rel = os.path.relpath(filename, os.path.dirname(__file__))
+#     app_folder = os.path.basename(os.path.dirname(__file__))
+#     return f'EXCEPTION IN ({filename_rel}, LINE {lineno}): {exception} (APP: {app_folder})'
 
 
-class Source:
-    def __init__(self, ra, dec, I, Q=0 * u.Jy, U=0 * u.Jy, V=0 * u.Jy, ref_freq=0 * u.Hz, spec_index=0, rot_meas=0 * u.rad/(u.m**2), 
-                 major_axis = 0*u.arcsec, minor_axis = 0*u.arcsec, pa=0*u.arcsec,  true_redshift=0, obs_redshift=0, obj_id = None):
-        # Initialize the source with its parameters, checking units
+# class Source:
+#     def __init__(self, ra, dec, I, Q=0 * u.Jy, U=0 * u.Jy, V=0 * u.Jy, ref_freq=0 * u.Hz, spec_index=0, rot_meas=0 * u.rad/(u.m**2), 
+#                  major_axis = 0*u.arcsec, minor_axis = 0*u.arcsec, pa=0*u.arcsec,  true_redshift=0, obs_redshift=0, obj_id = None):
+#         # Initialize the source with its parameters, checking units
 
-        list_of_units = [u.deg, u.deg, u.Jy, u.Jy, u.Jy, u.Jy, u.Hz, u.rad/(u.m**2), u.arcsec, u.arcsec, u.arcsec]
-        list_of_values = [ra, dec, I, Q, U, V, ref_freq, rot_meas, major_axis, minor_axis, pa]
-        for i, unit in enumerate(list_of_units):
-            if not isinstance(list_of_values[i], u.Quantity):
-                list_of_values[i] = list_of_values[i] * unit
-                print (f"Adding unit {unit} to value {list_of_values[i]}")
-            if list_of_values[i].unit != unit:
-                try:
-                    list_of_values[i] = list_of_values[i].to(unit)
-                except u.UnitConversionError:
-                    raise ValueError(f"Value {list_of_values[i]} does not have the correct unit {unit}")
-        self.ra = list_of_values[0]
-        self.dec = list_of_values[1]
-        self.I = list_of_values[2]
-        self.Q = list_of_values[3]
-        self.U = list_of_values[4]
-        self.V = list_of_values[5]
-        self.ref_freq = list_of_values[6]
-        self.spec_index = spec_index
-        self.rot_meas = list_of_values[7]
-        self.major_axis = list_of_values[8]
-        self.minor_axis = list_of_values[9]
-        self.pa = list_of_values[10]
-        self.true_redshift = true_redshift
-        self.obs_redshift = obs_redshift
-        self.obj_id = obj_id
+#         list_of_units = [u.deg, u.deg, u.Jy, u.Jy, u.Jy, u.Jy, u.Hz, u.rad/(u.m**2), u.arcsec, u.arcsec, u.arcsec]
+#         list_of_values = [ra, dec, I, Q, U, V, ref_freq, rot_meas, major_axis, minor_axis, pa]
+#         for i, unit in enumerate(list_of_units):
+#             if not isinstance(list_of_values[i], u.Quantity):
+#                 list_of_values[i] = list_of_values[i] * unit
+#                 print (f"Adding unit {unit} to value {list_of_values[i]}")
+#             if list_of_values[i].unit != unit:
+#                 try:
+#                     list_of_values[i] = list_of_values[i].to(unit)
+#                 except u.UnitConversionError:
+#                     raise ValueError(f"Value {list_of_values[i]} does not have the correct unit {unit}")
+#         self.ra = list_of_values[0]
+#         self.dec = list_of_values[1]
+#         self.I = list_of_values[2]
+#         self.Q = list_of_values[3]
+#         self.U = list_of_values[4]
+#         self.V = list_of_values[5]
+#         self.ref_freq = list_of_values[6]
+#         self.spec_index = spec_index
+#         self.rot_meas = list_of_values[7]
+#         self.major_axis = list_of_values[8]
+#         self.minor_axis = list_of_values[9]
+#         self.pa = list_of_values[10]
+#         self.true_redshift = true_redshift
+#         self.obs_redshift = obs_redshift
+#         self.obj_id = obj_id
 
-    @staticmethod
-    def from_name(name):
-        source = acoord.get_icrs_coordinates(name)
-        if source is None:
-            raise ValueError(f"Source {name} not found")
-        return Source(source.ra, source.dec, 1 * u.Jy)
+#     @staticmethod
+#     def from_name(name):
+#         source = acoord.get_icrs_coordinates(name)
+#         if source is None:
+#             raise ValueError(f"Source {name} not found")
+#         return Source(source.ra, source.dec, 1 * u.Jy)
     
-    def to_json(self):
-        # Convert the source to a JSON serializable dictionary
-        return {
-            "ra": self.ra.to(u.deg).value,
-            "dec": self.dec.to(u.deg).value,
-            "I": self.I.to(u.Jy).value,
-            "Q": self.Q.to(u.Jy).value,
-            "U": self.U.to(u.Jy).value,
-            "V": self.V.to(u.Jy).value,
-            "ref_freq": self.ref_freq.to(u.Hz).value,
-            "spec_index": self.spec_index,
-            "rot_meas": self.rot_meas.value,
-            "major_axis": self.major_axis.to(u.arcsec).value,
-            "minor_axis": self.minor_axis.to(u.arcsec).value,
-            "pa": self.pa.to(u.arcsec).value,
-            "true_redshift": self.true_redshift,
-            "obs_redshift": self.obs_redshift,
-        }
+#     def to_json(self):
+#         # Convert the source to a JSON serializable dictionary
+#         return {
+#             "ra": self.ra.to(u.deg).value,
+#             "dec": self.dec.to(u.deg).value,
+#             "I": self.I.to(u.Jy).value,
+#             "Q": self.Q.to(u.Jy).value,
+#             "U": self.U.to(u.Jy).value,
+#             "V": self.V.to(u.Jy).value,
+#             "ref_freq": self.ref_freq.to(u.Hz).value,
+#             "spec_index": self.spec_index,
+#             "rot_meas": self.rot_meas.value,
+#             "major_axis": self.major_axis.to(u.arcsec).value,
+#             "minor_axis": self.minor_axis.to(u.arcsec).value,
+#             "pa": self.pa.to(u.arcsec).value,
+#             "true_redshift": self.true_redshift,
+#             "obs_redshift": self.obs_redshift,
+#         }
     
-    def __str__(self):
-        # Return a string representation of the source (only non-zero values)
-        str2print = f"Source(ra={self.ra}, dec={self.dec}, I={self.I}"
+#     def __str__(self):
+#         # Return a string representation of the source (only non-zero values)
+#         str2print = f"Source(ra={self.ra}, dec={self.dec}, I={self.I}"
 
-        json_values = self.to_json()
-        for key, value in json_values.items():
-            if key not in ['ra', 'dec', 'I'] and value != 0:
-                str2print += f", {key}={value}"
-        str2print += ")"
-        return str2print
+#         json_values = self.to_json()
+#         for key, value in json_values.items():
+#             if key not in ['ra', 'dec', 'I'] and value != 0:
+#                 str2print += f", {key}={value}"
+#         str2print += ")"
+#         return str2print
     
-    def to_sky_model(self, reduced_form=False):
-        # Convert the source to a SkyModel object
-        if reduced_form:
-            return (self.ra.value, self.dec.value, self.I.value)
-        else:
-            return( self.ra.value, self.dec.value, self.I.value, 
-                self.Q.value, self.U.value, self.V.value,
-                self.ref_freq.value, self.spec_index,
-                self.rot_meas.value, self.major_axis.value,
-                self.minor_axis.value, self.pa.value,
-                self.true_redshift, self.obs_redshift)
+#     def to_sky_model(self, reduced_form=False):
+#         # Convert the source to a SkyModel object
+#         if reduced_form:
+#             return (self.ra.value, self.dec.value, self.I.value)
+#         else:
+#             return( self.ra.value, self.dec.value, self.I.value, 
+#                 self.Q.value, self.U.value, self.V.value,
+#                 self.ref_freq.value, self.spec_index,
+#                 self.rot_meas.value, self.major_axis.value,
+#                 self.minor_axis.value, self.pa.value,
+#                 self.true_redshift, self.obs_redshift)
         
-    def coords(self, frame='icrs'):
-        # Return the coordinates of the source
-        return SkyCoord(ra=self.ra, dec=self.dec, unit=(u.deg, u.deg), frame=frame)
+#     def coords(self, frame='icrs'):
+#         # Return the coordinates of the source
+#         return SkyCoord(ra=self.ra, dec=self.dec, unit=(u.deg, u.deg), frame=frame)
 
-    def get_best_observation_time(self, telescope:Telescope, date=None):
-        """
-        Returns the local time at which an object with a given RA/Dec culminates (best observation time).
+#     def get_best_observation_time(self, telescope:Telescope, date=None):
+#         """
+#         Returns the local time at which an object with a given RA/Dec culminates (best observation time).
         
-        Parameters:
-        - ra_hours: Right Ascension in hours (float)
-        - dec_degrees: Declination in degrees (float)
-        - lat_deg: Observer's latitude in degrees (float)
-        - lon_deg: Observer's longitude in degrees (float, positive to the East)
-        - elevation_m: Altitude above sea level (optional)
-        - date: Date as a string 'YYYY-MM-DD' (optional, defaults to today if not provided)
-        - timezone_offset: Time difference relative to UTC (e.g., -6 for CDMX)
+#         Parameters:
+#         - ra_hours: Right Ascension in hours (float)
+#         - dec_degrees: Declination in degrees (float)
+#         - lat_deg: Observer's latitude in degrees (float)
+#         - lon_deg: Observer's longitude in degrees (float, positive to the East)
+#         - elevation_m: Altitude above sea level (optional)
+#         - date: Date as a string 'YYYY-MM-DD' (optional, defaults to today if not provided)
+#         - timezone_offset: Time difference relative to UTC (e.g., -6 for CDMX)
 
-        Returns:
-        - Best time.
-        """
+#         Returns:
+#         - Best time.
+#         """
 
-        if date is None:
-            date = datetime.now().strftime('%Y-%m-%d')
+#         if date is None:
+#             date = datetime.now().strftime('%Y-%m-%d')
 
-        coord = SkyCoord(ra=self.ra, dec=self.dec)
-        location = EarthLocation(lat=telescope.centre_latitude * u.deg, lon=telescope.centre_longitude * u.deg, height=telescope.centre_altitude * u.m)
+#         coord = SkyCoord(ra=self.ra, dec=self.dec)
+#         location = EarthLocation(lat=telescope.centre_latitude * u.deg, lon=telescope.centre_longitude * u.deg, height=telescope.centre_altitude * u.m)
 
-        midnight = Time(f"{date} 00:00:00") + 12*u.hour  # Mediodía UTC
-        delta = timedelta(minutes=1)
+#         midnight = Time(f"{date} 00:00:00") + 12*u.hour  # Mediodía UTC
+#         delta = timedelta(minutes=1)
 
-        best_time = None
-        max_alt = -90
+#         best_time = None
+#         max_alt = -90
 
-        for minutes in range(-360, 360):
-            current_time = midnight + minutes * u.minute
-            altaz = coord.transform_to(AltAz(obstime=current_time, location=location))
-            if altaz.alt.deg > max_alt:
-                max_alt = altaz.alt.deg
-                best_time = current_time
+#         for minutes in range(-360, 360):
+#             current_time = midnight + minutes * u.minute
+#             altaz = coord.transform_to(AltAz(obstime=current_time, location=location))
+#             if altaz.alt.deg > max_alt:
+#                 max_alt = altaz.alt.deg
+#                 best_time = current_time
 
-        return best_time
+#         return best_time
 
         
-
+from utils import printlog, show_exc, Source, DIAMETERS
 
 if __name__ == "__main__":
     try:
@@ -192,7 +192,7 @@ if __name__ == "__main__":
         print(f"PID: {os.getpid()}")
         t0 = time.time()
         # Use argparse for define two parameters; first parameter, a list with sources names; second parameters, show or write png
-        argparser = argparse.ArgumentParser(description="Meerkat simulation script")
+        argparser = argparse.ArgumentParser(description="SKAO simulation script")
         argparser.add_argument(
             "--sources",
             type=str,
@@ -202,9 +202,10 @@ if __name__ == "__main__":
         argparser.add_argument("--prefix", type=str, help="Prefix for filenames", default=None)
         argparser.add_argument(
             "--telescope",
+            choices=['SKA1LOW', 'SKA1MID'],
             type=str,
-            help="Telescope to use for the simulation (e.g. 'LOFAR', 'SKA1_LOW', 'SKA1_MID', 'MeerKAT')",
-            default="MeerKAT",
+            help="Telescope to use for the simulation ('SKA1LOW', 'SKA1MID'), default is 'SKA1LOW'",
+            default="SKA1LOW",
         )
         argparser.add_argument("--I", type=float, nargs="+", default=None, help="Intensity in Jy")
         argparser.add_argument("--Q", type=float, nargs="+", default=None, help="Q in Jy")
@@ -241,7 +242,11 @@ if __name__ == "__main__":
             prefix = args.prefix
         else:
             # Prefix in format YYYYMMDD_HHMMSS
-            prefix = datetime.now().strftime("%Y%m%d_%H%M%S")
+            prefix = datetime.now().strftime("%Y%m%d_%H%M")
+
+
+
+
 
         log_file = os.path.join(os.path.dirname(__file__), f'{prefix}.log')
         printlog (log_file, "System info")
@@ -261,13 +266,18 @@ if __name__ == "__main__":
 
         printlog (log_file, f"\tNumber of CPU cores: {mp.cpu_count()}")
 
-
-        #total Computer RAM memomry in GB
+        if args.fov == 0:
+            wavelength = frequency.to(u.m, equivalencies=u.spectral())
+            fov = (1.22 * wavelength / DIAMETERS[args.telescope.upper()]) * u.rad
+        else:
+            fov = (args.fov * u.deg).to(u.rad)
 
         printlog (log_file, "Starting simulation with params:")
         printlog (log_file, f"\tSources: {args.sources}")
         printlog (log_file, f"\tPrefix: {prefix}")
         printlog (log_file, f"\tTelescope: {args.telescope}")
+        printlog (log_file, f"\t\tDiameter: {DIAMETERS['MEERKAT'].value} meters")
+        printlog (log_file, f"\t\tFOV: {fov.to(u.deg).value} degrees")
         printlog (log_file, f"\tFrequency: {args.freq} MHz")
         printlog (log_file, f"\tNumber of channels: {args.n_channels}")
         printlog (log_file, f"\tDelta frequency: {args.delta_freq} MHz")
@@ -280,19 +290,17 @@ if __name__ == "__main__":
         printlog (log_file, f"\tRef freq: {args.ref_freq}")
 
 
-
-
-        if args.fov == 0:
-            # Convert frequency to wavelength
-            wavelength = frequency.to(u.m, equivalencies=u.spectral())
-            fov = (1.22 * wavelength / (13 * u.m)) * u.rad
-        else:
-            fov = args.fov * u.deg
-
         sources_names = args.sources
         if not args.sources:
             printlog(log_file, "No sources provided. Exiting.")
             sys.exit(1)
+
+        # Launch the scripts monitor.py (not blocking) with pid of the current process 
+        import subprocess
+        monitor_script = os.path.join(os.path.dirname(__file__), 'monitor.py')
+        if os.path.exists(monitor_script):
+            printlog (log_file, f"Launching monitor script {monitor_script} with PID {os.getpid()}")
+            monitor_proc = subprocess.Popen([sys.executable, monitor_script, str(os.getpid())], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
 
         sources = []
         intensities = args.I
@@ -333,8 +341,8 @@ if __name__ == "__main__":
             if (args.telescope in telescope_types):
                 telescope = Telescope.constructor(args.telescope, backend=backend)
             else:
-                printlog (log_file, f"Telescope {args.telescope} not found. Loading MeerKAT as default. Values accepted: {telescope_types}")
-                telescope = Telescope.constructor("MeerKAT", backend=backend)
+                printlog (log_file, f"Telescope {args.telescope} not found. Loading SKA1LOW as default. Values accepted: {telescope_types}")
+                telescope = Telescope.constructor("SKA1LOW", backend=backend)
 
 
 

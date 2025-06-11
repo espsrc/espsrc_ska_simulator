@@ -41,7 +41,7 @@ def generate_default_filename():
     now = datetime.now()
     return f"{now.strftime('%Y%m%d_%H%M')}_monitor.log"
 
-def live_plot(csv_file):
+def live_plot(csv_file, pid=None):
     #plt.style.use("seaborn")
     fig, (ax_ram, ax_disk) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
     fig.tight_layout(pad=3.0)
@@ -78,6 +78,11 @@ def live_plot(csv_file):
 
             annotation_ram.set_visible(False)
             annotation_disk.set_visible(False)
+        # check if the process is still running
+        if pid is not None and not is_process_running(pid):
+            plt.close(fig)
+            print("Process finished. Monitoring stopped.")
+            return
 
     def on_mouse_move(event):
         if not x_data or event.inaxes not in [ax_ram, ax_disk]:
@@ -145,7 +150,7 @@ def main():
     monitoring_thread = threading.Thread(target=monitor_loop, args=(args.pid, path, csv_file), daemon=True)
     monitoring_thread.start()
     # 👇 Run the plot in the main thread
-    live_plot(csv_file)
+    live_plot(csv_file, args.pid)
     # Read CSV data and save the plot into a file
     timestamps, disk_gb, ram_gb = read_csv_data(csv_file)
     fig, (ax_ram, ax_disk) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
