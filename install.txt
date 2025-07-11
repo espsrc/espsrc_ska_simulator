@@ -10,8 +10,11 @@ conda install -n base conda-libmamba-solver
 conda create -n karabo python=3.9.21
 conda activate karabo
 # install karabo
-conda config --add channels ids4
-conda config --add  nvidia/label/cuda-11.7.0 
+# conda config --add channels conda-forge
+# conda config --add channels i4ds
+# conda config --add channels nvidia/label/cuda-11.7.0 
+conda install -c nvidia/label/cuda-11.7.0 -c i4ds -c conda-forge karabo-pipeline
+
 conda install karabo-pipeline
 
 
