@@ -188,3 +188,6 @@ web/spsrc/*.sh
 web/spsrc/satic/simulations
 202**
 phd
+
+scripts/srcs
+*.pickle
