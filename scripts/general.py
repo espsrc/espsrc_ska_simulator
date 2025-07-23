@@ -89,7 +89,8 @@ def iaa_create_image_custom_command(
                 "Unexpected command. Expecting command to start with "
                 f'"{expected_command_prefix}".'
             )
-        command = _get_command_prefix(tmp_dir) + command
+        # command = _get_command_prefix(tmp_dir) + command
+        command = "OPENBLAS_NUM_THREADS=1 ${command}"
         print(f"WSClean command: [{command}]")
         completed_process = subprocess.run(
             command,
@@ -298,6 +299,8 @@ if __name__ == "__main__":
         argparser.add_argument( "--pixels", type=int, help="Number of pixels in the image", default=512, )
         argparser.add_argument( "--imaging_niter", type=int, help="Number of iterations for the imager", default=1000, )
         argparser.add_argument("--fov", type=float, help="Field of view in degrees", default=0)
+        argparser.add_argument("--robust", type=float, default=0.0, help="Robustness factor for imaging")
+
         argparser.add_argument("--rms", action="store_true", default=False, help="Enable RMS calculation")
         # Add noise_level argument
         argparser.add_argument("--rms_start", type=float, default=0, help="Noise level start in Jy for RMS calculation")
@@ -312,55 +315,10 @@ if __name__ == "__main__":
         prefix = datetime.now().strftime("%Y%m%d_%H%M") if args.prefix is None else args.prefix
 
         version_telescope = get_telescope_version(args.telescope)
-
-        # if args.telescope in get_args(OSKARTelescopesWithVersionType):
-        #     from karabo.simulation import telescope_versions
-        #     available_versions = []
-        #     available_objects = []
-        #     for obj in dir(telescope_versions):
-        #         # Check if the object is a class
-
-        #         if isinstance(getattr(telescope_versions, obj), type):
-        #             available_objects.append(getattr(telescope_versions, obj))
-        #             available_versions.append(letters_and_digits(getattr(telescope_versions, obj).__name__))
-        #     myversions = []
-        #     similarity = process.extract(only_letters(args.telescope), available_versions, scorer=fuzz.ratio)
-        #     print(similarity)
-        #     for version, score in similarity:
-        #         if score > 90:
-        #             # get the index of the version in available_versions
-        #             idx = available_versions.index(version)
-        #             myversions.append(available_objects[idx])
-
-        #     available_options = []
-        #     available_parents = []
-        #     for version_option in myversions:
-        #         for option in version_option:
-        #             available_parents.append(version_option)
-        #             available_options.append(option)
-
-        #     if len(available_options) == 0:
-        #         print(f"No versions found for {args.telescope}. Exiting.")
-        #         sys.exit(1)
-        #     if len(available_options) == 1:
-        #         version_telescope = available_options[0]
-        #         print(f"Using version {version_telescope} for telescope {args.telescope}")
-        #     elif len(myversions) > 1:
-                
-        #         option = None
-        #         for idx, option in enumerate(available_options):
-        #             print(f"{idx+1}. {option}")
-        #         choice = input("Enter the number of the version you want to use: ")
-        #         try:
-        #             choice = int(choice)
-        #             if choice < 1 or choice > len(myversions):
-        #                 raise ValueError("Invalid choice")
-        #             version_telescope = available_options[choice-1]
-        #         except ValueError as e:
-        #             print(f"Invalid choice: {e}. Exiting.")
-        #             sys.exit(1)
-
-        log_file = os.path.join(os.path.dirname(__file__), f'{prefix}.log')
+        os.makedirs(os.path.join(os.path.dirname(__file__), prefix), exist_ok=True)
+        work_dir = os.path.join(os.path.dirname(__file__), prefix)
+        os.chdir(work_dir)
+        log_file = os.path.join(os.path.dirname(__file__), prefix, f'{prefix}.log')
         printlog (log_file, f"Command line: {' '.join(sys.argv)}")
         printlog (log_file, "System info")
         # Print command line
@@ -479,7 +437,6 @@ if __name__ == "__main__":
                             sources.append(source)
                         except Exception as e:
                             printlog(log_file, show_exc(e))
-                # source = Source.from_name('HCG16')
                 skyModel = SkyModel()
                 sources_list = []
                 for source in sources:
@@ -488,24 +445,24 @@ if __name__ == "__main__":
                 sources_list = np.array(sources_list)            
                 skyModel.add_point_sources(sources_list)
 
-            # coords_set = SkyCoord(ra=[source.ra for source in sources], 
-            #                       dec=[source.dec for source in sources], 
-            #                       unit=(u.deg, u.deg), frame='icrs')
-            # center = SkyCoord(ra=np.mean(coords_set.ra),
-            #                   dec=np.mean(coords_set.dec),
-            #                   unit=(u.deg, u.deg), frame='icrs')
-            # source_ref = Source(center.ra, center.dec, 45, 0)
-
             center = skyModel.get_center()
             source_ref = Source(center.ra, center.dec, 1, 0)
 
             if (args.bandwidth == 0):
                 n_channels = args.n_channels
                 bandwidth = args.delta_freq * n_channels * u.MHz
-
+                delta_freq = args.delta_freq * u.MHz
             else:
                 bandwidth = args.bandwidth * u.MHz
-                n_channels = int(args.bandwidth / args.delta_freq)
+                if (args.n_channels == 0):
+                    n_channels = int(args.bandwidth / args.delta_freq)
+                    delta_freq = args.delta_freq * u.MHz
+                else:
+                    n_channels = args.n_channels
+                    delta_freq = bandwidth / n_channels
+
+            start_freq = args.freq * u.MHz - n_channels * delta_freq/ 2 
+
                 
 
 
@@ -518,7 +475,7 @@ if __name__ == "__main__":
             printlog (log_file, f"\tFrequency: {args.freq} MHz")
             printlog (log_file, f"\tBandwidth: {bandwidth.to(u.MHz).value} MHz")
             printlog (log_file, f"\tNumber of channels: {n_channels}")
-            printlog (log_file, f"\tDelta frequency: {args.delta_freq} MHz")
+            printlog (log_file, f"\tDelta frequency: {delta_freq.value} MHz")
             printlog (log_file, f"\tObservation time: {args.seconds} seconds")
             printlog (log_file, f"\tPixels: {args.pixels}")
             printlog (log_file, f"\tIntensity: {args.I}")
@@ -552,7 +509,7 @@ if __name__ == "__main__":
 
             if len(sources) < 100:
                 printlog (log_file, "Saving sources to JSON")
-                sources_json_path = os.path.join(os.path.dirname(__file__), f'{prefix}_sources.json')
+                sources_json_path = os.path.join(work_dir, f'{prefix}_sources.json')
                 with open(sources_json_path, 'w') as f:
                     json.dump([source.to_json() for source in sources], f, indent=4)
                 printlog (log_file, f"Sources saved in {sources_json_path}")
@@ -561,8 +518,7 @@ if __name__ == "__main__":
 
             observation_time = source_ref.get_best_observation_time(telescope=telescope)
 
-            start_freq = args.freq * u.MHz - n_channels * args.delta_freq / 2 * u.MHz
-            delta_freq = args.delta_freq * u.MHz
+
             number_of_timesteps = int(args.seconds / 7.997)
             number_of_channels = n_channels
 
@@ -577,7 +533,8 @@ if __name__ == "__main__":
                 phase_centre_dec_deg = source_ref.dec.to(u.deg).value,
             )
 
-            root_path = os.path.dirname(__file__)
+            # root_path = os.path.dirname(__file__)
+            root_path = work_dir
             visibility_path = os.path.join(root_path, f'{prefix}_visibilities.MS')
             if os.path.exists(visibility_path):
                 if args.overwrite:
@@ -598,8 +555,8 @@ if __name__ == "__main__":
             
             simulation_params = {
                 'channel_bandwidth_hz': delta_freq.to(u.Hz).value,
-                'station_type': "Aperture array",
-                #'station_type': "Gaussian beam",
+                #'station_type': "Aperture array",
+                'station_type': "Gaussian beam",
                 'gauss_beam_fwhm_deg': fov.to(u.deg).value,
                 'gauss_ref_freq_hz': frequency.to(u.Hz).value,
                 'use_gpus': False,
@@ -639,7 +596,7 @@ if __name__ == "__main__":
                 printlog (log_file, "Cleaning not supported for OSKAR, using WSCLEAN")
                 path_fits = os.path.join(root_path, f"{prefix}_cleaned.fits")
                 # OPENBLAS_NUM_THREADS=1 wsclean -size 512 512 -scale 0.005385420420273604deg -niter 50000 -mgain 0.8 -auto-threshold 3 /mnt/scratch/espsrc_ska_simulator/scripts/20250623_0748_visibilities.MS
-                custom_command = f"wsclean -multiscale -size {args.pixels} {args.pixels} -scale {imaging_cellsize.to(u.deg).value}deg -niter {args.niter} -mgain 0.8 -auto-threshold 0.3 -auto-mask 3 -channels-out 16 -join-channels {visibility_path}"
+                custom_command = f"wsclean -weight briggs {args.robust} -multiscale -size {args.pixels} {args.pixels} -scale {imaging_cellsize.to(u.deg).value}deg -niter {args.niter} -mgain 0.8 -auto-threshold 0.3 -auto-mask 3 -channels-out 8 -join-channels {visibility_path}"
                 # path_fits = f"{prefix}_cleaned.fits"
                 printlog (log_file, f"Running custom wsclean command: {custom_command}")
                 cleaned = iaa_create_image_custom_command(custom_command, path_fits)
