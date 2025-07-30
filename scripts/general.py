@@ -38,6 +38,9 @@ from karabo.simulation.telescope import OSKARTelescopesWithVersionType, OSKARTel
 import argparse, pickle, re
 from thefuzz import process, fuzz
 from utils import printlog, show_exc, Source, get_diameter, SkyModel
+import subprocess
+import glob
+
 
 
 def letters_and_digits(s):
@@ -90,7 +93,7 @@ def iaa_create_image_custom_command(
                 f'"{expected_command_prefix}".'
             )
         # command = _get_command_prefix(tmp_dir) + command
-        command = "OPENBLAS_NUM_THREADS=1 ${command}"
+        command = f"OPENBLAS_NUM_THREADS=1 {command}"
         print(f"WSClean command: [{command}]")
         completed_process = subprocess.run(
             command,
@@ -121,16 +124,30 @@ def iaa_create_image_custom_command(
 #                 shutil.move(cube_path, new_path)
 
 
-        if isinstance(output_filenames, str):
-            MFS_files = glob.glob(os.path.join(tmp_dir, "*-MFS-image.fits"))
-            cleaned_image = MFS_files[0] if len(MFS_files) > 0 else None
-            shutil.move(cleaned_image, os.path.join(tmp_dir, output_filenames))
-            return Image(path=os.path.join(tmp_dir, output_filenames))
-        else:
-            return [
-                Image(path=os.path.join(tmp_dir, output_filename))
-                for output_filename in output_filenames
-            ]
+        # if isinstance(output_filenames, str):
+        #     MFS_files = glob.glob(os.path.join(tmp_dir, "*-MFS-image.fits"))
+        #     cleaned_image = MFS_files[0] if len(MFS_files) > 0 else None
+        #     shutil.move(cleaned_image, os.path.join(tmp_dir, output_filenames))
+        #     return Image(path=os.path.join(tmp_dir, output_filenames))
+        # else:
+        #     return [
+        #         Image(path=os.path.join(tmp_dir, output_filename))
+        #         for output_filename in output_filenames
+        #     
+
+        tmp_files = glob.glob("wsclean-0*.fits")
+        for tmp in tmp_files:
+            try:
+                os.remove(tmp)
+            except Exception as e:
+                print (show_exc(e))
+        mfs_files = glob.glob("*-MFS-*.fits")
+        print (f"Found MFS files: {mfs_files}")
+        return [
+            Image(path=mfs_file)
+            for mfs_file in mfs_files
+        ] if len(mfs_files) > 0 else None
+
     except Exception as e:
         printlog(f"{show_exc(e)}. \t\t Error running WSClean command: {command}")
         return None
@@ -315,6 +332,7 @@ if __name__ == "__main__":
         prefix = datetime.now().strftime("%Y%m%d_%H%M") if args.prefix is None else args.prefix
 
         version_telescope = get_telescope_version(args.telescope)
+        prefix = f"{prefix}_{args.telescope.replace('-','_')}" if args.telescope is not None else prefix
         os.makedirs(os.path.join(os.path.dirname(__file__), prefix), exist_ok=True)
         work_dir = os.path.join(os.path.dirname(__file__), prefix)
         os.chdir(work_dir)
@@ -493,7 +511,6 @@ if __name__ == "__main__":
             
 
             # Launch the scripts monitor.py (not blocking) with pid of the current process 
-            import subprocess
             monitor_script = os.path.join(os.path.dirname(__file__), 'monitor.py')
             if os.path.exists(monitor_script):
                 printlog (log_file, f"Launching monitor script {monitor_script} with PID {os.getpid()}")
@@ -503,7 +520,7 @@ if __name__ == "__main__":
             printlog (log_file, "Saving sources")
             # sources_path = os.path.join(os.path.dirname(__file__), f'{prefix}_sources.png')
             # skyModel.explore_sky([center.ra.value, center.dec.value], filename=sources_path, vmin=0, vmax=1.05 * np.max(sources_list[:, 2]),cfun=np.abs)
-            sources_path = os.path.join(os.path.dirname(__file__), f'{prefix}_sources.png')
+            sources_path = os.path.join(work_dir, f'{prefix}_sources.png')
             skyModel.explore_sky([source_ref.ra.value, source_ref.dec.value], filename=sources_path, cfun=np.abs)
             printlog (log_file, f"Sources saved in {sources_path}. Finished.")
 
@@ -600,12 +617,23 @@ if __name__ == "__main__":
                 # path_fits = f"{prefix}_cleaned.fits"
                 printlog (log_file, f"Running custom wsclean command: {custom_command}")
                 cleaned = iaa_create_image_custom_command(custom_command, path_fits)
-                printlog (log_file, f"Cleaned image (FITS) saved in {path_fits}")
-                cleaned_path = os.path.join(root_path, f'{prefix}_cleaned.png')                
+                # Remove the temporary files created by WSClean
+                tmp_files = glob.glob(os.path.join(tmp_dir, "wsclean-00*.fits"))
+                for tmp_file in tmp_files:
+                    os.remove(tmp_file)
+
+#                 printlog (log_file, f"Cleaned image (FITS) saved in {path_fits}")
+#                 cleaned_path = os.path.join(root_path, f'{prefix}_cleaned.png')                
                 gamma = 0.3
-                cleaned.plot(title=f"Cleaned image (WSCLEAN) {backend.name.upper()} ({telescope.name.upper()})", filename=cleaned_path, wcs_enabled=True, xlabel='RA', ylabel='DEC', norm=PowerNorm(gamma))
-                printlog (log_file, f"Saved cleaned image to {cleaned_path}")
-            
+                wsclean_files = glob.glob('wsclean-*.fits')
+                seconds = args.seconds
+                for img_path in wsclean_files:
+                    img = Image(path=img_path)
+                    img.plot(title=f"Cleaned image (WSCLEAN) {backend.name.upper()} ({telescope.name.upper()})", filename=f"{prefix}_{img_path.replace('fits','png')}", wcs_enabled=True, xlabel='RA', ylabel='DEC', norm=PowerNorm(gamma))
+                    new_path = f'{prefix}_bw{bandwidth}_ch{n_channels}_fr{frequency.to(u.Hz).value}_sec{seconds}{img_path}'
+                    new_path = new_path.replace('wsclean-', '')
+                    shutil.move(img_path, new_path)
+                    
             printlog (log_file, "Time ellapsed: ", time.time() - t0)
 
 
