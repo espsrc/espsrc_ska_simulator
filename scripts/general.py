@@ -509,10 +509,10 @@ if __name__ == "__main__":
             
 
             # Launch the scripts monitor.py (not blocking) with pid of the current process 
-            monitor_script = os.path.join(os.path.dirname(__file__), 'monitor.py')
-            if os.path.exists(monitor_script):
-                printlog (log_file, f"Launching monitor script {monitor_script} with PID {os.getpid()}")
-                monitor_proc = subprocess.Popen([sys.executable, monitor_script, str(os.getpid()),f"--csv={prefix}_monitor.log"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+            # monitor_script = os.path.join(os.path.dirname(__file__), 'test_monitor.py')
+            # if os.path.exists(monitor_script):
+            #     printlog (log_file, f"Launching monitor script {monitor_script} with PID {os.getpid()}")
+            #     monitor_proc = subprocess.Popen([sys.executable, monitor_script, str(os.getpid()),f"--csv={prefix}_monitor.log"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
 
 
 

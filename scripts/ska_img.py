@@ -23,7 +23,7 @@ from scipy.ndimage.measurements import center_of_mass
 from radio_beam import Beam
 import reproject as rp
 
-from commons import show_exc
+from utils import show_exc
 
 VERBOSE = True
 
