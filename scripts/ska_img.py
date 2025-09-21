@@ -28,29 +28,29 @@ from utils import show_exc
 VERBOSE = True
 
 
-def _theta_image_from_pa_sky(center_sc: SkyCoord, pa_sky_deg: float, w: WCS) -> float:
-    """
-    Devuelve theta (rad) en el plano de imagen (x->derecha, y->ARRIBA),
-    a partir del PA astronómico (grados E de N). Usa un paso angular pequeño
-    y WCS para medir el ángulo real en píxeles.
-    """
+# def _theta_image_from_pa_sky(center_sc: SkyCoord, pa_sky_deg: float, w: WCS) -> float:
+#     """
+#     Devuelve theta (rad) en el plano de imagen (x->derecha, y->ARRIBA),
+#     a partir del PA astronómico (grados E de N). Usa un paso angular pequeño
+#     y WCS para medir el ángulo real en píxeles.
+#     """
 
-    if hasattr(pa_sky_deg, 'unit'):
-        pa_sky_deg = pa_sky_deg.to(u.deg).value
+#     if hasattr(pa_sky_deg, 'unit'):
+#         pa_sky_deg = pa_sky_deg.to(u.deg).value
 
-    x0, y0 = w.world_to_pixel(center_sc)
+#     x0, y0 = w.world_to_pixel(center_sc)
 
-    step = 1.0 * u.arcsec  
-    p1 = center_sc.directional_offset_by(pa_sky_deg * u.deg, step)
-
-
-    x1, y1 = w.world_to_pixel(p1)
+#     step = 1.0 * u.arcsec  
+#     p1 = center_sc.directional_offset_by(pa_sky_deg * u.deg, step)
 
 
-    dx = x1 - x0
-    dy_up = -(y1 - y0)  
-    theta = np.arctan2(dy_up, dx) 
-    return theta
+#     x1, y1 = w.world_to_pixel(p1)
+
+
+#     dx = x1 - x0
+#     dy_up = -(y1 - y0)  
+#     theta = np.arctan2(dy_up, dx) 
+#     return theta
 
 def arcsec2pc(omega, D):
     if not hasattr(omega,'unit'):
