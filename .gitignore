@@ -196,3 +196,4 @@ analysis/
 **.backup
 **.log
 **.csv
+test**

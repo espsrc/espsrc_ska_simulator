@@ -276,7 +276,6 @@ if __name__ == "__main__":
         argparser.add_argument("--center", type=str, help="Center of the field in RA,DEC (J2000), format: 10h01m35.1s 2d41m41s", default=None)
         argparser.add_argument("--prefix", type=str, help="Prefix for filenames", default=None)
         argparser.add_argument( "--telescope", choices=telescope_choices, type=str, help="Telescope to use for the simulation, default is 'SKA1LOW'", default="SKA-MID-AAstar", )
-        # argparser.add_argument( "--telescope", choices=['SKA1LOW', 'SKA1MID', 'MeerKAT'], type=str, help="Telescope to use for the simulation ('SKA1LOW', 'SKA1MID'), default is 'SKA1LOW'", default="SKA1LOW", )
         argparser.add_argument("--I", type=float, default=10, help="Total Intensity in Jy (or max I if multiple sources)", nargs="+")
         argparser.add_argument("--Q", type=float, default=None, help="Q")
         argparser.add_argument("--U", type=float, default=None, help="U")
