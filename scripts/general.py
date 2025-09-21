@@ -37,9 +37,11 @@ from karabo.simulation.telescope import OSKARTelescopesWithVersionType, OSKARTel
 
 import argparse, pickle, re
 from thefuzz import process, fuzz
-from utils import printlog, show_exc, Source, get_diameter, SkyModel
+from utils import printlog, show_exc, Source, get_diameter
 import subprocess
 import glob
+from utils import SkyModel
+# from karabo.simulation.sky_model import SkyModel
 
 
 
@@ -106,34 +108,7 @@ def iaa_create_image_custom_command(
         print(f"WSClean output:\n[{completed_process.stdout}]")
         import glob
 
-#         if "-channels-out" in command:
-#             channel_files = glob.glob(os.path.join(tmp_dir, "*-[0-9][0-9][0-9][0-9]-image.fits"))
-#             
-#             if channel_files:
-#                 cube_path = create_fits_cube(
-#                     fits_files_pattern_or_list=channel_files,
-#                     output_filename=os.path.join(tmp_dir, "wsclean-cube.fits"),
-#                     freq_header_key="CRVAL3",
-#                     freq_unit="Hz",
-#                 )
-#                 if isinstance(output_filenames, str):
-#                     new_path = output_filenames.replace("cleaned", "cube")
-#                 else:
-#                     new_path = output_filenames[0].replace("cleaned", "cube")
-#                 print(f"Moving cube from {cube_path} to {new_path}")
-#                 shutil.move(cube_path, new_path)
 
-
-        # if isinstance(output_filenames, str):
-        #     MFS_files = glob.glob(os.path.join(tmp_dir, "*-MFS-image.fits"))
-        #     cleaned_image = MFS_files[0] if len(MFS_files) > 0 else None
-        #     shutil.move(cleaned_image, os.path.join(tmp_dir, output_filenames))
-        #     return Image(path=os.path.join(tmp_dir, output_filenames))
-        # else:
-        #     return [
-        #         Image(path=os.path.join(tmp_dir, output_filename))
-        #         for output_filename in output_filenames
-        #     
 
         tmp_files = glob.glob("wsclean-0*.fits")
         for tmp in tmp_files:
@@ -298,8 +273,9 @@ if __name__ == "__main__":
         # Use argparse for define two parameters; first parameter, a list with sources names; second parameters, show or write png
         argparser = argparse.ArgumentParser(description="SKAO simulation script")
         argparser.add_argument("--json", type=str, help="JSON file with sources", default=None)
+        argparser.add_argument("--center", type=str, help="Center of the field in RA,DEC (J2000), format: 10h01m35.1s 2d41m41s", default=None)
         argparser.add_argument("--prefix", type=str, help="Prefix for filenames", default=None)
-        argparser.add_argument( "--telescope", choices=telescope_choices, type=str, help="Telescope to use for the simulation, default is 'SKA1LOW'", default="SKA1LOW", )
+        argparser.add_argument( "--telescope", choices=telescope_choices, type=str, help="Telescope to use for the simulation, default is 'SKA1LOW'", default="SKA-MID-AAstar", )
         # argparser.add_argument( "--telescope", choices=['SKA1LOW', 'SKA1MID', 'MeerKAT'], type=str, help="Telescope to use for the simulation ('SKA1LOW', 'SKA1MID'), default is 'SKA1LOW'", default="SKA1LOW", )
         argparser.add_argument("--I", type=float, default=10, help="Total Intensity in Jy (or max I if multiple sources)", nargs="+")
         argparser.add_argument("--Q", type=float, default=None, help="Q")
@@ -308,14 +284,14 @@ if __name__ == "__main__":
         argparser.add_argument("--ref_freq", type=float, nargs="+", default=None, help="Reference frequency in Hz")
         argparser.add_argument("--overwrite", action="store_true", help="Overwrite existing files")
         argparser.add_argument("--freq", type=float, help="Central Freq in MHz", default=200)
-        argparser.add_argument("--bandwidth", type=float, help="Bandwidth in MHz", default=0)
+        argparser.add_argument("--bandwidth", type=float, help="Bandwidth in MHz", default=100)
         argparser.add_argument("--n_channels", type=int, help="Number of channels", default=4)
         argparser.add_argument("--delta_freq", type=float, help="Delta Freq in MHz", default=0.1)
-        argparser.add_argument("--seconds", type=int, help="Observation Time in seconds", default=1)
+        argparser.add_argument("--seconds", type=int, help="Observation Time in seconds", default=10)
         argparser.add_argument("--cleaning", action="store_true", help="Use cleaning algorithm")
         argparser.add_argument( "--pixels", type=int, help="Number of pixels in the image", default=512, )
         argparser.add_argument( "--imaging_niter", type=int, help="Number of iterations for the imager", default=1000, )
-        argparser.add_argument("--fov", type=float, help="Field of view in degrees", default=0)
+        argparser.add_argument("--fov", type=str, help="Field of view. Formats accepted: 1deg, 1arcsec, 1armin, 1rad. If not units, then assume degrees", default=None)
         argparser.add_argument("--robust", type=float, default=0.0, help="Robustness factor for imaging")
 
         argparser.add_argument("--rms", action="store_true", default=False, help="Enable RMS calculation")
@@ -371,12 +347,25 @@ if __name__ == "__main__":
             telescope = Telescope.constructor("SKA1LOW", backend=backend)
 
         telescope.plot_telescope(file=f"{prefix}_{args.telescope}_{version_telescope}_telescope.png")    
-        if args.fov == 0:
+        if args.fov is None:
             # Convert frequency to wavelength
             wavelength = frequency.to(u.m, equivalencies=u.spectral())
-            fov = (1.22 * wavelength / get_diameter(args.telescope.upper())) * u.rad
+            fov = (1.25 * wavelength / get_diameter(args.telescope.upper())) * u.rad
         else:
-            fov = (args.fov * u.deg).to(u.rad)
+            try:
+                fov = u.Quantity(args.fov)
+
+                if fov.unit.is_equivalent(u.deg):
+                    fov = fov.to(u.rad)
+                elif fov.unit.is_equivalent(u.rad):
+                    fov = fov.t(u.rad)
+                else:
+                    fov = fov.value * u.deg
+            except Exception as e:
+                print(show_exc(e))
+                fov = float(args.fov) * u.deg
+                fov = fov.to(u.rad)
+
 
         try:
             if args.catalogue > 0:
@@ -463,7 +452,16 @@ if __name__ == "__main__":
                 sources_list = np.array(sources_list)            
                 skyModel.add_point_sources(sources_list)
 
-            center = skyModel.get_center()
+            if args.center is not None:
+                try:
+                    coords_str = args.center.replace(","," ").replace(":"," ")
+                    center = SkyCoord(coords_str, unit=(u.hourangle, u.deg))    
+                    # skyModel.set_center(center)
+                except Exception as e:
+                    print(show_exc(e))
+                    center = skyModel.get_center()
+
+
             source_ref = Source(center.ra, center.dec, 1, 0)
 
             if (args.bandwidth == 0):
@@ -485,6 +483,7 @@ if __name__ == "__main__":
 
 
             printlog (log_file, "Starting simulation with params:")
+            printlog( log_file, f"\tCenter: {center.to_string('hmsdms')}")
             printlog (log_file, f"\tSources: {len(sources)}")
             printlog (log_file, f"\tPrefix: {prefix}")
             printlog (log_file, f"\tTelescope: {args.telescope}")
@@ -517,26 +516,9 @@ if __name__ == "__main__":
                 monitor_proc = subprocess.Popen([sys.executable, monitor_script, str(os.getpid()),f"--csv={prefix}_monitor.log"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
 
 
-            printlog (log_file, "Saving sources")
-            # sources_path = os.path.join(os.path.dirname(__file__), f'{prefix}_sources.png')
-            # skyModel.explore_sky([center.ra.value, center.dec.value], filename=sources_path, vmin=0, vmax=1.05 * np.max(sources_list[:, 2]),cfun=np.abs)
-            sources_path = os.path.join(work_dir, f'{prefix}_sources.png')
-            skyModel.explore_sky([source_ref.ra.value, source_ref.dec.value], filename=sources_path, cfun=np.abs)
-            printlog (log_file, f"Sources saved in {sources_path}. Finished.")
-
-            if len(sources) < 100:
-                printlog (log_file, "Saving sources to JSON")
-                sources_json_path = os.path.join(work_dir, f'{prefix}_sources.json')
-                with open(sources_json_path, 'w') as f:
-                    json.dump([source.to_json() for source in sources], f, indent=4)
-                printlog (log_file, f"Sources saved in {sources_json_path}")
-
-
 
             observation_time = source_ref.get_best_observation_time(telescope=telescope)
-
-
-            number_of_timesteps = int(args.seconds / 7.997)
+            number_of_timesteps = max(1,int(args.seconds / 7.997))
             number_of_channels = n_channels
 
             observation = Observation(
@@ -546,11 +528,10 @@ if __name__ == "__main__":
                 length = timedelta(seconds=args.seconds),
                 number_of_time_steps=number_of_timesteps,
                 number_of_channels=n_channels,
-                phase_centre_ra_deg = source_ref.ra.to(u.deg).value,
-                phase_centre_dec_deg = source_ref.dec.to(u.deg).value,
+                phase_centre_ra_deg = center.ra.to(u.deg).value,
+                phase_centre_dec_deg = center.dec.to(u.deg).value,
             )
 
-            # root_path = os.path.dirname(__file__)
             root_path = work_dir
             visibility_path = os.path.join(root_path, f'{prefix}_visibilities.MS')
             if os.path.exists(visibility_path):
@@ -586,51 +567,48 @@ if __name__ == "__main__":
                 simulation_params['noise_rms_end'] = args.rms_end
 
             simulation = InterferometerSimulation(**simulation_params)
+            # skyModel.set_center(center)
             simulation.run_simulation(telescope=telescope, observation=observation, sky=skyModel, visibility_path=visibility_path, backend=backend)
             printlog (log_file, f"Visibilities saved in {visibility_path}")
             printlog (log_file, "Recovering visibilities")
             visibilities = Visibility(visibility_path)
             imaging_cellsize = fov / int(args.pixels)
+            if not args.cleaning :
+                config = OskarDirtyImagerConfig(
+                    imaging_npixel=args.pixels,
+                    imaging_cellsize= imaging_cellsize.to(u.rad).value,
+                    combine_across_frequencies=True,
+                    imaging_phase_centre=source_ref.coords())
+                imager = OskarDirtyImager(config=config)
+                dirty_image = imager.create_dirty_image(visibilities)
+                dirty_png_path = os.path.join(root_path, f'{prefix}_dirty.png')
+                dirty_image.plot(title=f"Dirty image {backend.name} ({telescope.name.upper()})", wcs_enabled=True, xlabel='RA', ylabel='DEC')
 
-            config = OskarDirtyImagerConfig(
-                imaging_npixel=args.pixels,
-                imaging_cellsize= imaging_cellsize.to(u.rad).value,
-                combine_across_frequencies=True,
-                imaging_phase_centre=source_ref.coords())
-            imager = OskarDirtyImager(config=config)
-            dirty_image = imager.create_dirty_image(visibilities)
-            dirty_png_path = os.path.join(root_path, f'{prefix}_dirty.png')
-            dirty_image.plot(title=f"Dirty image {backend.name} ({telescope.name.upper()})", wcs_enabled=True, xlabel='RA', ylabel='DEC')
+                dirty_image.plot(title=f"Dirty image {backend.name} ({telescope.name.upper()})", filename=dirty_png_path, wcs_enabled=True, xlabel='RA', ylabel='DEC')
+                printlog (log_file, f"Dirty image (PNG) saved in {dirty_png_path}")
 
-            dirty_image.plot(title=f"Dirty image {backend.name} ({telescope.name.upper()})", filename=dirty_png_path, wcs_enabled=True, xlabel='RA', ylabel='DEC')
-            printlog (log_file, f"Dirty image (PNG) saved in {dirty_png_path}")
-
-            dirty_fits_path = os.path.join(root_path, f'{prefix}_dirty.fits')
-            dirty_image.write_to_file(dirty_fits_path, overwrite=True)
-            printlog (log_file, f"Dirty image (FITS) saved in {dirty_fits_path}")
+                dirty_fits_path = os.path.join(root_path, f'{prefix}_dirty.fits')
+                dirty_image.write_to_file(dirty_fits_path, overwrite=True)
+                printlog (log_file, f"Dirty image (FITS) saved in {dirty_fits_path}")
 
             if args.cleaning:
                 printlog (log_file, "Cleaning not supported for OSKAR, using WSCLEAN")
                 path_fits = os.path.join(root_path, f"{prefix}_cleaned.fits")
-                # OPENBLAS_NUM_THREADS=1 wsclean -size 512 512 -scale 0.005385420420273604deg -niter 50000 -mgain 0.8 -auto-threshold 3 /mnt/scratch/espsrc_ska_simulator/scripts/20250623_0748_visibilities.MS
                 custom_command = f"wsclean -weight briggs {args.robust} -multiscale -size {args.pixels} {args.pixels} -scale {imaging_cellsize.to(u.deg).value}deg -niter {args.niter} -mgain 0.8 -auto-threshold 0.3 -auto-mask 3 -channels-out 8 -join-channels {visibility_path}"
-                # path_fits = f"{prefix}_cleaned.fits"
                 printlog (log_file, f"Running custom wsclean command: {custom_command}")
                 cleaned = iaa_create_image_custom_command(custom_command, path_fits)
                 # Remove the temporary files created by WSClean
                 tmp_files = glob.glob(os.path.join(tmp_dir, "wsclean-00*.fits"))
                 for tmp_file in tmp_files:
                     os.remove(tmp_file)
-
-#                 printlog (log_file, f"Cleaned image (FITS) saved in {path_fits}")
-#                 cleaned_path = os.path.join(root_path, f'{prefix}_cleaned.png')                
+              
                 gamma = 0.3
                 wsclean_files = glob.glob('wsclean-*.fits')
                 seconds = args.seconds
                 for img_path in wsclean_files:
                     img = Image(path=img_path)
                     img.plot(title=f"Cleaned image (WSCLEAN) {backend.name.upper()} ({telescope.name.upper()})", filename=f"{prefix}_{img_path.replace('fits','png')}", wcs_enabled=True, xlabel='RA', ylabel='DEC', norm=PowerNorm(gamma))
-                    new_path = f'{prefix}_bw{bandwidth}_ch{n_channels}_fr{frequency.to(u.Hz).value}_sec{seconds}{img_path}'
+                    new_path = f'{prefix}_bw{bandwidth.to(u.MHz).value:.0f}_ch{n_channels}_fr{frequency.to(u.MHz).value:.0f}_sec{seconds}{img_path}'
                     new_path = new_path.replace('wsclean-', '')
                     shutil.move(img_path, new_path)
                     

@@ -4,8 +4,11 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.time import Time
 import astropy.coordinates as acoord
-from karabo.simulation.telescope import Telescope
-from karabo.simulation.sky_model import SkyModel as KaraboSkyModel
+try:
+    from karabo.simulation.telescope import Telescope # type: ignore
+    from karabo.simulation.sky_model import SkyModel as KaraboSkyModel # type: ignore
+except ImportError as e:
+    print(f"Error importing Karabo modules: {e}")
 import numpy as np
 
 
@@ -77,10 +80,10 @@ def get_diameter(telescope_name):
 
 class Source:
     def __init__(self, ra, dec, I, Q=0 * u.Jy, U=0 * u.Jy, V=0 * u.Jy, ref_freq=0 * u.Hz, spec_index=0, rot_meas=0 * u.rad/(u.m**2), 
-                 major_axis = 0*u.arcsec, minor_axis = 0*u.arcsec, pa=0*u.arcsec,  true_redshift=0, obs_redshift=0, obj_id = None):
+                 major_axis = 0*u.arcsec, minor_axis = 0*u.arcsec, pa=0*u.deg,  true_redshift=0, obs_redshift=0, obj_id = None):
         # Initialize the source with its parameters, checking units
 
-        list_of_units = [u.deg, u.deg, u.Jy, u.Jy, u.Jy, u.Jy, u.Hz, u.rad/(u.m**2), u.arcsec, u.arcsec, u.arcsec]
+        list_of_units = [u.deg, u.deg, u.Jy, u.Jy, u.Jy, u.Jy, u.Hz, u.rad/(u.m**2), u.arcsec, u.arcsec, u.deg]
         list_of_values = [ra, dec, I, Q, U, V, ref_freq, rot_meas, major_axis, minor_axis, pa]
         for i, unit in enumerate(list_of_units):
             if not isinstance(list_of_values[i], u.Quantity):
@@ -105,6 +108,7 @@ class Source:
         self.true_redshift = true_redshift
         self.obs_redshift = obs_redshift
         self.obj_id = obj_id
+        self.coord = SkyCoord(ra=self.ra, dec=self.dec, unit=(u.deg, u.deg), frame='icrs')
 
     @staticmethod
     def from_name(name):
@@ -148,8 +152,17 @@ class Source:
                           rot_meas=array[8] * (u.rad/(u.m**2)), 
                           major_axis=array[9] * u.arcsec, minor_axis=array[10] * u.arcsec, 
                           pa=array[11] * u.arcsec)
+        elif len(array) == 14:
+            return Source(ra=array[0] * u.deg, dec=array[1] * u.deg, I=array[2] * u.Jy, 
+                          Q=array[3] * u.Jy, U=array[4] * u.Jy, V=array[5] * u.Jy,
+                          ref_freq=array[6] * u.Hz, spec_index=array[7], 
+                          rot_meas=array[8] * (u.rad/(u.m**2)), 
+                          major_axis=array[9] * u.arcsec, minor_axis=array[10] * u.arcsec, 
+                          pa=array[11] * u.arcsec,
+                          true_redshift=array[12],
+                          obs_redshift=array[13])
         else:
-            raise ValueError("Array must have 3, 6, or 12 elements (ra, dec, I, [Q, U, V], [ref_freq, spec_index, rot_meas, major_axis, minor_axis, pa])")
+            raise ValueError("Array must have 3, 6, or 12 elements (ra, dec, I, [Q, U, V], [ref_freq, spec_index, rot_meas, major_axis, minor_axis, pa, true_redshift, obs_redshift])")
     
     def __str__(self):
         # Return a string representation of the source (only non-zero values)
@@ -173,12 +186,17 @@ class Source:
                 self.rot_meas.value, self.major_axis.value,
                 self.minor_axis.value, self.pa.value,
                 self.true_redshift, self.obs_redshift)
-        
+
+    @property
+    def flux(self):
+        # Return the total flux of the source
+        return self.I    
+    
     def coords(self, frame='icrs'):
         # Return the coordinates of the source
         return SkyCoord(ra=self.ra, dec=self.dec, unit=(u.deg, u.deg), frame=frame)
 
-    def get_best_observation_time(self, telescope:Telescope, date=None):
+    def get_best_observation_time(self, telescope, date=None):
         """
         Returns the local time at which an object with a given RA/Dec culminates (best observation time).
         
@@ -230,151 +248,153 @@ class Source:
             rot_meas=json_data['rot_meas'] * (u.rad/(u.m**2)),
             major_axis=json_data['major_axis'] * u.arcsec,
             minor_axis=json_data['minor_axis'] * u.arcsec,
-            pa=json_data['pa'] * u.arcsec,
+            pa=json_data['pa'] * u.deg,
             true_redshift=json_data['true_redshift'],
             obs_redshift=json_data['obs_redshift']
         )
 
+try:
+    class SkyModel(KaraboSkyModel):
+        phase_center = None
+
+        def __init__(self, *args, **kwargs):
+            # Call the parent constructor
+            super().__init__(*args, **kwargs)
+            if len(self.sources) > 0:
+                self.get_center()  # Calculate the phase center if sources are provided
+
+
+
+        def to_json(self):
+            # Convert the SkyModel to a JSON serializable dictionary
+            return [source.to_json() for source in self.sources]
         
-class SkyModel(KaraboSkyModel):
-    phase_center = None
-
-    def __init__(self, *args, **kwargs):
-        # Call the parent constructor
-        super().__init__(*args, **kwargs)
-        if len(self.sources) > 0:
-            self.get_center()  # Calculate the phase center if sources are provided
-
-
-
-    def to_json(self):
-        # Convert the SkyModel to a JSON serializable dictionary
-        return [source.to_json() for source in self.sources]
-    
-    def show(self, **kwargs):
-        if "block" not in kwargs:
-            kwargs["block"] = False
-        if "xlabel" not in kwargs:
-            kwargs["xlabel"] = "RA (deg)"
-        if "ylabel" not in kwargs:
-            kwargs["ylabel"] = "DEC (deg)"
-        print(self.phase_center)
+        def show(self, **kwargs):
+            if "block" not in kwargs:
+                kwargs["block"] = False
+            if "xlabel" not in kwargs:
+                kwargs["xlabel"] = "RA (deg)"
+            if "ylabel" not in kwargs:
+                kwargs["ylabel"] = "DEC (deg)"
+            print(self.phase_center)
+            
+            self.explore_sky([self.phase_center.ra.to(u.deg).value, self.phase_center.dec.to(u.deg).value], **kwargs)
         
-        self.explore_sky([self.phase_center.ra.to(u.deg).value, self.phase_center.dec.to(u.deg).value], **kwargs)
-    
-    @staticmethod
-    def from_json(json_data):
-        # Create a SkyModel object from a JSON list of sources
-        try:
-            sources = np.array([Source.from_json(source).to_sky_model() for source in json_data])
-            skyModel = SkyModel(sources)
-            center_ra = np.mean(sources[:, 0]) * u.deg
-            center_dec = np.mean(sources[:, 1]) * u.deg
+        @staticmethod
+        def from_json(json_data):
+            # Create a SkyModel object from a JSON list of sources
+            try:
+                sources = np.array([Source.from_json(source).to_sky_model() for source in json_data])
+                skyModel = SkyModel(sources)
+                center_ra = np.mean(sources[:, 0]) * u.deg
+                center_dec = np.mean(sources[:, 1]) * u.deg
 
-            skyModel.phase_center = SkyCoord(ra=center_ra, dec=center_dec, frame='icrs')
-            return skyModel
-        except Exception as e:
-            print(show_exc(e))
-            return None
-    
-    @staticmethod
-    def from_fits(fits_file, total_intensity=1* u.Jy, fov=1 * u.deg, frequency=1 * u.GHz, log_file='sky_model.log', prefix='sky_model', t0=0):
-        """        Load a SkyModel from a FITS file.
-        Parameters:
-        - fits_file: Path to the FITS file.
-        Returns:
-        - SkyModel object.
-        """
-        from astropy.io import fits
-        from astropy.wcs import WCS
-        import numpy as np
-        import time
+                skyModel.phase_center = SkyCoord(ra=center_ra, dec=center_dec, frame='icrs')
+                return skyModel
+            except Exception as e:
+                print(show_exc(e))
+                return None
+        
+        @staticmethod
+        def from_fits(fits_file, total_intensity=1* u.Jy, fov=1 * u.deg, frequency=1 * u.GHz, log_file='sky_model.log', prefix='sky_model', t0=0):
+            """        Load a SkyModel from a FITS file.
+            Parameters:
+            - fits_file: Path to the FITS file.
+            Returns:
+            - SkyModel object.
+            """
+            from astropy.io import fits
+            from astropy.wcs import WCS
+            import numpy as np
+            import time
 
-            
-        if os.path.exists(fits_file):
-            source_ref = Source.from_name("HCG16")
-            fits_data = fits.open(fits_file)
-            fits_header = fits_data[0].header
-            fits_data = fits_data[0].data
-            img_pixels = int(fits_data.shape[2])
-            fits_wcs = WCS(fits_header)
-            sky_wcs = WCS(naxis=4) # RA, DEC, Intensities, STOKES
-            sky_wcs.wcs.ctype = ['RA---TAN', 'DEC--TAN', 'FREQ', 'STOKES']
-            sky_wcs.wcs.crpix = [fits_data.shape[2]//2, fits_data.shape[3] // 2, 0, 0]
-            sky_wcs.wcs.crval = [source_ref.ra.to(u.deg).value, source_ref.dec.to(u.deg).value, frequency.to(u.Hz).value, 1.]
-            sky_wcs.wcs.cdelt = [fov.to(u.deg).value / img_pixels, fov.to(u.deg).value / img_pixels, 1.0, 1.0]
-            sky_wcs.wcs.cunit = ['deg', 'deg', 'Hz', '']
+                
+            if os.path.exists(fits_file):
+                source_ref = Source.from_name("HCG16")
+                fits_data = fits.open(fits_file)
+                fits_header = fits_data[0].header
+                fits_data = fits_data[0].data
+                img_pixels = int(fits_data.shape[2])
+                fits_wcs = WCS(fits_header)
+                sky_wcs = WCS(naxis=4) # RA, DEC, Intensities, STOKES
+                sky_wcs.wcs.ctype = ['RA---TAN', 'DEC--TAN', 'FREQ', 'STOKES']
+                sky_wcs.wcs.crpix = [fits_data.shape[2]//2, fits_data.shape[3] // 2, 0, 0]
+                sky_wcs.wcs.crval = [source_ref.ra.to(u.deg).value, source_ref.dec.to(u.deg).value, frequency.to(u.Hz).value, 1.]
+                sky_wcs.wcs.cdelt = [fov.to(u.deg).value / img_pixels, fov.to(u.deg).value / img_pixels, 1.0, 1.0]
+                sky_wcs.wcs.cunit = ['deg', 'deg', 'Hz', '']
 
-            fluxes = fits_data[0, 0, :, :] 
+                fluxes = fits_data[0, 0, :, :] 
 
-            # Check if total_intensity is a Quantity, if not, convert it
-            if not isinstance(total_intensity, u.Quantity):
-                total_intensity = total_intensity * u.Jy
+                # Check if total_intensity is a Quantity, if not, convert it
+                if not isinstance(total_intensity, u.Quantity):
+                    total_intensity = total_intensity * u.Jy
 
-            fluxes = fluxes / np.max(fluxes) * total_intensity.to(u.Jy).value # Normalize to max intensity
-            
-            sources = []
-            total_pixels = fluxes.size
-            skyModel = SkyModel(wcs=sky_wcs)
+                fluxes = fluxes / np.max(fluxes) * total_intensity.to(u.Jy).value # Normalize to max intensity
+                
+                sources = []
+                total_pixels = fluxes.size
+                skyModel = SkyModel(wcs=sky_wcs)
 
-            fluxes_nonzero = np.nonzero(fluxes)
-            indices = np.array(fluxes_nonzero).T
-            
-            progress = 0
-            total_pixels = indices.shape[0]
-            progress_to_print = np.linspace(0, total_pixels, 11, dtype=int)
-            max_flux = np.max(fluxes)
-            t0 = time.time()
-            printlog(log_file, "Starting conversion...")
-            ra_list = []
-            dec_list = []
-            flux_list = []
-            sum_weights = np.sum(fluxes)
-            if total_intensity.to(u.Jy).value > 0:
-                fluxes = fluxes / sum_weights * total_intensity.to(u.Jy).value
+                fluxes_nonzero = np.nonzero(fluxes)
+                indices = np.array(fluxes_nonzero).T
+                
+                progress = 0
+                total_pixels = indices.shape[0]
+                progress_to_print = np.linspace(0, total_pixels, 11, dtype=int)
+                max_flux = np.max(fluxes)
+                t0 = time.time()
+                printlog(log_file, "Starting conversion...")
+                ra_list = []
+                dec_list = []
+                flux_list = []
+                sum_weights = np.sum(fluxes)
+                if total_intensity.to(u.Jy).value > 0:
+                    fluxes = fluxes / sum_weights * total_intensity.to(u.Jy).value
+                else:
+                    printlog(log_file, "Warning: total_intensity is zero or negative, normalizing to 1 Jy")
+                    fluxes = fluxes / sum_weights # Normalize to 1 Jy
+
+                for x, y in indices:
+                    world = sky_wcs.pixel_to_world(x, y, 0, 0)
+                    skycoord, freq, _ = world 
+                    intensity = fluxes[x, y] * u.Jy
+                    ra_list.append(skycoord.ra.value)
+                    dec_list.append(skycoord.dec.value)
+                    flux_list.append(intensity.value)
+                    progress += 1
+                    print(f"Progress: {progress:5.0f}/{total_pixels} ({progress/total_pixels*100:2.2f}%). Time elapsed: {time.time() - t0:.2f} seconds", end='\r')
+
+                    if progress in progress_to_print:
+                        printlog(log_file, f"Progress: {progress:5.0f}/{total_pixels} ({progress/total_pixels*100:2.2f}%). Time elapsed: {time.time() - t0:.2f} seconds")
+                
+                np_samples = np.vstack((np.array(ra_list), np.array(dec_list))).transpose()
+                np_fluxes = np.reshape(np.array(flux_list), (len(flux_list), 1))
+                sky_array = np.hstack((np_samples, np_fluxes))
+                skyModel = SkyModel(sky_array, wcs=sky_wcs)
+                return skyModel
             else:
-                printlog(log_file, "Warning: total_intensity is zero or negative, normalizing to 1 Jy")
-                fluxes = fluxes / sum_weights # Normalize to 1 Jy
-
-            for x, y in indices:
-                world = sky_wcs.pixel_to_world(x, y, 0, 0)
-                skycoord, freq, _ = world 
-                intensity = fluxes[x, y] * u.Jy
-                ra_list.append(skycoord.ra.value)
-                dec_list.append(skycoord.dec.value)
-                flux_list.append(intensity.value)
-                progress += 1
-                print(f"Progress: {progress:5.0f}/{total_pixels} ({progress/total_pixels*100:2.2f}%). Time elapsed: {time.time() - t0:.2f} seconds", end='\r')
-
-                if progress in progress_to_print:
-                    printlog(log_file, f"Progress: {progress:5.0f}/{total_pixels} ({progress/total_pixels*100:2.2f}%). Time elapsed: {time.time() - t0:.2f} seconds")
+                raise FileNotFoundError(f"FITS file {fits_file} not found.")
             
-            np_samples = np.vstack((np.array(ra_list), np.array(dec_list))).transpose()
-            np_fluxes = np.reshape(np.array(flux_list), (len(flux_list), 1))
-            sky_array = np.hstack((np_samples, np_fluxes))
-            skyModel = SkyModel(sky_array, wcs=sky_wcs)
-            return skyModel
-        else:
-            raise FileNotFoundError(f"FITS file {fits_file} not found.")
-        
-    def get_center(self) -> SkyCoord:
-        if self.phase_center is not None:
-            return self.phase_center
-        else:
-            # Calculate the center of the sky model if phase_center is not set
-            if self.sources.size > 0:
-                center_ra = np.mean(np.array(self.sources[:, 0])) * u.deg
-                center_dec = np.mean(np.array(self.sources[:, 1])) * u.deg
-                self.phase_center = SkyCoord(ra=center_ra, dec=center_dec, frame='icrs')
+        def get_center(self) -> SkyCoord:
+            if self.phase_center is not None:
                 return self.phase_center
             else:
-                raise ValueError("SkyModel has no sources and phase_center is not set.")
+                # Calculate the center of the sky model if phase_center is not set
+                if self.sources.size > 0:
+                    center_ra = np.mean(np.array(self.sources[:, 0])) * u.deg
+                    center_dec = np.mean(np.array(self.sources[:, 1])) * u.deg
+                    self.phase_center = SkyCoord(ra=center_ra, dec=center_dec, frame='icrs')
+                    return self.phase_center
+                else:
+                    raise ValueError("SkyModel has no sources and phase_center is not set.")
 
 
 
 
-            # pickle_path = os.path.join(os.path.dirname(__file__), f'{prefix}_sky_model.pkl')
-            # with open(pickle_path, 'wb') as f:
-            #     pickle.dump(skyModel.sources, f)
-            # printlog (log_file, f"Sky model saved in {pickle_path}")
+                # pickle_path = os.path.join(os.path.dirname(__file__), f'{prefix}_sky_model.pkl')
+                # with open(pickle_path, 'wb') as f:
+                #     pickle.dump(skyModel.sources, f)
+                # printlog (log_file, f"Sky model saved in {pickle_path}")
 
+except Exception as e:
+    print(f"Error defining SkyModel class: {e}")

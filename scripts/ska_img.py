@@ -1,56 +1,56 @@
 #!/usr/bin/env python
 import warnings
 warnings.simplefilter('ignore')
-import astropy.io.fits as pyfits
-from astropy.modeling import models, fitting
-import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
-import glob, os
-from matplotlib.colors import LogNorm, Normalize, PowerNorm
-from astropy.visualization import SqrtStretch
-from astropy.visualization.mpl_normalize import ImageNormalize
-from scipy.ndimage.measurements import center_of_mass
-from pylab import *
+import os
+import glob
 import math
-import requests
-from commons import show_exc
-import aplpy
-
-
 import argparse
-import astropy.units as u
-from astropy.coordinates import SkyCoord, Angle, Galactic, ICRS, FK5, FK4
-from matplotlib.ticker import FormatStrFormatter
-from scipy.ndimage.interpolation import rotate
-from scipy.optimize import curve_fit
-#from scipy.stats import chisquare
-#from scipy import stats
+
+import numpy as np
+import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-import matplotlib.pylab as pylab
-from multiprocessing import Pool
-from astropy.wcs import WCS
-import reproject as rp
-from astropy import constants, units as u, table, stats, coordinates, wcs, log, coordinates as coord, convolution, modeling, visualization; 
-from astropy.io import fits
-from radio_beam import Beam
-import radio_beam.utils as rbu
-from astropy.convolution import convolve_fft
-from mpl_toolkits.axes_grid1 import make_axes_locatable, axes_size
+from matplotlib.colors import LogNorm, Normalize, PowerNorm
 from matplotlib.ticker import FormatStrFormatter
-from uvcombine.uvcombine import feather_kernel, fftmerge #, feather_compare, pbcorr, flux_match, match_flux_units, file_in
 
+from astropy.io import fits as pyfits
+from astropy.io import fits
+from astropy.wcs import WCS
+from astropy import stats, units as u
+from astropy.coordinates import SkyCoord, Angle, Galactic, ICRS, FK5, FK4
 
+from scipy.ndimage.measurements import center_of_mass
+
+from radio_beam import Beam
+import reproject as rp
+
+from commons import show_exc
 
 VERBOSE = True
 
 
-# from uvcombine.uvcombine import feather_kernel, fftmerge #, feather_compare, pbcorr, flux_match, match_flux_units, file_in
+def _theta_image_from_pa_sky(center_sc: SkyCoord, pa_sky_deg: float, w: WCS) -> float:
+    """
+    Devuelve theta (rad) en el plano de imagen (x->derecha, y->ARRIBA),
+    a partir del PA astronómico (grados E de N). Usa un paso angular pequeño
+    y WCS para medir el ángulo real en píxeles.
+    """
 
-# try:
-#     import cv2
-# except Exception as e:
-#     print(str(e))
+    if hasattr(pa_sky_deg, 'unit'):
+        pa_sky_deg = pa_sky_deg.to(u.deg).value
+
+    x0, y0 = w.world_to_pixel(center_sc)
+
+    step = 1.0 * u.arcsec  
+    p1 = center_sc.directional_offset_by(pa_sky_deg * u.deg, step)
+
+
+    x1, y1 = w.world_to_pixel(p1)
+
+
+    dx = x1 - x0
+    dy_up = -(y1 - y0)  
+    theta = np.arctan2(dy_up, dx) 
+    return theta
 
 def arcsec2pc(omega, D):
     if not hasattr(omega,'unit'):
@@ -92,48 +92,7 @@ def distance_shape(m_shape,ref, factor=(1.,1.)):
 def Lineal(x, m, a):
     return (x*m + a)
 
-class BGPS: #BOLOCAM
-    freqs = [(1.12 * u.mm).to(u.GHz, equivalencies=u.spectral()), (2.1 * u.mm).to(u.GHz, equivalencies=u.spectral())]
-    labels = ['1.1mm','2.1mm']
-    bmaj = 9.166670000000E-3 * u.deg
-    bmin = 9.166670000000E-3 * u.deg
-    bpa = 0 * u.deg
-
-class MGPS90:
-    freqs = [90.19] * u.GHz #Revisar el paper y sacar bien las freq
-    labels = ['3mm']
-
-class ALMAIMF:
-    freqs = [216.2, 93.173402] * u.GHz
-    labels = ['B6','B3']
-
-class CORNISH:
-    freqs = [5] * u.GHz
-    beam = Beam((1.5 * u.arcsec).to(u.deg),(1.2 * u.arcsec).to(u.deg), 0 * u.deg)
-    repository = "https://cornish.leeds.ac.uk/public/data_tls"
-
-    @staticmethod
-    def get_beam_from_file(img):
-        from io import StringIO
-        header = img.header
-
-
-        if ("OBJECT" in header.keys()):
-            filepath = os.path.join(CORNISH.repository, '{}.{}'.format(header['OBJECT'].replace(' ','_'), 'fits'))
-            mylog ('Searching for {}.{}'.format(header['OBJECT'].replace(' ','_'), 'fits'))
-            import subprocess
-            tofile = os.path.join(os.path.realpath(os.path.dirname(img.path)),'{}.{}'.format(header['OBJECT'].replace(' ','_'), 'fits'))
-            if not os.path.exists(tofile):
-                mylog ("\tDownloading...")
-                subprocess.run(["curl", "--cipher", 'DEFAULT:!DH', "--insecure", filepath, '-o', tofile])
-                mylog ("\tDONE")
-            beam = Beam.from_fits_header(fits.getheader(tofile))
-            CORNISH.beam = beam
-
-        return CORNISH.beam
-
-
-class Image:
+class SKAImage:
     data = None
     header = None
 
@@ -143,32 +102,13 @@ class Image:
                 self.path = path
                 self.fits = pyfits.open(path)
                 header = self.fits[0].header
-                header = self.fix_header(header)
-                self.header = header
-                try:
-                    if 'BMIN' not in header.keys():
-                        if 'ORIGIN' in header.keys() and 'cornish' in header['ORIGIN'].lower():
-                            beam = CORNISH.get_beam_from_file(self)
-                            header['BMAJ'] = beam.major.value
-                            header['BMIN'] = beam.minor.value
-                            header['BPA'] = beam.pa.value
-                        if 'BGPSVERS' in self.header.keys():
-                            self.header['BMAJ'] = BGPS.bmaj.value
-                            self.header['BMIN'] = BGPS.bmin.value
-                except Exception as e:
-                    mylog (show_exc(e))
-                header['NAXIS'] = 2
                 if "OBJECT" in header.keys():
                     self.name = header['OBJECT']
                 else:
                     self.name = 'REGION'
-                if (len(self.fits[0].data.shape) > 2):
-                    data = self.fits[0].data[0,0]
-                    header['NAXIS'] = 2
-                    #self.interf = True
-                else:
-                    data = self.fits[0].data
-                    #self.interf = False
+
+                data = self.fits[0].data
+                self.header = header
 
                 if "IMGTYPE" in header.keys():
                     self.interf = header["IMGTYPE"] == 'INTERFEROMETER'
@@ -204,7 +144,7 @@ class Image:
 
 
 
-                header['NAXIS'] = 2
+                # header['NAXIS'] = 2
                 self.step = ((header['CDELT1'] * u.Unit(header['CUNIT1'])).to(u.deg), (header['CDELT2'] * u.Unit(header['CUNIT2'])).to(u.deg))
                 self.pixelarea = np.abs(self.step[0] * self.step[1])
                 self.size = (header['NAXIS1'], header['NAXIS2'])
@@ -261,7 +201,7 @@ class Image:
     def reproject(self, img):
         obj = WCS(img.header)
         array, footprint = rp.reproject_interp((self.data, WCS(self.header)), obj, img.data.shape)
-        a = Image(data=array,header=img.header)
+        a =SKAImage(data=array,header=img.header)
         a.name = self.name
         a.header['AUTHOR'] ='IMGCombine by d.diaz@irya.unam.mx'
         if hasattr(img, 'frame'):
@@ -270,25 +210,6 @@ class Image:
             a.frame = FK5
         return a
 
-    def zoom(self):
-        img = self
-        (y,x) = img.data.shape
-        rows = []
-        cols = []
-
-        for i in range(y):
-            if (not (np.isnan(img.data[i,:]).all())):
-                rows.append(i)
-        for j in range(x):
-            if (not (np.isnan(img.data[:,j]).all())):
-                cols.append(j)
-
-        img.header['CRPIX1'] -= min(cols)
-        img.header['CRPIX2'] -= min(rows)
-        img.data = img.data[min(rows):max(rows),min(cols):max(cols)]
-        img.header['NAXIS1'] = img.data.shape[1]
-        img.header['NAXIS2'] = img.data.shape[0]
-        return (img)
 
     def set_beam(self, beam):
         try:
@@ -320,22 +241,38 @@ class Image:
             return (self.header['RESTFRQ'] * u.Hz).to(unit)
         elif 'REFFREQ' in self.header.keys():
             return (self.header['REFFREQ'] * u.Hz).to(unit)
-        elif 'ORIGIN' in self.header.keys() :
-            if 'cornish' in self.header['ORIGIN']:
-                return CORNISH.freqs[0].to(u.Hz).to(unit)
-        elif 'BGPSVERS' in self.header.keys():
-            return BGPS.freqs[0].to(u.Hz).to(unit)
+        elif 'RESTFREQ' in self.header.keys():
+            return (self.header['RESTFREQ'] * u.Hz).to(unit)
+        elif 'CRVAL3' in self.header.keys():
+            return (self.header['CRVAL3'] * u.Hz).to(unit)
+        else:
+            return None
 
     def pix2coords(self,x,y=None):
-        if y is None:
-            (x,y) = x
         try:
-            wcs = WCS(self.header)
-            x0, y0 = wcs.wcs_pix2world(x, y, 0)
-        except:
-            wcs = WCS(self.fix_header(self.header))
-            x0, y0 = wcs.wcs_pix2world(x, y, 0)
-        return (x0,y0)
+            if y is None:
+                (x,y) = x
+
+            try:
+                wcs = self.wcs2d
+                if wcs.naxis < 2:
+                    raise Exception ("WCS has less than 2 axis")
+                if wcs.naxis > 2:
+                    x0, y0, _, _ = wcs.wcs_pix2world(x, y, 0, 0, 0)
+                else:
+                    x0, y0 = wcs.wcs_pix2world(x, y, 0)
+            except:
+                wcs = self.wcs2d
+                if wcs.naxis < 2:
+                    raise Exception ("WCS has less than 2 axis")
+                if wcs.naxis > 2:
+                    x0, y0, _, _  = wcs.wcs_pix2world(x, y, 0, 0, 0)
+                else:
+                    x0, y0 = wcs.wcs_pix2world(x, y, 0)
+            return (x0,y0)
+        except Exception as e:
+            mylog(show_exc(e))
+            raise e
 
     def coords2pix(self,coord):
         coord=coord.transform_to(self.frame)
@@ -347,10 +284,10 @@ class Image:
             x = coord.ra
             y = coord.dec
         try:
-            wcs = WCS(self.header)
+            wcs = self.wcs2d
             x0, y0 = wcs.wcs_world2pix(x, y, 0)
         except:
-            wcs = WCS(self.fix_header(self.header))
+            wcs = self.wcs2d
             x0, y0 = wcs.wcs_world2pix(x, y, 0)
         return (x0,y0)
 
@@ -365,8 +302,9 @@ class Image:
             frame = self.frame
 
         try:
-            (y,x) = self.data.shape
-            (x,y) = self.pix2coords(x/2, y/2)
+            y = self.data.shape[-2]
+            x = self.data.shape[-1]
+            (x,y) = self.pix2coords(int(x/2), int(y/2))
             x = x * u.Unit(self.header['CUNIT1'])
             y = y * u.Unit(self.header['CUNIT2'])
 
@@ -417,95 +355,90 @@ class Image:
 
     def get_beam(self):
         try:
-            try:
-                beam = Beam.from_fits_header(self.header)
-                return (beam)
-            except:
-                if 'BGPSVERS' in self.header.keys():
-                     return(Beam(BGPS.bmaj,BGPS.bmin))
+            beam = Beam.from_fits_header(self.header)
+            return (beam)
         except Exception as e:
             mylog(show_exc(e), verbose=True, flush=True)
             return None
         return None
 
-    def draw(self, img=None, exp=1., rotated = True, plot=False, rectangle = None, alpha=1, contour=False, return_data=False, barcolor=True, reversecolor=True, cmapstr='viridis', scale='power', linestyles='solid', levels = [-5,5,10,20,40,80,160,320], title=None, draw_axes=True, clip=99.9, barcolor_units='Jy/beam', show_beam=True, subplot=(1,1,1), vmin=None, vmax=None, cmap=None, hidex=False, hidey=False, fontsize='xx-large', zoom=None, nancolor=None, contour_colors=None, scalebar=None, barcolor_discrete=False):
+    def zoom(self, zoom):
+        ''' Zoom into a region of the image. 
+            zoom = [ra_center, dec_center, radius]
+        '''
+        orig_data = np.copy(self.data)
+        (ra_center, dec_center, radius_zoom) = zoom
+        zoom_coords = SkyCoord(ra_center, dec_center, frame=self.frame, unit=(u.hourangle, u.deg))
+        if self.frame != zoom_coords.frame:
+            zoom_coords = zoom_coords.transform_to(self.frame)
+        ra_center = zoom_coords.ra.to(u.deg).value
+        dec_center = zoom_coords.dec.to(u.deg).value
+        radius_zoom = Angle(radius_zoom).to(u.deg).value
+        # Extract pixels corresponding to the zoom limits in pixels coordinates
+        # x_center, y_center = self.coords2pix(zoom_coords)
+        low_left = SkyCoord(ra_center + radius_zoom, dec_center - radius_zoom, frame=self.frame, unit=u.deg)
+        up_right = SkyCoord(ra_center - radius_zoom, dec_center + radius_zoom, frame=self.frame, unit=u.deg)
+        (x0, y0) = self.coords2pix(low_left)
+        (x1, y1) = self.coords2pix(up_right)
+
+        #Create wcs with the zoomed region
+        zoomHeader = self.header
+        zoomHeader['CRPIX1'] = 1
+        zoomHeader['CRPIX2'] = 1
+        zoomHeader['CRVAL1'] = low_left.ra.to(u.deg).value
+        zoomHeader['CRVAL2'] = low_left.dec.to(u.deg).value
+        zoomHeader['NAXIS1'] = int(abs((x1 - x0)))
+        zoomHeader['NAXIS2'] = int(abs((y1 - y0)))
+        subimg = orig_data[int(min(y0,y1)):int(max(y0,y1)), int(min(x0,x1)):int(max(x0,x1))]
+
+        zoomImg = SKAImage(data=subimg, header=zoomHeader)
+        return zoomImg
+
+    
+    def draw(self, img=None, exp=0.3, cmapstr='gray', scale='power', colorbar=False, plot=False, title=None, show_beam = True):
+        
         from astropy.wcs import WCS
         if self.data is not None:
+         
+            # Plot using matplotlib with WCS projection
             if img is None:
-                fig = plt.figure()
+                fig = plt.figure(figsize=(10, 10))
+                ax = fig.add_subplot(1, 1, 1, projection=self.wcs2d)
             else:
-                fig = img
+                ax = img
+            norm = None
+            if scale == 'power':
+                norm = PowerNorm(gamma=exp, clip=False)
+            elif scale == 'log':
+                norm = LogNorm()
+            elif scale == 'linear':
+                norm = Normalize()
+                norm.autoscale(self.data2d)
 
-            tmp_path = "{}.fits".format(time.time())
-            self.tofits(tmp_path)
-            f1 = aplpy.FITSFigure(tmp_path, figure=fig, subplot=subplot, alpha=alpha)
-            if cmap is not None:
-                cmapstr = cmap
-            if not contour:
-                f1.show_colorscale(cmap=cmapstr, exponent=exp, stretch=scale, vmin=vmin, vmax=vmax)
+            if colorbar:
+                im = ax.imshow(self.data2d, origin='lower', norm=norm, cmap=cmapstr)
+                cbar = plt.colorbar(im, ax=ax, extend='both', format=FormatStrFormatter('%.2e'))
+                cbar.set_label(f"[{self.header['BUNIT']}]")
             else:
+                im = ax.imshow(self.data2d, origin='lower', norm=norm, cmap=cmapstr)
+
+            if show_beam:
                 try:
-                    colors = contour_colors
-                    if levels is not None:
-                        levels = levels * self.mad()
-                    f1.show_colorscale(cmap=cmapstr, exponent=exp, stretch=scale, vmin=vmin, vmax=vmax)
-                    f1.show_contour(tmp_path, colors=colors, levels=levels, stretch=scale)
+                    self.draw_beam(ax)
+
                 except Exception as e:
                     print (show_exc(e))
 
-            if zoom is not None:
-                center = self.get_center()
-                fov = self.fov()
-                f1.recenter(zoom[0].ra.to(u.deg), zoom[0].dec.to(u.deg), width=zoom[1] * fov['x'].to(u.deg).value, height=zoom[2] * fov['y'].to(u.deg).value)
-
-            if hidex:
-                f1.tick_labels.hide_x()
-                f1.axis_labels.hide_x()
-            if hidey:
-                f1.tick_labels.hide_y()
-                f1.axis_labels.hide_y()
-
-            if barcolor:
-                f1.add_colorbar()
-                f1.colorbar.show()
-                f1.colorbar.set_location('right')
-                f1.colorbar.set_font(size=fontsize)
-                if barcolor_units is not None:
-                    f1.colorbar.set_axis_label_text(f"[{barcolor_units}]")
-                else:
-                    f1.colorbar.set_axis_label_text(f"[{self.header['BUNIT']}]")
-                if barcolor_discrete:
-                    f1.colorbar.set_style('discrete')
-                f1.colorbar.set_axis_label_font(size=fontsize) #weight='bold'
-            if scalebar is not None:
-                f1.add_scalebar(scalebar.to(u.deg).value)
-                f1.scalebar.set_font(size=fontsize)
-                f1.scalebar.set_linestyle(linestyles)
-                f1.scalebar.set_color('black')
-                f1.scalebar.set_label(f"{scalebar[1]:.1f} {scalebar[2]}")
-                f1.scalebar.set_linewidth(2)
-
+            ax.set_xlabel('RA')
+            ax.set_ylabel('Dec')
             if title is None:
                 title = self.name
-            f1.set_title('{}'.format(title))
-            if nancolor:
-                f1.set_nan_color(nancolor)
-
-            if show_beam:
-                try: 
-                    f1.add_beam()
-                except:
-                    pass
-
+            ax.set_title('{}'.format(title))
             if plot:
                 plt.show()
+            return ax
+        return None
 
-
-            try:
-                os.remove(tmp_path)
-            except Exception as e:
-                print (show_exc(e))
-            return f1
 
     def center_of_mass (self, mask=None, coords=True):
         aux = np.copy(self.data)
@@ -525,17 +458,19 @@ class Image:
             beam = self.get_beam()
             (cx,cy) = (beam.major.to(u.arcsec).value * 0.5 / (self.omega_pix().to(u.arcsec**2).value**0.5),beam.major.to(u.arcsec).value * 0.5/ (self.omega_pix().to(u.arcsec**2).value**0.5))
             (cx,cy) = self.pix2coords(int(max(cx, 0.1 * self.data.shape[1])),int(max(cy, 0.1 * self.data.shape[0])))
+            beam_pa_value = np.sign(self.header['CDELT1']) * beam.pa.value
             if beam.minor.value != beam.major.value:
                 try:
-                    frame = patches.Ellipse((cx,cy), width=beam.minor.value, height=beam.major.value, color=color, angle=beam.pa.value, transform=img.get_transform('world'))
+                    frame = patches.Ellipse((cx,cy), width=beam.minor.value, height=beam.major.value, color=color, angle=beam_pa_value, transform=img.get_transform('world'))
                 except:
-                    frame = patches.Ellipse((cx,cy), width=beam.minor.value, height=beam.major.value, color=color, angle=beam.pa.value)
+                    frame = patches.Ellipse((cx,cy), width=beam.minor.value, height=beam.major.value, color=color, angle=beam_pa_value)
             else:
                 try:
                     frame = patches.Circle((cx,cy), beam.major.value, color=color, angle=beam.pa.value, transform=img.get_transform('world'))
                 except:
                     frame = patches.Circle((cx,cy), beam.minor.value, color=color, angle=beam.pa.value)
             img.add_patch(frame)
+
         except Exception as e:
             mylog (show_exc(e))
 
@@ -552,90 +487,7 @@ class Image:
             mylog (show_exc(e))
             return data
 
-    def to_fourier_space(self, min_beam_fraction=0.1, beam=None, pixscale=None, weights=None, deconvolve=True):
-        if weights is not None:
-            if not weights.shape == self.data.shape:
-                raise ValueError("weights must be an array with the same shape as"
-                                 " the high-res data.")
-        if beam is None:
-            beam = self.get_beam()
 
-        nax2,nax1 = self.data.shape
-        lowresfwhm = beam.major
-        pixscale = (self.omega_pix()**0.5).to(u.deg)
-
-        im_low = self.data.copy()/ (self.omega_beam() / self.omega_pix()).value #Convert Jy/beam to Jy/px
-        #im_low = self.data
-    
-        if weights is None:
-            kfft, ikfft = feather_kernel(nax2, nax1, lowresfwhm, pixscale)
-            kfft = np.fft.fftshift(kfft)
-            ikfft = np.fft.fftshift(ikfft)
-        else:
-            kfft = np.abs(np.fft.fftshift(np.fft.fft2(weights)))
-            kfft /= np.max(kfft)
-            ikfft = 1 - kfft
-
-        yy,xx = np.indices([nax2, nax1])
-        rr = ((xx-(nax1-1)/2.)**2 + (yy-(nax2-1)/2.)**2)**0.5
-        angscales = nax1/rr * pixscale 
-
-        fft_lo = np.fft.fftshift(np.fft.fft2(np.nan_to_num(im_low)))
-
-        if deconvolve:
-            fft_lo_deconvolved = fft_lo / kfft
-        else:
-            fft_lo_deconvolved = fft_lo 
-
-
-        below_beamscale = kfft < min_beam_fraction
-        #mask = (angscales >= SAS) & (angscales <= LAS) & (~below_beamscale)
-        fft_lo_deconvolved[below_beamscale] = np.nan
-        return (angscales.to(u.arcsec), np.abs(fft_lo_deconvolved))
-
-    def magnitude_spectrum(self, sigma=0.):
-        return 20 * np.log(np.abs(self.to_fourier_space(sigma)))
-
-    def draw_magnitude_spectrum(self, img=None, sigma=0., cmapstr='afmhot', alpha=1., barcolor=False, exp=0.3):
-        data = 20 * np.log(np.abs(self.to_fourier_space(sigma)))
-        if img is None:
-            fig, img = plt.subplots(1,1)#, figsize=(15,15))
-        x_range = np.linspace(0,data.shape[0] * self.pixelarea**0.5, data.shape[0]).to(u.arcsec)
-        x_range -= np.max(x_range) / 2.
-        y_range = np.linspace(0,data.shape[1] * self.pixelarea**0.5, data.shape[1]).to(u.arcsec)
-        y_range -= np.max(y_range) / 2.
-        extent = (np.min(x_range).value, np.max(x_range).value, np.min(y_range).value, np.max(y_range).value)
-        norm = PowerNorm(gamma=exp, clip=False)
-        pos_net_clipped = img.imshow(data , cmap=cmapstr, alpha=alpha, norm=norm, extent=extent)
-        if barcolor:
-            cbar = plt.colorbar(pos_net_clipped, ax=img, extend='both')
-            cbar.minorticks_on()
-        img.set_title('2D FFT Power Spectrum')
-        return (img)
-
-    def to_image_space(self, freq_data, mask=None, filter_pass=None):
-        if filter_pass is not None:
-            freq_data *= freq_data * filter_pass
-        if mask is None:
-            f_ishift = np.fft.ifftshift(freq_data)
-        else:
-            freq_data[mask] = np.min(freq_data)
-            f_ishift = np.fft.ifftshift(freq_data)
-        img_back = np.fft.ifft2(f_ishift)
-        img_back = np.real(img_back)
-        # Ver los residuos de obtener la imagen con la parte imaginaria
-        return img_back
-
-    def extract_coords(self,x_min, x_max=None, y_min=None, y_max=None):
-        if type(x_min) == tuple:
-            (x_min, x_max, y_min, y_max) = x_min
-
-        (idx_min, idx_max, idy_min, idy_max) = (np.argmin(np.abs(self.axis[0] - x_min)),np.argmin(np.abs(self.axis[0] - x_max)),np.argmin(np.abs(self.axis[1] - y_min)),np.argmin(np.abs(self.axis[1] - y_max)))
-        area = self.data[min(idy_min, idy_max):max(idy_min,idy_max),min(idx_min, idx_max):max(idx_min,idx_max)]
-        x0 = np.min(np.array([x_min,x_max]) * sign(self.step[0].value)) * sign(self.step[0].value)
-        y0 = np.min(np.array([y_min,y_max]) * sign(self.step[1].value)) * sign(self.step[1].value)
-        new_img = Image(data=area, step = self.step, x0=x0, y0=y0)
-        return new_img
 
     def show_headers(self, exclude = ['HISTORY'], onlykeys=False):
         if self.header is not None:
@@ -700,14 +552,26 @@ class Image:
                             'CTYPE4', 'CRVAL4', 'CDELT4', 'CRPIX4', 'CUNIT4', 'NAXIS4',
                             'PV2_1', 'PV2_2', 'SPECSYS',
                             'ALTRVAL', 'ALTRPIX', 'VELREF', 'HISTORY', 'COMMENT']
+
+        if "CUNIT1" not in header.keys():
+                    header["CUNIT1"] = "deg"
+        if "CUNIT2" not in header.keys():
+            header["CUNIT2"] = "deg"
+        if "CDELT1" not in header.keys():
+            if "CD1_1" in header.keys():
+                header["CDELT1"] = header["CD1_1"]
+        if "CDELT2" not in header.keys():
+            if "CD2_2" in header.keys():
+                header["CDELT2"] = header["CD2_2"]
+
         hdu = pyfits.PrimaryHDU()
         if 'BUNIT' not in header.keys():
             hdu.header['BUNIT'] = 'Jy/beam'
         hdu.header['AUTHOR'] ='IMGCombine by d.diaz@irya.unam.mx'
-        hdu.header['SIMPLE'] = True
+        hdu.header['SIMPLE'] = header['SIMPLE'] if 'SIMPLE' in header.keys() else True
         hdu.header['BITPIX'] = -32
         hdu.header['NAXIS'] = 2
-        hdu.header['EXTEND'] = True
+        hdu.header['EXTEND'] = header['EXTEND'] if 'EXTEND' in header.keys() else True
         for key in header:
             if key not in keys_to_remove and key not in hdu.header:
                 try:
@@ -722,6 +586,7 @@ class Image:
                 hdu.header['IMGTYPE'] = 'INTERFEROMETER'
             else:
                 hdu.header['IMGTYPE'] = 'SINGLE-DISH'
+
 
         return hdu.header
 
@@ -802,7 +667,7 @@ class Image:
         hdu = pyfits.PrimaryHDU()
         hdu.header = self.header
         hdu.data = self.data
-        hdu.header['ORIGIN'] = 'IMGCombine'
+        hdu.header['ORIGIN'] = 'SKA-Image'
         hdu.header['OBJECT'] = self.name
 
         version = 0
@@ -826,27 +691,9 @@ class Image:
         x,y = obj.wcs_pix2world(col, row, 0)
         x *=  u.Unit(self.header['CUNIT1'])
         y *=  u.Unit(self.header['CUNIT2'])
-        if not self.interf and False:
-            coords = SkyCoord(l=x, b=y, frame=Galactic)
-        else:
-            coords = SkyCoord(ra=x, dec=y, frame=FK5)
-
+        coords = SkyCoord(ra=x, dec=y, frame=FK5)
         return (coords, data[row,col], [row,col])
 
-    def plot(self, coord, img_frame = None, marker='x', sigma=3.):
-        if not img_frame:
-            fig, img_frame= plt.subplots(1,1)
-            plot = True
-        else:
-            plot = False
-
-        self.draw(img_frame, sigma)
-        try:
-            img_frame.scatter(coord.ra.value, coord.dec.value, marker=marker)
-        except:
-            img_frame.scatter(coord.l.value, coord.b.value, marker=marker)
-        if plot:
-            plt.show()
 
     def janskys_beam(self):
         return self.janskys() / self.Nbeams()
@@ -864,15 +711,49 @@ class Image:
         return self.janskys() /npts
 
 
-    def janskys(self, freq=None, alpha_spec=3.5):
+    def janskys(self, freq=None, alpha_spec=3.5, center = None, a=None, b=None, pa=None):
+        ''' Compute total flux in the image (or in a region if center is given)
+            freq: frequency to scale the flux (if different from the rest frequency)
+            alpha_spec: spectral index to scale the flux (default=3.5)
+            center: SkyCoord of the center of the region to compute the flux (if None, the whole image is used)
+            a: semi-major axis of the region (in pixels or Quantity with angular units)
+            b: semi-minor axis of the region (in pixels or Quantity with angular units)
+            pa: position angle of the region (in degrees, measured from North to East)
+        '''
         if freq is not None:
-            freq_factor = (freq.value / self.restfreq().value)**(alpha_spec) 
+            freq_factor = (freq.to(u.Hz).value / self.restfreq().to(u.Hz).value)**(alpha_spec)
         else:
             freq_factor = 1.
 
+        data = self.data2d.copy()
+        if center is not None:
+            if a is None:
+                a = data.shape[1]/2.
+            if b is None:
+                b = a
+            if pa is None:
+                pa = 0.
+            else:
+                pa = pa + 90 * u.deg
+            # pa = pa + 90 * u.deg
+            (x0,y0) = self.coords2pix(center)
+            y, x = np.indices(data.shape)
+            xp = (x - x0) * np.cos(np.radians(pa)) + (y - y0) * np.sin(np.radians(pa))
+            yp = -(x - x0) * np.sin(np.radians(pa)) + (y - y0) * np.cos(np.radians(pa))
+            if (isinstance(a, u.Quantity)):
+                a = (a.to(u.Unit(self.header['CUNIT1'])) / (self.header['CDELT1'] * u.Unit(self.header['CUNIT1'])))
+            if (isinstance(b, u.Quantity)):
+                b = (b.to(u.Unit(self.header['CUNIT2'])) / (self.header['CDELT2'] * u.Unit(self.header['CUNIT2'])))
+
+
+
+            mask = ((xp/a)**2 + (yp/b)**2) <= 1.
+            data[~(mask)] = np.nan
+        
+
         beam = self.get_beam()
-        npts = self.data.size - np.isnan(self.data).sum()
-        mean = self.mean()
+        npts = data.size - np.isnan(data).sum()
+        mean = np.nanmean(data)
         omega_beam = beam.sr.to(u.deg**2)
         omega_pix = (self.header['CDELT1'] * u.Unit(self.header['CUNIT1'])) ** 2
         full_area = omega_pix * npts
@@ -1009,62 +890,7 @@ class Image:
         omega_beam = beam.sr.to(u.deg**2)
         return omega_beam
 
-    def stats(self, title=None, iters=100, mask=None, fmt="standar", headers=True):
-        try:
-            if not title:
-                title = self.name
-
-            omega_pix = self.omega_pix()
-            mad = self.mad(iters)
-            if fmt == "latex":
-                if headers:
-                    mylog ("Region       & ", end=" ")
-#                     mylog ("Sum          & ", end=" ")
-                    mylog ("FluxDensity  [%s] & " % self.janskys().unit, end=" ")
-                    mylog ("Jy / Beam    & ", end=" ")
-                    mylog ("Mad          & ", end=" ")
-                    mylog ("Max          & ", end=" ")
-                    mylog ("Min          & ", end=" ")
-
-                    mylog ("Lores Scale  \\\\")
-                    #mylog ("Hires Scale  ")
-
-                mylog ("%s & " % (title), end = ' ')
-                mylog (" %.4lf &" % (self.janskys().value), end=' ')
-                mylog (" %.4lf &" % (self.janskys_beam().value), end=' ')
-                mylog (" %.4lf &" % mad, end=' ')
-                mylog (" %.4lf &" % self.max(), end=' ')
-                mylog (" %.4lf &" % self.min(), end=' ')
-#                 mylog (" %.4lf, %.4lf dB &" % (self.dr(iters),20*np.log10(self.dr(iters))), end=' ')
-#                 mylog (" %.4lf, %.4lf dB &" % (self.dr_neg(iters),20*np.log10(self.dr_neg(iters))), end=' ')
-#                 mylog (" %.8lf &" % (self.poso_neg(mad=mad)), end=' ')
-                mylog (" %.4lf \\\\" % (self.lo_scale()))
-                #mylog (" %.8lf " % (self.hi_scale()))
-            else:
-                mylog ("%s " % (title))
-                mylog ("\tSum         : %s | %s" % (self.janskys_sum(), self.janskys_pixel()))
-
-                mylog ("\tFluxDensity : %s" % self.janskys())
-                mylog ("\tJy / Beam   : %s " % (self.janskys_beam()))
-                mylog ("\tField       : %s" % (self.field()))
-                mylog (("\t%s" % self.get_beam()).replace('Beam:','Beam        :'))
-                mylog ("\tBeam Area   : %s" % (self.omega_beam().to(u.arcsec**2)))
-                mylog ("\tPixel Area  : %s" % (self.omega_pix().to(u.arcsec**2)))
-                mylog ("\tPixel Size  : %s x %s" % ((abs(self.header['CDELT1']) * u.Unit(self.header['CUNIT1'])).to(u.arcsec),abs(self.header['CDELT2']) * u.Unit(self.header['CUNIT2']).to(u.arcsec)))
-                mylog ("\tNumPixels   : %s" % self.Npts())
-                mylog ("\tNumBeams    : %s" % (self.Nbeams()))
-                mylog ("\tMad         : %.4lf" % mad)
-                mylog ("\tMax         : %.4lf" % self.max())
-                mylog ("\tMin         : %.4lf" % self.min())
-                mylog ("\tDR          : %.4lf, %.4lf dB" % (self.dr(iters),20*np.log10(self.dr(iters))))
-                mylog ("\tDR-Minus    : %.4lf, %.4lf dB" % (self.dr_neg(iters),20*np.log10(self.dr_neg(iters))))
-                mylog ("\tPoso Neg    : %.8lf" % (self.poso_neg(mad=mad)))
-                mylog ("\tLores Scale : %.8lf" % (self.lo_scale()))
-                mylog ("\tHires Scale : %.8lf" % (self.hi_scale()))
-            if mask:
-                self.data = original
-        except Exception as e:
-            mylog(show_exc(e))
+ 
 
     def mask_pb(self, primary_beam_image, limit=0.2):
         mask = ((primary_beam_image.data < limit) | (np.isnan(primary_beam_image.data)))
@@ -1073,54 +899,106 @@ class Image:
         except Exception as e:
             mylog ("Warning in combine.mask_pb!!!! We can not masked the image")
 
-    def angular_scales(self, png_path = None, plot=True):
-        lowresfwhm = np.sqrt(self.get_beam().major.to(u.arcsec) * self.get_beam().minor.to(u.arcsec))
-        mgps = self
-
-        im_low = mgps.data
-
-        # If weights are given, they must match the shape of the hires data
-        weights = 1.
-
-        (nax2,nax1) = mgps.data.shape
-        pixscale = (self.pixelarea**0.5).to(u.deg).value
-
-        kfft, ikfft = feather_kernel(nax2, nax1, lowresfwhm, pixscale)
-        kfft = np.fft.fftshift(kfft)
-        ikfft = np.fft.fftshift(ikfft)
-
-        yy,xx = np.indices([nax2, nax1])
-        rr = ((xx-(nax1-1)/2.)**2 + (yy-(nax2-1)/2.)**2)**0.5
-        angscales = nax1/rr * pixscale*u.deg
-
-        fft_lo = np.fft.fftshift(np.fft.fft2(np.nan_to_num(im_low * weights)))
-        fft_lo_deconvolved = fft_lo / kfft
-
-        below_beamscale = kfft < 0.1
-        below_beamscale_plotting = kfft < 1e-3
-        fft_lo_deconvolved[below_beamscale_plotting] = np.nan
-
-        mask = (angscales >= lowresfwhm)  & (~below_beamscale)
-        assert mask.sum() > 0
-
-        if plot:
-            import pylab as pl
-            pl.clf()
-            pl.title(self.name)
-            pl.subplot(1,1,1)
-            srt = np.argsort(angscales.to(u.arcsec).value[~below_beamscale_plotting])
-            pl.loglog(angscales[mask].to(u.arcsec).value, np.abs(fft_lo_deconvolved[mask]), 'b.', alpha=1, label='Lo-res')
-            ylim = pl.gca().get_ylim()
-            pl.grid()
-            if not png_path:
-                plt.show()
-            else:
-                plt.savefig(os.path.join(png_path, '{0}_compare.png'.format(int(prefix))))
-
-        return (angscales[mask])
+  
 
     def __unicode__(self):
         return ("%s %s" % (self.path, self.name))
+    
+    def draw_source(self, ax, coord, a, b = None, pa = None, color="green", ellipse=False, alpha=0.3, label = None, verbose=False):
+        if verbose:
+            mylog(f"Draw source at {coord.to_string('hmsdms')} a={a}, b={b}, pa={pa}, color={color}, ellipse={ellipse}, alpha={alpha}, label={label}")
+
+        try:
+            if b is None:
+                b = a
+            if pa is None:
+                pa = 0. * u.deg
+            
+            
+            (cx,cy) = coord.ra.value, coord.dec.value
+            ax.plot(cx, cy, marker='+', color=color, markersize=15, transform=ax.get_transform('world'))
+            if label is not None:
+                ax.text(cx, cy, label, color=color, fontsize=12, transform=ax.get_transform('world'))
+
+            if ellipse:
+
+                beam_pa_value = 180 -pa.value
+                # beam_pa_value = (_theta_image_from_pa_sky(coord, pa.value, self.wcs2d) * u.rad).to(u.deg).value
+                minor = min(a,b)
+                major = max(a,b)
+                if minor != major:
+                    try:
+                        frame = patches.Ellipse((cx,cy), width=minor.to(u.deg).value, height=major.to(u.deg).value, color=color, angle=beam_pa_value, transform=ax.get_transform('world'), fill=False, alpha=alpha)
+                    except Exception as e:
+                        print(show_exc(e))
+                        frame = patches.Ellipse((cx,cy), width=minor.to(u.deg).value, height=major.to(u.deg).value, color=color, angle=beam_pa_value, fill=False, alpha=alpha)
+                else:
+                    try:
+                        frame = patches.Circle((cx,cy), major.to(u.deg).value, color=color, angle=pa.value, transform=ax.get_transform('world'), fill=False, alpha=alpha)
+                    except:
+                        frame = patches.Circle((cx,cy), minor.value, color=color, angle=pa.value, fill=False, alpha=alpha)
+                ax.add_patch(frame)
+
+
+        except Exception as e:
+            mylog (show_exc(e))
+    
+    @property
+    def wcs(self):
+        try:
+            wcs = WCS(self.header)
+            return wcs
+        except:
+            return None
+
+    @property
+    def wcs2d(self):
+        try:
+            wcs = WCS(self.header)
+            if wcs.naxis >= 2:
+                return WCS(self.fix_header(self.header))
+            else:
+                return None
+        except:
+            return None
+
+    @property
+    def data2d(self):
+        if self.data is not None:
+            if (self.wcs.naxis > 2):
+                return self.data[0,0]
+            else:
+                return self.data
+        return None
+
+    def mask_outside_ellipse_fits(self, 
+        center,                 # (x0_pix, y0_pix) in pixels OR SkyCoord in the sky
+        a, b,                   # major and minor axes: in pixels (float) or angular units (Quantity, e.g. 30*u.arcsec)
+        pa,                     # ellipse angle
+        pa_kind="image",        # "image" (from +x to +y, CCW) or "sky" (astronomical PA: E of N, degrees)
+        fill_value=np.nan,      # value to set outside the ellipse
+    ):
+        ax = plt.subplot(1,1,1)
+        center  = self.coords2pix(center) if isinstance(center, SkyCoord) else center
+        a       = np.abs( a.to(u.deg).value / self.header['CDELT1'] if isinstance(a, u.Quantity) else a )
+        b       = np.abs( b.to(u.deg).value / self.header['CDELT1'] if isinstance(b, u.Quantity) else b )
+
+        ellipse = patches.Ellipse(center, width=a, height=b, angle=pa.value + 90)
+        yy, xx = np.mgrid[:self.data.shape[-2], :self.data.shape[-1]]
+
+
+        coords = np.vstack((xx.ravel(), yy.ravel())).T  # (N, 2) array of (x, y) pairs
+        mask_flat = ellipse.contains_points(coords)
+        mask = mask_flat.reshape(self.data.shape[-2], self.data.shape[-1])
+
+        masked = np.where(mask, self.data2d, fill_value)
+        img = SKAImage(data=masked, header=self.fix_header(self.header))
+        return img
+
+
+        
+    
+ 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -1135,30 +1013,18 @@ if __name__ == "__main__":
         fits = sorted(fits)
     else:
         fits = args.paths
+    print ("Loading %d files" % len(fits))
 
     images = []
     for idx, fpath in enumerate(fits):
-        images.append(Image(fpath))
+        images.append(SKAImage(fpath))
 
     if args.image:
         number_of_subplots=len(fits)
-        
-        if number_of_subplots > 1:
-            ncols = 2
-            nrows = math.ceil(number_of_subplots  / ncols)
-            figsize = (10*ncols,10*nrows)
-            wcs = WCS(images[0].header)
-            for idx,img in enumerate(images):
-                ax = plt.subplot(nrows, ncols, idx+1, projection=wcs)
-                img.draw(ax, exp=args.exp, cmapstr='afmhot')
-#             for i in range(number_of_subplots, len(axs)):
-#                 fig.delaxes(axs[i])
-            plt.show()
-        else:
-            img=images[0]
-            wcs = WCS(img.header)
-            img.draw(plt.subplot(1,1,1, projection=wcs), exp=args.exp, cmapstr='afmhot')
-            plt.show()
+        img=images[0]
+        wcs = WCS(img.header)
+        img.draw(plt.subplot(1,1,1, projection=wcs), exp=args.exp, cmapstr='afmhot', colorbar=True)
+        plt.show()
     else:
         for img in images:
             if args.headers:
@@ -1166,10 +1032,3 @@ if __name__ == "__main__":
                 img.show_headers(onlykeys=False)
             if args.fields:
                 img.field_show()
-
-        if len(images) > 1:
-            combinations = []
-            for idx,img in enumerate(images[:-1]):
-                for idy,img2 in enumerate(images[idx+1:]):
-                    combinations.append(Combination(img, img2))
-

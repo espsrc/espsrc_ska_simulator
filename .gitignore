@@ -191,3 +191,8 @@ phd
 
 scripts/srcs
 *.pickle
+**.fits
+analysis/
+**.backup
+**.log
+**.csv
