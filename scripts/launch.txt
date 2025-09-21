@@ -1,1 +1,0 @@
-pkill ristretto ; python meerkat.py --sources HCG16 --prefix demo --n_channels=32768 --delta_freq=0.026123 --freq=1389.1322 --seconds=240 && ristretto demo_sources.png demo_dirty.png
