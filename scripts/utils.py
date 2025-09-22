@@ -260,8 +260,9 @@ try:
         def __init__(self, *args, **kwargs):
             # Call the parent constructor
             super().__init__(*args, **kwargs)
-            if len(self.sources) > 0:
-                self.get_center()  # Calculate the phase center if sources are provided
+            if (self.sources is None) or (len(self.sources) == 0):
+                return
+            self.get_center()  # Calculate the phase center if sources are provided
 
 
 

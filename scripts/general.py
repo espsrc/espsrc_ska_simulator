@@ -294,10 +294,12 @@ if __name__ == "__main__":
         argparser.add_argument("--robust", type=float, default=0.0, help="Robustness factor for imaging")
 
         argparser.add_argument("--rms", action="store_true", default=False, help="Enable RMS calculation")
+        argparser.add_argument("--rms_value", type=float, default=0.0, help="RMS value")
+        argparser.add_argument("--rms_sigma", type=float, default=3.0, help="Sigma factor for the RMS calculation to define the cleaning threshold")
         # Add noise_level argument
-        argparser.add_argument("--rms_start", type=float, default=0, help="Noise level start in Jy for RMS calculation")
-        # Add noise_level_var argument
-        argparser.add_argument("--rms_end", type=float, default=0, help="Noise level end in Jy for RMS calculation")
+        # argparser.add_argument("--rms_start", type=float, default=0, help="Noise level start in Jy for RMS calculation")
+        # # Add noise_level_var argument
+        # argparser.add_argument("--rms_end", type=float, default=0, help="Noise level end in Jy for RMS calculation")
         argparser.add_argument("--niter", type=int, default=5000, help="Number of iterations for the imager")
         argparser.add_argument("--scale-I", type=float, default=1.0, help="Scale factor for I intensity")
         argparser.add_argument("--catalogue", type=int, default=0, help="Catalogue to use: 1 - MIGHTEE, 2 - GLEAM, 0 - JSON file or random sources")
@@ -402,7 +404,11 @@ if __name__ == "__main__":
             else:
                 if args.json is not None:
                     printlog (log_file, f"Loading sources from JSON file {args.json}")
-                    with open(args.json, 'r') as f:
+                    if (not os.path.isabs(args.json)):
+                        fjson = os.path.join(os.path.dirname(__file__), args.json)
+                    else:
+                        fjson = args.json
+                    with open(fjson, 'r') as f:
                         sources_data = json.load(f)
                     sources = []
                     for source_data in sources_data:
@@ -504,11 +510,10 @@ if __name__ == "__main__":
                 printlog (log_file, f"\t\tNiter: {args.niter}")
             printlog (log_file, f"\tRMS: {args.rms}")
             if args.rms:
-                printlog (log_file, f"\t\tRMS start: {args.rms_start}")
-                printlog (log_file, f"\t\tRMS end: {args.rms_end}")
-            
+                printlog (log_file, f"\t\tRMS value: {args.rms_value} Jy")
+                printlog (log_file, f"\t\tRMS sigma: {args.rms_sigma}")                
 
-            # Launch the scripts monitor.py (not blocking) with pid of the current process 
+            # Launch the scripts monitor.py (not blocking) with pid of the current process
             # monitor_script = os.path.join(os.path.dirname(__file__), 'test_monitor.py')
             # if os.path.exists(monitor_script):
             #     printlog (log_file, f"Launching monitor script {monitor_script} with PID {os.getpid()}")
@@ -561,9 +566,11 @@ if __name__ == "__main__":
 
             if args.rms:
                 simulation_params['noise_enable'] = True
-                simulation_params['noise_freq'] = "Observation settings"
-                simulation_params['noise_rms_start'] = args.rms_start
-                simulation_params['noise_rms_end'] = args.rms_end
+                # simulation_params['noise_freq'] = "Observation settings"
+                # simulation_params['noise_rms_start'] = args.rms_start
+                # simulation_params['noise_rms_end'] = args.rms_end
+                simulation_params['noise_freq'] = "Telescope model"
+                simulation_params['noise_rms'] = "Telescope model"
 
             simulation = InterferometerSimulation(**simulation_params)
             # skyModel.set_center(center)
@@ -593,7 +600,10 @@ if __name__ == "__main__":
             if args.cleaning:
                 printlog (log_file, "Cleaning not supported for OSKAR, using WSCLEAN")
                 path_fits = os.path.join(root_path, f"{prefix}_cleaned.fits")
-                custom_command = f"wsclean -weight briggs {args.robust} -multiscale -size {args.pixels} {args.pixels} -scale {imaging_cellsize.to(u.deg).value}deg -niter {args.niter} -mgain 0.8 -auto-threshold 0.3 -auto-mask 3 -channels-out 8 -join-channels {visibility_path}"
+                threshold_settings = "--auto-threshold 0.3"
+                if (args.rms) and (args.rms_value > 0):
+                    threshold_settings = f" --threshold {args.rms_value * args.rms_sigma}"
+                custom_command = f"wsclean -weight briggs {args.robust} -multiscale -size {args.pixels} {args.pixels} -scale {imaging_cellsize.to(u.deg).value}deg -niter {args.niter} -mgain 0.8 {threshold_settings} -auto-mask 3 -channels-out 8 -join-channels {visibility_path}"
                 printlog (log_file, f"Running custom wsclean command: {custom_command}")
                 cleaned = iaa_create_image_custom_command(custom_command, path_fits)
                 # Remove the temporary files created by WSClean
