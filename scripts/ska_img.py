@@ -15,8 +15,9 @@ from matplotlib.ticker import FormatStrFormatter
 from astropy.io import fits as pyfits
 from astropy.io import fits
 from astropy.wcs import WCS
-from astropy import stats, units as u
+from astropy import stats, units as u, constants as cte
 from astropy.coordinates import SkyCoord, Angle, Galactic, ICRS, FK5, FK4
+
 
 from scipy.ndimage.measurements import center_of_mass
 
@@ -96,7 +97,7 @@ class SKAImage:
     data = None
     header = None
 
-    def __init__(self, path = None, data=None, step = None, x0 = 0, y0 = 0, unit=u.deg, interf=False, frame=None, header=None, extent=None, bunit=None):
+    def __init__(self, path = None, data=None, step = None, x0 = 0, y0 = 0, unit=u.deg, interf=False, frame=None, header=None, extent=None, bunit=None, cube=False):
         if path is not None:
             if os.path.exists(path):
                 self.path = path
@@ -170,13 +171,20 @@ class SKAImage:
                     self.axis=[np.arange(x0, x0 + self.step[0].value * self.size[0], self.step[0].value),np.arange(y0, y0 + self.step[1].value * self.size[1], self.step[1].value)]
                     self.header = self.new_header()
                 else:
-                    self.header = self.fix_header(header)
+                    # if (not self.cube):
+                    #     self.header = self.fix_header(header)
+                    # else:
+                    #     self.header = header
+                    self.header = header
                     self.interf = True
                     try:
                         wcs = WCS(self.header)
-                        x0, y0 = wcs.wcs_pix2world(0, 0, 0)
-                        x1, y1 = wcs.wcs_pix2world(1, 1, 0)
-                        xN, yN = wcs.wcs_pix2world(self.header['NAXIS1'], self.header['NAXIS2'], 0)
+                        x0, y0 = self.pix2coords(0, 0, 0)
+                        x1, y1 = self.pix2coords(1, 1, 0)
+                        xN, yN = self.pix2coords(self.header['NAXIS1'], self.header['NAXIS2'], 0)
+                        # x0, y0 = wcs.wcs_pix2world(0, 0, 0)
+                        # x1, y1 = wcs.wcs_pix2world(1, 1, 0)
+                        # xN, yN = wcs.wcs_pix2world(self.header['NAXIS1'], self.header['NAXIS2'], 0)
                     except Exception as e:
                         print (show_exc(e))
                         (x0,xN,y0,yN) = (1*header['CDELT1'], self.size[0]*header['CDELT1'],1*header['CDELT2'], self.size[1]*header['CDELT2'])
@@ -197,6 +205,9 @@ class SKAImage:
                 self.header['IMGTYPE'] = 'COMBINATION'
             except Exception as e:
                 mylog (show_exc(e))
+
+        if (not hasattr(self, 'frame')):
+            self.frame = FK5
 
     def reproject(self, img):
         obj = WCS(img.header)
@@ -238,17 +249,17 @@ class SKAImage:
         if 'WAVELENG' in self.header.keys():
             return (1.12 * u.mm).to(u.Hz, equivalencies=u.spectral())
         if 'RESTFRQ' in self.header.keys():
-            return (self.header['RESTFRQ'] * u.Hz).to(unit)
+            return (self.header['RESTFRQ'] * u.Hz).to(unit, equivalencies=u.spectral())
         elif 'REFFREQ' in self.header.keys():
-            return (self.header['REFFREQ'] * u.Hz).to(unit)
+            return (self.header['REFFREQ'] * u.Hz).to(unit, equivalencies=u.spectral())
         elif 'RESTFREQ' in self.header.keys():
-            return (self.header['RESTFREQ'] * u.Hz).to(unit)
+            return (self.header['RESTFREQ'] * u.Hz).to(unit, equivalencies=u.spectral())
         elif 'CRVAL3' in self.header.keys():
-            return (self.header['CRVAL3'] * u.Hz).to(unit)
+            return (self.header['CRVAL3'] * u.Hz).to(unit, equivalencies=u.spectral())
         else:
             return None
 
-    def pix2coords(self,x,y=None):
+    def pix2coords(self,x,y=None, freq=0, z = 0):
         try:
             if y is None:
                 (x,y) = x
@@ -262,7 +273,7 @@ class SKAImage:
                 else:
                     x0, y0 = wcs.wcs_pix2world(x, y, 0)
             except:
-                wcs = self.wcs2d
+                wcs = self.fix_header(self.header)
                 if wcs.naxis < 2:
                     raise Exception ("WCS has less than 2 axis")
                 if wcs.naxis > 2:
@@ -284,8 +295,11 @@ class SKAImage:
             x = coord.ra
             y = coord.dec
         try:
-            wcs = self.wcs2d
-            x0, y0 = wcs.wcs_world2pix(x, y, 0)
+            wcs = self.wcs
+            if wcs.naxis > 2:
+                x0, y0, _, _ = wcs.wcs_world2pix(x,y,0,0,0)
+            else:
+                x0, y0 = wcs.wcs_world2pix(x, y, 0)
         except:
             wcs = self.wcs2d
             x0, y0 = wcs.wcs_world2pix(x, y, 0)
@@ -362,15 +376,23 @@ class SKAImage:
             return None
         return None
 
-    def zoom(self, zoom):
+    def zoom(self, zoom, in2d=True):
         ''' Zoom into a region of the image. 
-            zoom = [ra_center, dec_center, radius]
+            zoom = [ra_center, dec_center, radius] or [SkyCoord, radius]
         '''
-        orig_data = np.copy(self.data)
-        (ra_center, dec_center, radius_zoom) = zoom
-        zoom_coords = SkyCoord(ra_center, dec_center, frame=self.frame, unit=(u.hourangle, u.deg))
-        if self.frame != zoom_coords.frame:
-            zoom_coords = zoom_coords.transform_to(self.frame)
+
+        if in2d:
+            orig_data = np.copy(self.data2d)
+        else:
+            orig_data = np.copy(self.data)
+        if (len(zoom) == 2):
+            zoom_coords, radius_zoom = zoom
+        else:
+            (ra_center, dec_center, radius_zoom) = zoom
+            zoom_coords = SkyCoord(ra_center, dec_center, frame=self.frame, unit=(u.hourangle, u.deg))
+
+        # if self.frame != zoom_coords.frame:
+        #     zoom_coords = zoom_coords.transform_to(self.frame)
         ra_center = zoom_coords.ra.to(u.deg).value
         dec_center = zoom_coords.dec.to(u.deg).value
         radius_zoom = Angle(radius_zoom).to(u.deg).value
@@ -378,24 +400,332 @@ class SKAImage:
         # x_center, y_center = self.coords2pix(zoom_coords)
         low_left = SkyCoord(ra_center + radius_zoom, dec_center - radius_zoom, frame=self.frame, unit=u.deg)
         up_right = SkyCoord(ra_center - radius_zoom, dec_center + radius_zoom, frame=self.frame, unit=u.deg)
+
+        wcs = self.wcs2d
+        # (x0, y0) = wcs.wcs_world2pix(low_left.ra.to(u.deg).value, low_left.dec.to(u.deg).value, 0)
         (x0, y0) = self.coords2pix(low_left)
         (x1, y1) = self.coords2pix(up_right)
 
         #Create wcs with the zoomed region
-        zoomHeader = self.header
+        zoomHeader = self.header.copy()
         zoomHeader['CRPIX1'] = 1
         zoomHeader['CRPIX2'] = 1
         zoomHeader['CRVAL1'] = low_left.ra.to(u.deg).value
         zoomHeader['CRVAL2'] = low_left.dec.to(u.deg).value
         zoomHeader['NAXIS1'] = int(abs((x1 - x0)))
         zoomHeader['NAXIS2'] = int(abs((y1 - y0)))
-        subimg = orig_data[int(min(y0,y1)):int(max(y0,y1)), int(min(x0,x1)):int(max(x0,x1))]
+        zoomHeader['CDELT1'] = self.header['CDELT1']
+        zoomHeader['CDELT2'] = self.header['CDELT2']
+        zoomHeader['CUNIT1'] = self.header['CUNIT1']
+        zoomHeader['CUNIT2'] = self.header['CUNIT2']
+        zoomHeader['CTYPE1'] = self.header['CTYPE1']
+        zoomHeader['CTYPE2'] = self.header['CTYPE2']
+
+
+        
+        if (in2d):
+            subimg = orig_data[int(min(y0,y1)):int(max(y0,y1)), int(min(x0,x1)):int(max(x0,x1))]
+        else:
+            subimg = orig_data[:,:,int(min(y0,y1)):int(max(y0,y1)), int(min(x0,x1)):int(max(x0,x1))]
 
         zoomImg = SKAImage(data=subimg, header=zoomHeader)
         return zoomImg
+    
+
+    def integrate_channels_image(self, center = None, a = None, b = None, pa = None, channels = [], manual_linefree_ranges = None, mask=None):
+        """
+        Calcula un plano 2D del continuo integrado excluyendo líneas espectrales
+        
+        Parameters:
+        - cubo: numpy array 3D (frecuencias, y, x)
+        - sigma_umbral: umbral para detectar líneas
+        - percentil: percentil para calcular el continuo (50=mediana, recomendado)
+        """
+        cubo = self.data[0,:,:,:]
+        n_freq, ny, nx = cubo.shape
+        sigma_umbral = 3.0
+        percentil = 50
+        
+        # 1. Calcular estadísticas robustas para identificar líneas
+        print("Calculando estadísticas para detectar líneas...")
+        
+        # Media robusta a lo largo del eje espectral
+        mediana_espectral = np.median(cubo, axis=0)
+        import scipy.stats as stats
+        mad_espectral = stats.median_abs_deviation(cubo, axis=0, scale='normal')
+        
+        
+        # 2. Crear máscara para excluir líneas
+        mascara_sin_lineas = np.ones_like(cubo, dtype=bool)
+        
+        for i in range(ny):
+            for j in range(nx):
+                espectro = cubo[:, i, j]
+                # Detectar píxeles que son líneas (outliers)
+                umbral_superior = mediana_espectral[i, j] + sigma_umbral * mad_espectral[i, j]
+                umbral_inferior = mediana_espectral[i, j] - sigma_umbral * mad_espectral[i, j]
+                
+                # Marcar como líneas los valores fuera del umbral
+                mascara_lineas = (espectro > umbral_superior) | (espectro < umbral_inferior)
+                mascara_sin_lineas[:, i, j] = ~mascara_lineas
+        
+        # 3. Calcular continuo usando percentil sobre píxeles no-linea
+        print("Calculando continuo integrado...")
+        continuo_2d = np.zeros((ny, nx))
+
+        import multiprocessing as mp
+        pool = mp.Pool(mp.cpu_count()-1)
+
+        
+        for i in range(ny):
+            for j in range(nx):
+                espectro = cubo[:, i, j]
+                # mascara_validos = mascara_sin_lineas[:, i, j]
+                
+                # if np.sum(mascara_validos) > 0:
+                #     # Usar percentil sobre los valores que no son líneas
+                #     continuo_2d[i, j] = np.percentile(espectro[mascara_validos], percentil)
+                # else:
+                #     # Fallback: usar mediana de todo el espectro
+                #     continuo_2d[i, j] = np.median(espectro)
+                continuo_2d[i, j] = np.median(espectro)
+    
+        
+        continuum_img = SKAImage(data=continuo_2d, header=self.fix_header(self.header))
+        residuos = cubo - continuo_2d[None, :, :]
+        resid_img = SKAImage(data=residuos, header=self.header)
+        resid_img.name = "Continuum-subtracted cube"
+        return continuum_img, resid_img
+
+    def integrate_channels_image_3(self, center = None, a = None, b = None, pa = None, channels = [], manual_linefree_ranges = None, mask=None):
+
+        from scipy.ndimage import uniform_filter1d
+
+        # Parameters for the automatic detector:
+        mad_sigma = 2.0      # robust threshold in MAD
+        smooth_w  = 5        # smoothing (window) over the median profile per channel
+        dilate_w  = 2        # widen ±dilate_w channels around those detected as line
+
+        
+        h = self.header
+        data = self.data.copy()  # (1, N, Y, X)
+        _, N, Ny, Nx = data.shape
+
+        w3 = WCS(h, naxis=4)
+        wspec = w3.sub(['spectral'])
+        pix = np.arange(N)
+        (spec_world,) = wspec.wcs_pix2world(pix, 0)
+        unit = wspec.wcs.cunit[0]
+        if unit:
+            x = (spec_world * u.Unit(unit)).to(u.Hz, equivalencies=u.spectral())
+        else:
+            x = (spec_world * u.Hz)
+        dx = np.diff(x)  # length N-1
+        # w = np.empty(N) * dx.unit
+        # w[0]      = dx[0]
+        # w[1:-1]   = 0.5 * (dx[:-1] + dx[1:])
+        # w[-1]     = dx[-1]
+
+        # --- 2) Selection of line-free channels ---
+        if manual_linefree_ranges is not None:
+            mask_linefree = np.zeros(N, dtype=bool)
+            for i0, i1 in manual_linefree_ranges:
+                mask_linefree[i0:i1+1] = True
+        else:
+            print ("\t\t\tDetecting line-free channels automatically...")
+            # Global profile per channel: spatial median (robust)
+            med_spec = np.nanmedian(data, axis=(0,2,3)) 
+            # Smoothing to estimate global continuum
+            med_smooth = uniform_filter1d(med_spec, size=smooth_w, mode='nearest')
+            resid = med_spec - med_smooth
+            # Robust MAD
+            mad = 1.4826 * np.nanmedian(np.abs(resid - np.nanmedian(resid)))
+            is_line = np.abs(resid) > (mad_sigma * mad)
+
+            # Dilate line channels 
+            if dilate_w > 0:
+                idx = np.where(is_line)[0]
+                for k in idx:
+                    i0 = max(0, k - dilate_w)
+                    i1 = min(N, k + dilate_w + 1)
+                    is_line[i0:i1] = True
+
+            mask_linefree = ~is_line
+
+            # Make sure you don't end up with no line-free channels:
+            if not np.any(mask_linefree):
+                raise RuntimeError("\t\tNo line-free channels detected with the automatic criterion. Adjust parameters or use manual ranges.")
+            print(f"\t\t\tDetected line-free channels: {np.sum(mask_linefree)} out of {N} total.")
+
+        # --- 3) Per-pixel continuum: weighted mean in line-free channels ---
+        # Prepare weights (convert to dimensionless for numpy)
+        w_linefree = w[mask_linefree].to_value(w.unit)
+        # Filtered data: (Nfree, Ny, Nx)
+        D = data[0, mask_linefree, :, :]
+
+        # Weighted mean: sum(w_i * f_i) / sum(w_i), ignoring NaNs
+        # To ignore NaN: replace NaN f_i with 0 and set weight 0 where f_i is NaN
+        valid = np.isfinite(D)
+        w3d = w_linefree[:, None, None] * valid
+        # w3d = np.ones_like(w3d)  # equal weights
+        num = np.nansum(w3d * np.nan_to_num(D), axis=0)   # (Ny, Nx)
+        den = np.nansum(w3d, axis=0)                      # (Ny, Nx)
+
+        continuum = np.zeros((Ny, Nx), dtype=float)
+        continuum[den > 0] = num[den > 0] / den[den > 0]
+        continuum[den == 0] = np.nan  # no valid data
+
+        # --- 4) Continuum cube (to subtract): constant in frequency (for slope, see note) ---
+        cont_cube = np.broadcast_to(continuum[None, None, :, :], (1, N, Ny, Nx)).copy()
+
+        # --- 5) Residual cube (continuum-subtracted) ---
+        resid_cube = data - cont_cube
+        print (np.nansum(continuum))
+
+        continuum_img = SKAImage(data=continuum, header=self.fix_header(self.header))
+        continuum_img.name = "Continuum image"
+        continuum_img.header['AUTHOR'] ='Continuum from line-free channels by danidiaz@gmail.com'
+        resid_img = SKAImage(data=resid_cube, header=self.header)
+        resid_img.name = "Continuum-subtracted cube"
+        resid_img.header['AUTHOR'] ='Continuum subtracted cube by danidiaz@gmail.com'
+        print ("\t\tContinuum and residual images created.")
+
+        return continuum_img, resid_img
+
+
+
+
+
+
+
+
 
     
-    def draw(self, img=None, exp=0.3, cmapstr='gray', scale='power', colorbar=False, plot=False, title=None, show_beam = True):
+    def integrate_channels_image2(self, center = None, a = None, b = None, pa = None, channels = [], mask=None):
+        if self.data is not None:
+
+
+
+            if len(self.data.shape) < 3:
+                return self
+            _, N, Ny, Nx = self.data.shape
+            w3 = WCS(self.header, naxis=3)
+            wspec = w3.sub(['spectral'])
+            pix = np.arange(N)
+            (spec_world,) = wspec.wcs_pix2world(pix, 0)
+            unit = wspec.wcs.cunit[0]
+            if unit:
+                x = (spec_world * u.Unit(unit)).to(u.Hz, equivalencies=u.spectral())
+            else:
+                # si no hay unidad en header, asume Hz
+                x = (spec_world * u.Hz)
+            # dnu (o dx) por canal para media ponderada:
+            dx = np.diff(x)  # length N-1
+            # Para ponderar cada muestra f_i, asociamos Δx_i simétrica:
+            # w0 = dx0, wN-1 = dxN-2, interior = 0.5*(dx_{i-1}+dx_i)
+            w = np.empty(N) * dx.unit
+            w[0]      = dx[0]
+            w[1:-1]   = 0.5 * (dx[:-1] + dx[1:])
+            w[-1]     = dx[-1]
+
+
+            if center is None:
+                center = self.get_center()
+            if a is None:
+                a = self.fov(unit=u.deg)['x']/2. 
+            if b is None:
+                b = a
+            if pa is None:
+                pa = 0.
+        
+    
+            data = self.data2d.copy()
+
+            if a is None:
+                a = data.shape[1]/2.
+            if b is None:
+                b = a
+            if pa is None:
+                pa = 0.
+            else:
+                pa = pa + 90 * u.deg
+            # pa = pa + 90 * u.deg
+            (x0,y0) = self.coords2pix(center)
+            y, x = np.indices(data.shape)
+            xp = (x - x0) * np.cos(np.radians(pa)) + (y - y0) * np.sin(np.radians(pa))
+            yp = -(x - x0) * np.sin(np.radians(pa)) + (y - y0) * np.cos(np.radians(pa))
+            if (isinstance(a, u.Quantity)):
+                a = (a.to(u.Unit(self.header['CUNIT1'])) / (self.header['CDELT1'] * u.Unit(self.header['CUNIT1'])))
+            if (isinstance(b, u.Quantity)):
+                b = (b.to(u.Unit(self.header['CUNIT2'])) / (self.header['CDELT2'] * u.Unit(self.header['CUNIT2'])))
+
+
+
+            mask = ((xp/a)**2 + (yp/b)**2) <= 1.
+
+            wcs = WCS(self.header)
+            if wcs.naxis == 2:
+                data[~(mask)] = np.nan
+                integrated_data = data.copy()
+            else:
+                mask_linefree = np.ones(N, dtype=bool) # all channels are line-free
+                w_linefree = w[mask_linefree].to_value(w.unit)
+                # Datos filtrados: (Nfree, Ny, Nx)
+                D = self.data[0, mask_linefree, :, :]
+
+                # Media ponderada: sum(w_i * f_i) / sum(w_i), ignorando NaNs
+                # Para ignorar NaN: sustituimos f_i NaN por 0 y ponemos peso 0 donde f_i es NaN
+                valid = np.isfinite(D)
+                w3d = w_linefree[:, None, None] * valid
+                num = np.nansum(w3d * np.nan_to_num(D), axis=0)   # (Ny, Nx)
+                den = np.nansum(w3d, axis=0)                      # (Ny, Nx)
+
+                continuum = np.zeros((Ny, Nx), dtype=float)
+                continuum[den > 0] = num[den > 0] / den[den > 0]
+                continuum[den == 0] = np.nan  # sin datos válidos
+
+                # --- 4) Cubo continuo (para restar): constante en frecuencia (si quieres slope, ver nota) ---
+                cont_cube = np.broadcast_to(continuum[None, :, :], (N, Ny, Nx)).copy()
+                # cont_mean_cube = np.nanmean(cont_cube, axis=(0)) # media del continuo en cada píxel (Ny, Nx)
+                # integrated_data = cont_mean_cube.copy()
+                integrated_data = continuum.copy()
+                print (f"Max: {np.nanmax(continuum):.3e}  Min: {np.nanmin(continuum):.3e}  Mean: {np.nanmean(continuum):.3e}")
+        
+
+                
+
+
+
+                # --- 5) Cubo resto (continuum-subtracted) ---
+                # resid_cube = self.data - cont_cube
+
+                # integrated_data = np.zeros((self.data.shape[-2], self.data.shape[-1]))
+                # if len(channels) == 0:
+                #     channels = np.arange(0,self.data.shape[1])
+                # for ch in channels:
+                #     data_channel = self.data[0,ch,:,:].copy()
+                #     data_channel[(data_channel < 0.)] = 0.0
+                #     data_channel[~(mask)] = np.nan
+                #     integrated_data += data_channel
+            
+
+
+
+            new_header = self.fix_header(self.header)
+            new_img = SKAImage(data=integrated_data, header=new_header)
+            new_img.name = self.name + "_int"
+
+   
+            return new_img
+
+            
+            
+
+
+    
+
+    
+    def draw(self, img=None, exp=0.3, cmapstr='gray', scale='power', colorbar=False, plot=False, title=None, show_beam = True, filename=None):
         
         from astropy.wcs import WCS
         if self.data is not None:
@@ -436,22 +766,30 @@ class SKAImage:
             ax.set_title('{}'.format(title))
             if plot:
                 plt.show()
+            if filename is not None:
+                plt.savefig(filename)
             return ax
         return None
 
 
-    def center_of_mass (self, mask=None, coords=True):
+    def center_of_mass (self, mask=None, coords=True, sigma=0.0, verbose=False):
+        mad = self.mad(verbose=verbose)
+        if (mad is None):
+            mad = 0.
         aux = np.copy(self.data)
         aux[np.isnan(aux)] = 0.
+        
+        aux[(aux < sigma * mad)] = 0
         if mask is not None:
             aux[~(mask)] = 0.
-            cm = center_of_mass(aux)
-            if not coords:
-                return(cm)
-            else:
-                (ra,dec) = self.pix2coords(cm[1],cm[0])
-                coord_cm = SkyCoord(ra,dec, frame=self.frame, unit=(u.deg, u.deg))
-                return (coord_cm)
+        cm = center_of_mass(aux)
+        if not coords:
+            return(cm)
+        else:
+            (ra,dec) = self.pix2coords(cm[1],cm[0])
+            coord_cm = SkyCoord(ra,dec, frame=self.frame, unit=(u.deg, u.deg))
+            return (coord_cm)
+
 
     def draw_beam(self, img, color="green"):
         try:
@@ -486,8 +824,35 @@ class SKAImage:
         except Exception as e:
             mylog (show_exc(e))
             return data
+        
+    def angular_resolution(self, unit=u.arcsec):
+        try:
+            beam = self.get_beam()
+            if beam is not None:
+                return (beam.major.to(unit))
+            else:
+                return None
+        except Exception as e:
+            mylog(show_exc(e))
+            return None
+        
+    def spw_range(self, unit=u.GHz):
+        try:
+            freq_max = None
+            freq_min = self.restfreq()
+            bandwidth = self.header['CDELT3'] * self.header['NAXIS3'] * u.Hz
+            if freq_min is not None:
+                freq_max = freq_min + bandwidth
+                return (freq_min.to(unit, equivalencies=u.spectral()), freq_max.to(unit, 
+                                                                                equivalencies=u.spectral()))
 
+            if 'CRVAL3' in self.header.keys() and 'CDELT3' in self.header.keys() and 'NAXIS3' in self.header.keys():
+                freq_min = (self.header['CRVAL3'] - (self.header['CDELT3'] * self.header['CRPIX3'])) * u.Hz
+                freq_max = (self.header['CRVAL3'] + (self.header['CDELT3'] * (self.header['NAXIS3'] - self.header['CRPIX3']))) * u.Hz
 
+            return (freq_min.to(unit, equivalencies=u.spectral()), freq_max.to(unit, equivalencies=u.spectral()))
+        except Exception as e:
+            return [0 * unit, 0 * unit]
 
     def show_headers(self, exclude = ['HISTORY'], onlykeys=False):
         if self.header is not None:
@@ -544,9 +909,12 @@ class SKAImage:
         return {'x':0*unit, 'y':0*unit, 'area':0*unit**2}
 
     def fix_header(self, header):
-        keys_to_remove = [  'PC1_1', 'PC2_1', 'PC3_1', 'PC4_1', 'PC1_2', 'PC2_2',
+        keys_to_remove = [  'NAXIS', 'NAXIS3', 'NAXIS4', 
+                            'PC1_1', 'PC2_1', 'PC3_1', 'PC4_1', 'PC1_2', 'PC2_2',
                             'PC3_2', 'PC4_2', 'PC1_3', 'PC2_3', 'PC3_3', 'PC4_3',
-                            'PC1_4', 'PC2_4', 'PC3_4', 'PC4_4', 
+                            'PC1_4', 'PC2_4', 'PC3_4', 'PC4_4',                            'PC01_03', 'PC02_03', 'PC03_03', 'PC04_03', 'PC01_04', 'PC02_04',
+                                'PC03_04', 'PC04_04', 'PC03_01', 'PC03_02', 'PC03_03', 'PC03_04',
+                                'PC04_01', 'PC04_02', 'PC04_03', 'PC04_04',
                             'CTYPE3', 'CRVAL3', 
                             'CDELT3', 'CRPIX3', 'CUNIT3', 'NAXIS3',
                             'CTYPE4', 'CRVAL4', 'CDELT4', 'CRPIX4', 'CUNIT4', 'NAXIS4',
@@ -570,14 +938,15 @@ class SKAImage:
         hdu.header['AUTHOR'] ='IMGCombine by d.diaz@irya.unam.mx'
         hdu.header['SIMPLE'] = header['SIMPLE'] if 'SIMPLE' in header.keys() else True
         hdu.header['BITPIX'] = -32
-        hdu.header['NAXIS'] = 2
         hdu.header['EXTEND'] = header['EXTEND'] if 'EXTEND' in header.keys() else True
         for key in header:
-            if key not in keys_to_remove and key not in hdu.header:
-                try:
+            try:
+                if key not in keys_to_remove and key not in hdu.header:
                     hdu.header[key] = header[key]
-                except Exception as e:
-                    mylog (key, show_exc(e))
+            except:
+                pass
+        hdu.header['NAXIS'] = 2
+
 
         if header['NAXIS'] > 2:
             hdu.header['IMGTYPE'] = 'INTERFEROMETER'
@@ -586,8 +955,6 @@ class SKAImage:
                 hdu.header['IMGTYPE'] = 'INTERFEROMETER'
             else:
                 hdu.header['IMGTYPE'] = 'SINGLE-DISH'
-
-
         return hdu.header
 
     def new_header(self, hdu=None, beam=None):
@@ -595,6 +962,9 @@ class SKAImage:
             keys_to_remove = [  'PC1_1', 'PC2_1', 'PC3_1', 'PC4_1', 'PC1_2', 'PC2_2',
                                 'PC3_2', 'PC4_2', 'PC1_3', 'PC2_3', 'PC3_3', 'PC4_3',
                                 'PC1_4', 'PC2_4', 'PC3_4', 'PC4_4', 'CTYPE3', 'CRVAL3',
+                                'PC01_03', 'PC02_03', 'PC03_03', 'PC04_03', 'PC01_04', 'PC02_04',
+                                'PC03_04', 'PC04_04', 'PC03_01', 'PC03_02', 'PC03_03', 'PC03_04',
+                                'PC04_01', 'PC04_02', 'PC04_03', 'PC04_04',
                                 'CDELT3', 'CRPIX3', 'CUNIT3', 'CTYPE4', 'CRVAL4', 'CDELT4',
                                 'CRPIX4', 'CUNIT4', 'PV2_1', 'PV2_2', 'SPECSYS',
                                 'ALTRVAL', 'ALTRPIX', 'VELREF', 'HISTORY', 'COMMENT','NAXIS3','NAXIS4']
@@ -711,7 +1081,7 @@ class SKAImage:
         return self.janskys() /npts
 
 
-    def janskys(self, freq=None, alpha_spec=3.5, center = None, a=None, b=None, pa=None):
+    def janskys(self, freq=None, alpha_spec=3.5, center = None, a=None, b=None, pa=None, channels=[], sigma_clip=None):
         ''' Compute total flux in the image (or in a region if center is given)
             freq: frequency to scale the flux (if different from the rest frequency)
             alpha_spec: spectral index to scale the flux (default=3.5)
@@ -724,9 +1094,11 @@ class SKAImage:
             freq_factor = (freq.to(u.Hz).value / self.restfreq().to(u.Hz).value)**(alpha_spec)
         else:
             freq_factor = 1.
+        mask = None
 
-        data = self.data2d.copy()
         if center is not None:
+            data = self.data2d.copy()
+
             if a is None:
                 a = data.shape[1]/2.
             if b is None:
@@ -748,17 +1120,65 @@ class SKAImage:
 
 
             mask = ((xp/a)**2 + (yp/b)**2) <= 1.
-            data[~(mask)] = np.nan
-        
+
+            wcs = WCS(self.header)
+            if wcs.naxis == 2:
+                data[~(mask)] = np.nan
+            else:
+                data = self.data.copy()
+                data[:,:,~(mask)] = np.nan
+        else:
+            data = self.data.copy()
+
+
+
 
         beam = self.get_beam()
-        npts = data.size - np.isnan(data).sum()
-        mean = np.nanmean(data)
-        omega_beam = beam.sr.to(u.deg**2)
-        omega_pix = (self.header['CDELT1'] * u.Unit(self.header['CUNIT1'])) ** 2
-        full_area = omega_pix * npts
-        n_beams = full_area / omega_beam
-        return mean*n_beams * u.Jy * freq_factor
+        total = 0.
+        wcs = WCS(self.header)
+        if wcs.naxis == 2:
+            if sigma_clip is not None:
+                mad = self.mad()
+                if mask is not None:
+                    mask = mask & (data > sigma_clip * mad)
+                else:
+                    mask = (data > sigma_clip * mad)
+                data[~(mask)] = np.nan
+
+            npts = data.size - np.isnan(data).sum()
+            mean = np.nanmean(data)
+            omega_beam = beam.sr.to(u.deg**2)
+            omega_pix = (self.header['CDELT1'] * u.Unit(self.header['CUNIT1'])) ** 2
+            full_area = omega_pix * npts
+            n_beams = full_area / omega_beam
+            total = mean*n_beams * u.Jy * freq_factor
+
+            return total
+        else:
+
+            data_cube = data.copy()
+            
+            if channels == []:
+                channels = range(self.data.shape[-3])
+            for ch in channels:
+                data = data_cube[0,ch,:,:].copy()
+                if sigma_clip is not None:
+                    mad = self.mad(channel=ch)
+                    if mask is not None:
+                        mask = mask & (data > sigma_clip * mad)
+                    else:
+                        mask = (data > sigma_clip * mad)
+                    data[~(mask)] = np.nan
+
+                npts = data.size - np.isnan(data).sum()
+                mean = np.nanmean(data)
+                omega_beam = beam.sr.to(u.deg**2)
+                omega_pix = (self.header['CDELT1'] * u.Unit(self.header['CUNIT1'])) ** 2
+                full_area = omega_pix * npts
+                n_beams = full_area / omega_beam
+                total += mean*n_beams * u.Jy * freq_factor
+            return total
+        
 
     def neg_janskys(self):
         beam = self.get_beam()
@@ -778,34 +1198,68 @@ class SKAImage:
         u_px = u.def_unit('px', omega_pix)
         return (self.data.size - np.isnan(self.data).sum()) * u_px
 
-    def mad(self, iters=100, limit=0.99, stack=False, cutoff=2., mask=None):
+    @property
+    def velocity(self):
+        if 'ALTRVAL' in self.header.keys():
+            return (self.header['ALTRVAL'] * u.m/u.s)
+        else:
+            return 0. * u.m/u.s
+        
+    @property   
+    def redshift(self):
+        return (self.velocity.to(u.km/u.s) / cte.c.to(u.km/u.s)).value
+
+    def adjacent_coords(self, coord, pixels_distance=1):
+        (x,y) = self.coords2pix(coord)
+        coords = []
+        for dx in range(-pixels_distance, pixels_distance+1):
+            for dy in range(-pixels_distance, pixels_distance+1):
+                if (dx != 0 or dy != 0):
+                    (ra,dec) = self.pix2coords(x+dx,y+dy)
+                    coord_adj = SkyCoord(ra,dec, frame=self.frame, unit=(u.deg, u.deg))
+                    coords.append(coord_adj)
+        return coords
+
+        
+
+    def mad(self, iters=100, limit=0.99, stack=False, cutoff=2., mask=None, channel=None, data=None, verbose=False):
         import warnings
         try:
             warnings.simplefilter('ignore')
-            data = np.copy(self.data)
+            counter = 0
+            if data is None:
+                if channel is not None:
+                    data = np.copy(self.data[0,channel,:,:])
+                else:
+                    if len(self.data.shape) < 4:
+                        data = np.copy(self.data2d)
+                    else:
+                        data = np.copy(self.data[0,0,:,:])
             try:
                 if mask is not None:
                     data[mask] = np.nan
             except Exception as e:
-                mylog ("Warning in combine.mad !!!! We can not masked the image")
-            counter = 0
+                mylog ("Warning in combine.mad !!!! We can not masked the image", verbose=verbose)
             next_mad = stats.mad_std(data, axis=None, ignore_nan=True)
             mad = 1e3
             mad_stack = []
-            while (next_mad / mad < limit and counter < iters) or (counter == 0):
+            mad_mask = (data < cutoff * mad)
+            while ((next_mad / mad < limit and counter < iters) or (counter == 0)) and (mad_mask.sum() > 0):
                 mad = next_mad
-                next_mad = stats.mad_std(data[np.where(data < cutoff * mad)], axis=None, ignore_nan=True)
+                next_mad = stats.mad_std(data[mad_mask], axis=None, ignore_nan=True)
                 counter += 1
                 mad_stack.append(mad)
                 if next_mad <= 0:
                     break
+                mad_mask = (data < cutoff * mad)
 
             if stack: 
                 return(mad_stack)# * (u.Jy/beam)
             else:
                 return(mad_stack[-1])# * (u.Jy/beam)
         except Exception as e:
-            mylog(show_exc(e), verbose=True)
+            mylog(f"Iteration: {counter} :> {show_exc(e)}", verbose=verbose)
+            return 0.0
 
     def madN(self, N=1, mad=None):
         if mad is None:
@@ -915,6 +1369,7 @@ class SKAImage:
                 pa = 0. * u.deg
             
             
+            
             (cx,cy) = coord.ra.value, coord.dec.value
             ax.plot(cx, cy, marker='+', color=color, markersize=15, transform=ax.get_transform('world'))
             if label is not None:
@@ -958,8 +1413,9 @@ class SKAImage:
             if wcs.naxis >= 2:
                 return WCS(self.fix_header(self.header))
             else:
-                return None
-        except:
+                return wcs
+        except Exception as e:
+            print (show_exc(e))
             return None
 
     @property

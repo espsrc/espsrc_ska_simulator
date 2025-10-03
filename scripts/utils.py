@@ -131,36 +131,51 @@ class Source:
             "rot_meas": self.rot_meas.value,
             "major_axis": self.major_axis.to(u.arcsec).value,
             "minor_axis": self.minor_axis.to(u.arcsec).value,
-            "pa": self.pa.to(u.arcsec).value,
+            "pa": self.pa.to(u.deg).value,
             "true_redshift": self.true_redshift,
             "obs_redshift": self.obs_redshift,
         }
     
-    def from_array(array):
+    def from_array(array, colnames=['ra', 'dec', 'I', 'Q', 'U', 'V', 'ref_freq', 'spec_index', 'rot_meas', 'major_axis', 'minor_axis', 'pa', 'true_redshift', 'obs_redshift']):
         # Create a Source object from a numpy array
+        ra_index = colnames.index('ra')
+        dec_index = colnames.index('dec')
+        I_index = colnames.index('I')
+        Q_index = colnames.index('Q') if 'Q' in colnames else -1
+        U_index = colnames.index('U') if 'U' in colnames else -1
+        V_index = colnames.index('V') if 'V' in colnames else -1
+        ref_freq_index = colnames.index('ref_freq') if 'ref_freq' in colnames else -1
+        spec_index_index = colnames.index('spec_index') if 'spec_index' in colnames else -1
+        rot_meas_index = colnames.index('rot_meas') if 'rot_meas' in colnames else -1
+        major_axis_index = colnames.index('major_axis') if 'major_axis' in colnames else -1
+        minor_axis_index = colnames.index('minor_axis') if 'minor_axis' in colnames else -1
+        pa_index = colnames.index('pa') if 'pa' in colnames else -1
+        true_redshift_index = colnames.index('true_redshift') if 'true_redshift' in colnames else -1
+        obs_redshift_index = colnames.index('obs_redshift') if 'obs_redshift' in colnames else -1
+
         if len(array) < 3:
             raise ValueError("Array must have at least 3 elements (ra, dec, I)")
         if len(array) == 3:
-            return Source(ra=array[0] * u.deg, dec=array[1] * u.deg, I=array[2] * u.Jy)
+            return Source(ra=array[ra_index] * u.deg, dec=array[dec_index] * u.deg, I=array[I_index] * u.Jy)
         elif len(array) == 6:
-            return Source(ra=array[0] * u.deg, dec=array[1] * u.deg, I=array[2] * u.Jy, 
-                          Q=array[3] * u.Jy, U=array[4] * u.Jy, V=array[5] * u.Jy)
+            return Source(ra=array[ra_index] * u.deg, dec=array[dec_index] * u.deg, I=array[I_index] * u.Jy, 
+                          Q=array[Q_index] * u.Jy, U=array[U_index] * u.Jy, V=array[V_index] * u.Jy)
         elif len(array) == 12:
-            return Source(ra=array[0] * u.deg, dec=array[1] * u.deg, I=array[2] * u.Jy, 
-                          Q=array[3] * u.Jy, U=array[4] * u.Jy, V=array[5] * u.Jy,
-                          ref_freq=array[6] * u.Hz, spec_index=array[7], 
-                          rot_meas=array[8] * (u.rad/(u.m**2)), 
-                          major_axis=array[9] * u.arcsec, minor_axis=array[10] * u.arcsec, 
-                          pa=array[11] * u.arcsec)
+            return Source(ra=array[ra_index] * u.deg, dec=array[dec_index] * u.deg, I=array[I_index] * u.Jy, 
+                          Q=array[Q_index] * u.Jy, U=array[U_index] * u.Jy, V=array[V_index] * u.Jy,
+                          ref_freq=array[ref_freq_index] * u.Hz, spec_index=array[spec_index_index], 
+                          rot_meas=array[rot_meas_index] * (u.rad/(u.m**2)), 
+                          major_axis=array[major_axis_index] * u.arcsec, minor_axis=array[minor_axis_index] * u.arcsec, 
+                          pa=array[pa_index] * u.deg)
         elif len(array) == 14:
-            return Source(ra=array[0] * u.deg, dec=array[1] * u.deg, I=array[2] * u.Jy, 
-                          Q=array[3] * u.Jy, U=array[4] * u.Jy, V=array[5] * u.Jy,
-                          ref_freq=array[6] * u.Hz, spec_index=array[7], 
-                          rot_meas=array[8] * (u.rad/(u.m**2)), 
-                          major_axis=array[9] * u.arcsec, minor_axis=array[10] * u.arcsec, 
-                          pa=array[11] * u.arcsec,
-                          true_redshift=array[12],
-                          obs_redshift=array[13])
+            return Source(ra=array[ra_index] * u.deg, dec=array[dec_index] * u.deg, I=array[I_index] * u.Jy, 
+                          Q=array[Q_index] * u.Jy, U=array[U_index] * u.Jy, V=array[V_index] * u.Jy,
+                          ref_freq=array[ref_freq_index] * u.Hz, spec_index=array[spec_index_index], 
+                          rot_meas=array[rot_meas_index] * (u.rad/(u.m**2)), 
+                          major_axis=array[major_axis_index] * u.arcsec, minor_axis=array[minor_axis_index] * u.arcsec, 
+                          pa=array[pa_index] * u.deg,
+                          true_redshift=array[true_redshift_index],
+                          obs_redshift=array[obs_redshift_index])
         else:
             raise ValueError("Array must have 3, 6, or 12 elements (ra, dec, I, [Q, U, V], [ref_freq, spec_index, rot_meas, major_axis, minor_axis, pa, true_redshift, obs_redshift])")
     

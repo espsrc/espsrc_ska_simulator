@@ -9,6 +9,9 @@ from astropy.utils.exceptions import AstropyDeprecationWarning
 warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
 warnings.simplefilter("ignore", category=UserWarning)
 import astropy.units as u
+from typing import Dict
+from astropy.units import UnitBase
+from karabo.simulation.sky_model import SkyPrefixMapping, SkySourcesUnits
 from astropy.wcs import WCS
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
@@ -272,7 +275,9 @@ if __name__ == "__main__":
 
         # Use argparse for define two parameters; first parameter, a list with sources names; second parameters, show or write png
         argparser = argparse.ArgumentParser(description="SKAO simulation script")
+        argparser.add_argument("--fits", type=str, help="FITS file with sources", default=None)
         argparser.add_argument("--json", type=str, help="JSON file with sources", default=None)
+        argparser.add_argument("--json_fg", type=str, help="JSON file with foreground sources", default=None)
         argparser.add_argument("--center", type=str, help="Center of the field in RA,DEC (J2000), format: 10h01m35.1s 2d41m41s", default=None)
         argparser.add_argument("--prefix", type=str, help="Prefix for filenames", default=None)
         argparser.add_argument( "--telescope", choices=telescope_choices, type=str, help="Telescope to use for the simulation, default is 'SKA1LOW'", default="SKA-MID-AAstar", )
@@ -294,7 +299,7 @@ if __name__ == "__main__":
         argparser.add_argument("--robust", type=float, default=0.0, help="Robustness factor for imaging")
 
         argparser.add_argument("--rms", action="store_true", default=False, help="Enable RMS calculation")
-        argparser.add_argument("--rms_value", type=float, default=0.0, help="RMS value")
+        argparser.add_argument("--rms_value", type=float, default=0.0, help="RMS value in Jy")
         argparser.add_argument("--rms_sigma", type=float, default=3.0, help="Sigma factor for the RMS calculation to define the cleaning threshold")
         # Add noise_level argument
         # argparser.add_argument("--rms_start", type=float, default=0, help="Noise level start in Jy for RMS calculation")
@@ -367,7 +372,8 @@ if __name__ == "__main__":
                 fov = float(args.fov) * u.deg
                 fov = fov.to(u.rad)
 
-
+        skyModel = None
+        skyModel_fg = None
         try:
             if args.catalogue > 0:
                 if args.catalogue == 1:
@@ -400,6 +406,69 @@ if __name__ == "__main__":
                     sys.exit(1)
 
                 sources = skyModel.sources
+            elif args.fits is not None:
+                printlog (log_file, f"Loading sources from FITS file {args.fits}")
+                fits_path = args.fits
+                if not os.path.isabs(args.fits):
+                    fits_path = os.path.join(os.path.dirname(__file__), args.fits)
+
+                if not os.path.isfile(fits_path):
+                    raise FileNotFoundError(f"File {fits_path} does not exist.")
+                # survey_file = fits.open(args.fits)
+
+                fits_file = fits.open(fits_path)
+
+                unit_mapping: Dict[str, UnitBase] = {}
+                for col in fits_file[1].columns:
+                    unit_mapping[col.unit] = u.Unit(col.unit) if col.unit else u.dimensionless_unscaled
+                prefix_mapping = SkyPrefixMapping(
+                    ra=fits_file[1].columns.names[1],
+                    dec=fits_file[1].columns.names[2],
+                    stokes_i=fits_file[1].columns.names[3],
+                    stokes_q=fits_file[1].columns.names[4],
+                    stokes_u=fits_file[1].columns.names[5],
+                    stokes_v=fits_file[1].columns.names[6],
+                    spectral_index=fits_file[1].columns.names[7],
+                    ref_freq=fits_file[1].columns.names[8],
+                    rm=fits_file[1].columns.names[9],
+                    major=fits_file[1].columns.names[10],
+                    minor=fits_file[1].columns.names[11],
+                    pa=fits_file[1].columns.names[12],
+                    id=fits_file[1].columns.names[0],
+                )
+                units_sources = SkySourcesUnits(
+                    stokes_i=u.Jy / u.beam,
+                    stokes_q=u.Jy / u.beam,
+                    stokes_u=u.Jy / u.beam,
+                    stokes_v=u.Jy / u.beam,
+                    ref_freq=u.MHz,
+                    major=u.arcsec,
+                    minor=u.arcsec,
+                    pa=u.deg,
+                    rm=u.rad / u.m**2,
+                )
+                skyModel = SkyModel.get_sky_model_from_fits(
+                    fits_file=fits_path,
+                    prefix_mapping=prefix_mapping,
+                    unit_mapping=unit_mapping,
+                    units_sources=units_sources,
+                    min_freq=None,
+                    max_freq=None,
+                    encoded_freq=None,
+                    memmap=False,
+                )
+                skyModel = SkyModel.get_sky_model_from_fits(
+                    fits_file=fits_path,
+                    prefix_mapping=prefix_mapping,
+                    unit_mapping=unit_mapping,
+                    units_sources=units_sources,
+                    min_freq=None,
+                    max_freq=None,
+                    encoded_freq=None,
+                    memmap=False,
+                )
+                sources = skyModel.sources
+                print(f"Loaded {len(sources)} sources from {fits_path}")
                 
             else:
                 if args.json is not None:
@@ -421,6 +490,8 @@ if __name__ == "__main__":
                     if len(sources) == 0:
                         raise ValueError("No sources found in JSON file")
                     source_ref = sources[0]
+ 
+
                 else:
                     source_ref = Source.from_name('HCG16')
                     N_sources = len(args.I)
@@ -457,6 +528,28 @@ if __name__ == "__main__":
                 sources_list = np.array(sources_list)            
                 skyModel.add_point_sources(sources_list)
 
+            if args.json_fg is not None:
+                sources_fg = []
+                printlog (log_file, f"Loading foreground sources from JSON file {args.json_fg}")
+                if (not os.path.isabs(args.json_fg)):
+                    fjson = os.path.join(os.path.dirname(__file__), args.json_fg)
+                else:
+                    fjson = args.json_fg
+                with open(fjson, 'r') as f:
+                    sources_data = json.load(f)
+                for source_data in sources_data:
+                    source = Source.from_json(source_data)
+                    sources_fg.append(source)
+                if len(sources_fg) == 0:
+                    raise ValueError("No foreground sources found in JSON file")
+                
+                skyModel_fg = SkyModel()
+                sources_list_fg = []
+                for source in sources_fg:
+                    sources_list_fg.append(source.to_sky_model(reduced_form=True))
+                sources_list_fg = np.array(sources_list_fg)
+                skyModel_fg.add_point_sources(sources_list_fg)
+
             if args.center is not None:
                 try:
                     coords_str = args.center.replace(","," ").replace(":"," ")
@@ -465,6 +558,8 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(show_exc(e))
                     center = skyModel.get_center()
+            else:
+                center = skyModel.get_center()
 
 
             source_ref = Source(center.ra, center.dec, 1, 0)
@@ -566,6 +661,8 @@ if __name__ == "__main__":
 
             if args.rms:
                 simulation_params['noise_enable'] = True
+                
+                # simulation_params['noise_rms_end'] = args.rms_value
                 # simulation_params['noise_freq'] = "Observation settings"
                 # simulation_params['noise_rms_start'] = args.rms_start
                 # simulation_params['noise_rms_end'] = args.rms_end
@@ -575,6 +672,7 @@ if __name__ == "__main__":
             simulation = InterferometerSimulation(**simulation_params)
             # skyModel.set_center(center)
             simulation.run_simulation(telescope=telescope, observation=observation, sky=skyModel, visibility_path=visibility_path, backend=backend)
+
             printlog (log_file, f"Visibilities saved in {visibility_path}")
             printlog (log_file, "Recovering visibilities")
             visibilities = Visibility(visibility_path)
@@ -601,8 +699,8 @@ if __name__ == "__main__":
                 printlog (log_file, "Cleaning not supported for OSKAR, using WSCLEAN")
                 path_fits = os.path.join(root_path, f"{prefix}_cleaned.fits")
                 threshold_settings = "--auto-threshold 0.3"
-                if (args.rms) and (args.rms_value > 0):
-                    threshold_settings = f" --threshold {args.rms_value * args.rms_sigma}"
+                # if (args.rms) and (args.rms_value > 0):
+                #     threshold_settings = f" --threshold {args.rms_value * args.rms_sigma}"
                 custom_command = f"wsclean -weight briggs {args.robust} -multiscale -size {args.pixels} {args.pixels} -scale {imaging_cellsize.to(u.deg).value}deg -niter {args.niter} -mgain 0.8 {threshold_settings} -auto-mask 3 -channels-out 8 -join-channels {visibility_path}"
                 printlog (log_file, f"Running custom wsclean command: {custom_command}")
                 cleaned = iaa_create_image_custom_command(custom_command, path_fits)
@@ -620,8 +718,60 @@ if __name__ == "__main__":
                     new_path = f'{prefix}_bw{bandwidth.to(u.MHz).value:.0f}_ch{n_channels}_fr{frequency.to(u.MHz).value:.0f}_sec{seconds}{img_path}'
                     new_path = new_path.replace('wsclean-', '')
                     shutil.move(img_path, new_path)
-                    
+
+
+            # printlog(log_file, "=== Foreground simulation ===")
+            # visibility_path = os.path.join(root_path, f'{prefix}_fg_visibilities.MS')
+            # simulation.simulate_foreground_vis(telescope=telescope, observation=observation, sky=skyModel, visibility_path=visibility_path, backend=backend)
+
+            # printlog (log_file, f"Visibilities saved in {visibility_path}")
+            # printlog (log_file, "Recovering visibilities")
+            # visibilities = Visibility(visibility_path)
+            # imaging_cellsize = fov / int(args.pixels)
+            # if not args.cleaning :
+            #     config = OskarDirtyImagerConfig(
+            #         imaging_npixel=args.pixels,
+            #         imaging_cellsize= imaging_cellsize.to(u.rad).value,
+            #         combine_across_frequencies=True,
+            #         imaging_phase_centre=source_ref.coords())
+            #     imager = OskarDirtyImager(config=config)
+            #     dirty_image = imager.create_dirty_image(visibilities)
+            #     dirty_png_path = os.path.join(root_path, f'{prefix}_dirty_fg.png')
+            #     dirty_image.plot(title=f"Dirty image {backend.name} ({telescope.name.upper()})", wcs_enabled=True, xlabel='RA', ylabel='DEC')
+
+            #     dirty_image.plot(title=f"Dirty image {backend.name} ({telescope.name.upper()})", filename=dirty_png_path, wcs_enabled=True, xlabel='RA', ylabel='DEC')
+            #     printlog (log_file, f"Dirty image (PNG) saved in {dirty_png_path}")
+
+            #     dirty_fits_path = os.path.join(root_path, f'{prefix}_dirty_fg.fits')
+            #     dirty_image.write_to_file(dirty_fits_path, overwrite=True)
+            #     printlog (log_file, f"Dirty image (FITS) saved in {dirty_fits_path}")
+
+            # if args.cleaning:
+            #     printlog (log_file, "Cleaning not supported for OSKAR, using WSCLEAN")
+            #     path_fits = os.path.join(root_path, f"{prefix}_cleaned_fg.fits")
+            #     threshold_settings = "--auto-threshold 0.3"
+            #     # if (args.rms) and (args.rms_value > 0):
+            #     #     threshold_settings = f" --threshold {args.rms_value * args.rms_sigma}"
+            #     custom_command = f"wsclean -weight briggs {args.robust} -multiscale -size {args.pixels} {args.pixels} -scale {imaging_cellsize.to(u.deg).value}deg -niter {args.niter} -mgain 0.8 {threshold_settings} -auto-mask 3 -channels-out 8 -join-channels {visibility_path}"
+            #     printlog (log_file, f"Running custom wsclean command: {custom_command}")
+            #     cleaned = iaa_create_image_custom_command(custom_command, path_fits)
+            #     # Remove the temporary files created by WSClean
+            #     tmp_files = glob.glob(os.path.join(tmp_dir, "wsclean-00*.fits"))
+            #     for tmp_file in tmp_files:
+            #         os.remove(tmp_file)
+              
+            #     gamma = 0.3
+            #     wsclean_files = glob.glob('wsclean-*.fits')
+            #     seconds = args.seconds
+            #     for img_path in wsclean_files:
+            #         img = Image(path=img_path)
+            #         img.plot(title=f"Cleaned image (WSCLEAN) {backend.name.upper()} ({telescope.name.upper()})", filename=f"{prefix}_{img_path.replace('fits','png')}", wcs_enabled=True, xlabel='RA', ylabel='DEC', norm=PowerNorm(gamma))
+            #         new_path = f'{prefix}_bw{bandwidth.to(u.MHz).value:.0f}_ch{n_channels}_fr{frequency.to(u.MHz).value:.0f}_sec{seconds}{img_path}_fg'
+            #         new_path = new_path.replace('wsclean-', '')
+            #         shutil.move(img_path, new_path)         
             printlog (log_file, "Time ellapsed: ", time.time() - t0)
+
+
 
 
         except Exception as e:
