@@ -209,6 +209,10 @@ def get_telescope_version(telescope_name):
     # Check if the telescope name contains a version
     version_telescope = None
 
+    if telescope_name in get_args(OSKARTelescopesWithoutVersionType):
+        return telescope_name
+
+
     if telescope_name in get_args(OSKARTelescopesWithVersionType):
         from karabo.simulation import telescope_versions
         available_versions = []

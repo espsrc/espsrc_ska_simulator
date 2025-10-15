@@ -197,3 +197,4 @@ analysis/
 **.log
 **.csv
 test**
+*.bak
