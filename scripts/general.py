@@ -43,7 +43,7 @@ from thefuzz import process, fuzz
 from utils import printlog, show_exc, Source, get_diameter
 import subprocess
 import glob
-from utils import SkyModel
+from utils import SkyModel, define_extra_units, mapping_unit
 # from karabo.simulation.sky_model import SkyModel
 
 
@@ -301,6 +301,7 @@ if __name__ == "__main__":
         argparser.add_argument( "--imaging_niter", type=int, help="Number of iterations for the imager", default=1000, )
         argparser.add_argument("--fov", type=str, help="Field of view. Formats accepted: 1deg, 1arcsec, 1armin, 1rad. If not units, then assume degrees", default=None)
         argparser.add_argument("--robust", type=float, default=0.0, help="Robustness factor for imaging")
+        argparser.add_argument("--show-telescopes", action="store_true", help="Show available telescopes and exit")
 
         argparser.add_argument("--rms", action="store_true", default=False, help="Enable RMS calculation")
         argparser.add_argument("--rms_value", type=float, default=0.0, help="RMS value in Jy")
@@ -316,6 +317,12 @@ if __name__ == "__main__":
 
         frequency = args.freq * u.MHz
         prefix = datetime.now().strftime("%Y%m%d_%H%M") if args.prefix is None else args.prefix
+
+        if args.show_telescopes:
+            print("Available telescopes:")
+            for telescope in telescope_choices:
+                print(f"- {telescope}")
+            sys.exit(0)
 
         version_telescope = get_telescope_version(args.telescope)
         prefix = f"{prefix}_{args.telescope.replace('-','_')}" if args.telescope is not None else prefix
@@ -378,6 +385,7 @@ if __name__ == "__main__":
 
         skyModel = None
         skyModel_fg = None
+
         try:
             if args.catalogue > 0:
                 if args.catalogue == 1:
@@ -424,7 +432,8 @@ if __name__ == "__main__":
 
                 unit_mapping: Dict[str, UnitBase] = {}
                 for col in fits_file[1].columns:
-                    unit_mapping[col.unit] = u.Unit(col.unit) if col.unit else u.dimensionless_unscaled
+                    col_unit = mapping_unit(col.unit)
+                    unit_mapping[col.unit] = u.Unit(col_unit) if col_unit else u.dimensionless_unscaled
                 prefix_mapping = SkyPrefixMapping(
                     ra=fits_file[1].columns.names[1],
                     dec=fits_file[1].columns.names[2],

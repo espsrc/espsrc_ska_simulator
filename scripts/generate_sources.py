@@ -13,8 +13,8 @@ parser = argparse.ArgumentParser(description="Generate random sky sources.")
 parser.add_argument('N', type=int, help='Number of sources to generate')
 parser.add_argument('--center', type=str, default="10:00:28.3736076266 2:13:12.0064477050", help='Central RA in hms and Dec in dms')
 parser.add_argument('--radius', type=str, default="1.25deg", help='FOV for source distribution. Use astropy units (e.g. 1.5deg, 2rad, 30arcmin). If not units, degrees assumed.')
-parser.add_argument('--max_sep', type=float, default=0.0, help='Maximum separation between sources in arcsec (0 means no limit)')
-parser.add_argument('--min_sep', type=float, default=0.0, help='Minimum separation between sources in arcsec (0 means no limit)')
+parser.add_argument('--max_sep', type=float, default=None, help='Maximum separation between sources in arcsec (0 means no limit)')
+parser.add_argument('--min_sep', type=float, default=None, help='Minimum separation between sources in arcsec (0 means no limit)')
 parser.add_argument('--intensity', type=float, default=1, help='Base intensity in Jy. Range between 0.5I and 1.5I')
 parser.add_argument('--prefix', type=str, default=None, help='Prefix for output filename')
 parser.add_argument('--ref_freq', type=float, default=1310, help='Reference frequency for spectral index in MHz')
@@ -60,20 +60,20 @@ while len(sources) < N_sources:
     major_axis = args.major_axis * random.uniform(0.5, 1.5) * u.arcsec
     minor_axis = major_axis * random.uniform(0.5, 1.0)
     coord  = center.directional_offset_by(position_angle=
-                                          random.uniform(0,360)*u.deg, separation= ((limit - 2 * major_axis) * np.sqrt(random.random())))
+                                          random.uniform(0,360)*u.deg, separation= ((limit) * np.sqrt(random.random())))
     print("Generating source at ", coord.to_string('hmsdms'), " with offset ", coord.separation(center).to(u.arcsec))
 
     area_source = (np.pi * major_axis * minor_axis) / (4 * np.log(2))
     intensity = intensity * (area_source/omegabeam)  # Convert to Jy/beam assuming Gaussian source and beam
     pa = random.uniform(0, 180) * u.deg
     source = Source(ra=coord.ra.deg, dec=coord.dec.deg, I=intensity, spec_index=spec_index, ref_freq=args.ref_freq * u.MHz, major_axis=major_axis, minor_axis=minor_axis, pa=pa, rot_meas = 0.0 * u.rad/u.m**2)
-    if args.min_sep > 0 or args.max_sep > 0:
+    if args.min_sep != None or args.max_sep != None:
         dists = np.array([source.coord.separation(s.coord).arcsec for s in sources])
-        if args.min_sep > 0:
+        if args.min_sep != None:
             if np.any(dists < args.min_sep):
                 print(f" - Rejected (too close to another source, min_sep={args.min_sep} arcsec)")
                 continue
-        if args.max_sep > 0:
+        if args.max_sep != None:
             if np.any(dists > args.max_sep):
                 print(f" - Rejected (too far from another source, max_sep={args.max_sep} arcsec)")
                 continue

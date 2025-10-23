@@ -10,6 +10,40 @@ try:
 except ImportError as e:
     print(f"Error importing Karabo modules: {e}")
 import numpy as np
+import json
+
+def define_extra_units():
+    # Definition of extra units
+    u.def_unit('JY', 1*u.Jy)
+    u.def_unit('DEG', 1*u.deg)
+    u.def_unit('JY/BEAM', 1*u.Jy/u.sr)
+    u.def_unit("HZ", 1*u.Hz)
+    u.add_enabled_units(['JY', 'DEG', 'JY/BEAM', 'HZ'])
+
+def mapping_unit(unit_str):
+
+    unit_mapping = {
+        'JY': 'Jy',
+        'DEG': 'deg',
+        'JY/BEAM': 'Jy/beam',
+        'HZ': 'Hz'
+    }
+    if unit_str is None:
+        return None
+    return unit_mapping.get(unit_str, unit_str)
+
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
 
 
 
@@ -80,11 +114,11 @@ def get_diameter(telescope_name):
 
 class Source:
     def __init__(self, ra, dec, I, Q=0 * u.Jy, U=0 * u.Jy, V=0 * u.Jy, ref_freq=0 * u.Hz, spec_index=0, rot_meas=0 * u.rad/(u.m**2), 
-                 major_axis = 0*u.arcsec, minor_axis = 0*u.arcsec, pa=0*u.deg,  true_redshift=0, obs_redshift=0, obj_id = None):
+                 major_axis = 0*u.arcsec, minor_axis = 0*u.arcsec, pa=0*u.deg,  true_redshift=0, obs_redshift=0, obj_id = None, resolved=False, isl_rms=0*u.Jy):
         # Initialize the source with its parameters, checking units
 
-        list_of_units = [u.deg, u.deg, u.Jy, u.Jy, u.Jy, u.Jy, u.Hz, u.rad/(u.m**2), u.arcsec, u.arcsec, u.deg]
-        list_of_values = [ra, dec, I, Q, U, V, ref_freq, rot_meas, major_axis, minor_axis, pa]
+        list_of_units = [u.deg, u.deg, u.Jy, u.Jy, u.Jy, u.Jy, u.Hz, u.rad/(u.m**2), u.arcsec, u.arcsec, u.deg, u.Jy]
+        list_of_values = [ra, dec, I, Q, U, V, ref_freq, rot_meas, major_axis, minor_axis, pa, isl_rms]
         for i, unit in enumerate(list_of_units):
             if not isinstance(list_of_values[i], u.Quantity):
                 list_of_values[i] = list_of_values[i] * unit
@@ -108,6 +142,8 @@ class Source:
         self.true_redshift = true_redshift
         self.obs_redshift = obs_redshift
         self.obj_id = obj_id
+        self.resolved = resolved
+        self.isl_rms = list_of_values[11]
         self.coord = SkyCoord(ra=self.ra, dec=self.dec, unit=(u.deg, u.deg), frame='icrs')
 
     @staticmethod
@@ -134,9 +170,11 @@ class Source:
             "pa": self.pa.to(u.deg).value,
             "true_redshift": self.true_redshift,
             "obs_redshift": self.obs_redshift,
+            'resolved': self.resolved,
+            'isl_rms': self.isl_rms.to(u.Jy).value
         }
     
-    def from_array(array, colnames=['ra', 'dec', 'I', 'Q', 'U', 'V', 'ref_freq', 'spec_index', 'rot_meas', 'major_axis', 'minor_axis', 'pa', 'true_redshift', 'obs_redshift']):
+    def from_array(array, colnames=['ra', 'dec', 'I', 'Q', 'U', 'V', 'ref_freq', 'spec_index', 'rot_meas', 'major_axis', 'minor_axis', 'pa', 'true_redshift', 'obs_redshift', 'resolved', 'isl_rms']):
         # Create a Source object from a numpy array
         ra_index = colnames.index('ra')
         dec_index = colnames.index('dec')
@@ -176,9 +214,105 @@ class Source:
                           pa=array[pa_index] * u.deg,
                           true_redshift=array[true_redshift_index],
                           obs_redshift=array[obs_redshift_index])
+        elif len(array) == 16:
+            return Source(ra=array[ra_index] * u.deg, dec=array[dec_index] * u.deg, I=array[I_index] * u.Jy, 
+                          Q=array[Q_index] * u.Jy, U=array[U_index] * u.Jy, V=array[V_index] * u.Jy,
+                          ref_freq=array[ref_freq_index] * u.Hz, spec_index=array[spec_index_index], 
+                          rot_meas=array[rot_meas_index] * (u.rad/(u.m**2)), 
+                          major_axis=array[major_axis_index] * u.arcsec, minor_axis=array[minor_axis_index] * u.arcsec, 
+                          pa=array[pa_index] * u.deg,
+                          true_redshift=array[true_redshift_index],
+                          obs_redshift=array[obs_redshift_index],
+                          resolved=array[colnames.index('resolved')],
+                          isl_rms=array[colnames.index('isl_rms')] * u.Jy)
         else:
-            raise ValueError("Array must have 3, 6, or 12 elements (ra, dec, I, [Q, U, V], [ref_freq, spec_index, rot_meas, major_axis, minor_axis, pa, true_redshift, obs_redshift])")
-    
+            raise ValueError(f"Array must have 3, 6, or 12 elements (ra, dec, I, [Q, U, V], [ref_freq, spec_index, rot_meas, major_axis, minor_axis, pa, true_redshift, obs_redshift]). Your array has {len(array)} elements.")
+
+    @staticmethod    
+    def from_table_in_fits(table):
+        # Generate sources from an astropy Table read from a FITS file
+        col_equivs = [
+            ['RA','ra'],
+            ['DEC','dec'],
+            ['STK_I','I', 'S_INT'],
+            ['STK_Q','Q'],
+            ['STK_U','U'],
+            ['STK_V','V'],
+            ['REFFREQ','ref_freq', 'NU_EFF'],
+            ['SPECIDX','spec_index'],
+            ['RM','rot_meas'],
+            ['MAJ','major_axis', 'IM_MAJ'],
+            ['MIN','minor_axis', 'IM_MIN'],
+            ['PA','pa', 'IM_PA'],
+            ['true_redshift','true_redshift'],
+            ['obs_redshift','obs_redshift'],
+            ['RESOLVED','resolved'],
+            ['ISL_RMS','isl_rms']
+        ]
+        sources = []
+        for alt_names in col_equivs:
+            found = False
+            for name in alt_names:
+                if name in table.colnames:
+                    colname = name
+                    found = True
+                    break
+            if not found:
+                colname = None
+            alt_names.append(colname)  # The last element is the found column name or None
+        for row in table:
+            array = []
+            for alt_names in col_equivs:
+                colname = alt_names[-1]
+                if colname is not None:
+                    array.append(row[colname])
+                else:
+                    array.append(0)
+            # array = [row['RA'], row['DEC'], row['STK_I']]
+            # if 'STK_Q' in row.colnames:
+            #     array.append(row['STK_Q'])
+            # if 'STK_U' in row.colnames:
+            #     array.append(row['STK_U'])
+            # if 'STK_V' in row.colnames:
+            #     array.append(row['STK_V'])
+            # if 'REFFREQ' in row.colnames:
+            #     array.append(row['REFFREQ'])
+            # if 'SPECIDX' in row.colnames:
+            #     array.append(row['SPECIDX'])
+            # if 'RM' in row.colnames:
+            #     array.append(row['RM'])
+            # if 'MAJ' in row.colnames:
+            #     array.append(row['MAJ'])
+            # if 'MIN' in row.colnames:
+            #     array.append(row['MIN'])
+            # if 'PA' in row.colnames:
+            #     array.append(row['PA'])
+            # if 'true_redshift' in row.colnames:
+            #     array.append(row['true_redshift'])
+            # else:
+            #     array.append(0)
+            # if 'obs_redshift' in row.colnames:
+            #     array.append(row['obs_redshift'])
+            # else:
+            #     array.append(0)
+            # if 'RESOLVED' in row.colnames:
+            #     array.append(row['RESOLVED'])
+            # else:
+            #     array.append(0)
+            # if 'ISL_RMS' in row.colnames:
+            #     array.append(row['ISL_RMS'])
+            try:
+                src = Source.from_array(array)
+                if 'ID' in row.colnames:
+                    src.obj_id = row['ID']
+                sources.append(src)
+
+            except Exception as e:
+                print(show_exc(e))
+                continue
+
+        return sources
+
     def __str__(self):
         # Return a string representation of the source (only non-zero values)
         str2print = f"Source(ra={self.ra}, dec={self.dec}, I={self.I}"
@@ -202,10 +336,20 @@ class Source:
                 self.minor_axis.value, self.pa.value,
                 self.true_redshift, self.obs_redshift)
 
+    def get_flux(self, freq=None, alpha=None):
+        # Return the total flux of the source
+        if alpha is None:
+            alpha = self.spec_index
+        if freq is not None:
+            # Calculate the flux at a given frequency using the spectral index
+            flux = self.I * (freq / self.ref_freq) ** alpha
+            return flux.to(u.Jy)
+        return self.I.to(u.Jy)    
+    
     @property
     def flux(self):
         # Return the total flux of the source
-        return self.I    
+        return self.I
     
     def coords(self, frame='icrs'):
         # Return the coordinates of the source

@@ -27,7 +27,7 @@ from astrodendro.analysis import PPStatistic
 from radio_beam import Beam
 import reproject as rp
 
-from utils import show_exc
+from utils import show_exc, Source
 
 VERBOSE = True
 
@@ -178,6 +178,13 @@ class SKAImage:
                     #     self.header = self.fix_header(header)
                     # else:
                     #     self.header = header
+                    if 'NAXIS' not in header.keys() and 'WCSAXES' in header.keys():
+                        header['NAXIS'] = header['WCSAXES']
+                    if 'NAXIS1' not in header.keys():
+                        header['NAXIS1'] = self.data.shape[-1]
+                    if 'NAXIS2' not in header.keys():
+                        header['NAXIS2'] = self.data.shape[-2]
+      
                     self.header = header
                     self.interf = True
                     try:
@@ -1176,6 +1183,16 @@ class SKAImage:
         return ("%s %s" % (self.path, self.name))
     
     def draw_source(self, ax, coord, a=None, b = None, pa = None, color="green", ellipse=False, alpha=0.3, label = None, verbose=False, lw=1):
+        if isinstance(coord, Source):
+            src = coord
+            coord = src.coord
+            if a is None:
+                a = src.major_axis / 2.
+            if b is None:
+                b = src.minor_axis / 2.
+            if pa is None:
+                pa = src.pa
+    
         if verbose:
             mylog(f"Draw source at {coord.to_string('hmsdms')} a={a}, b={b}, pa={pa}, color={color}, ellipse={ellipse}, alpha={alpha}, label={label}")
 
