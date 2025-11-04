@@ -293,8 +293,8 @@ if __name__ == "__main__":
         argparser.add_argument("--overwrite", action="store_true", help="Overwrite existing files")
         argparser.add_argument("--freq", type=float, help="Central Freq in MHz", default=200)
         argparser.add_argument("--bandwidth", type=float, help="Bandwidth in MHz", default=100)
-        argparser.add_argument("--n_channels", type=int, help="Number of channels", default=4)
-        argparser.add_argument("--delta_freq", type=float, help="Delta Freq in MHz", default=0.1)
+        argparser.add_argument("--n_channels", type=int, help="Number of channels", default=0)
+        argparser.add_argument("--delta_freq", type=float, help="Delta Freq in MHz", default=0)
         argparser.add_argument("--seconds", type=int, help="Observation Time in seconds", default=10)
         argparser.add_argument("--cleaning", action="store_true", help="Use cleaning algorithm")
         argparser.add_argument( "--pixels", type=int, help="Number of pixels in the image", default=512, )
@@ -577,6 +577,10 @@ if __name__ == "__main__":
 
             source_ref = Source(center.ra, center.dec, 1, 0)
 
+            if (args.delta_freq == 0) and (args.n_channels == 0):
+                printlog (log_file, "Error: You must provide at least one of the two parameters: number of channels, delta frequency")
+                sys.exit(1)
+
             if (args.bandwidth == 0):
                 n_channels = args.n_channels
                 bandwidth = args.delta_freq * n_channels * u.MHz
@@ -711,6 +715,7 @@ if __name__ == "__main__":
             if args.cleaning:
                 printlog (log_file, "Cleaning not supported for OSKAR, using WSCLEAN")
                 path_fits = os.path.join(root_path, f"{prefix}_cleaned.fits")
+                print (f"PATH Fits: {path_fits}")
                 threshold_settings = "--auto-threshold 0.3"
                 # if (args.rms) and (args.rms_value > 0):
                 #     threshold_settings = f" --threshold {args.rms_value * args.rms_sigma}"
