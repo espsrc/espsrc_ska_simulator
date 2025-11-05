@@ -580,6 +580,9 @@ if __name__ == "__main__":
             if (args.delta_freq == 0) and (args.n_channels == 0):
                 printlog (log_file, "Error: You must provide at least one of the two parameters: number of channels, delta frequency")
                 sys.exit(1)
+            if (args.delta_freq != 0) and (args.n_channels != 0):
+                printlog (log_file, "Error: You must provide only one of the two parameters: number of channels, delta frequency")
+                sys.exit(1)
 
             if (args.bandwidth == 0):
                 n_channels = args.n_channels
