@@ -4,6 +4,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.time import Time
 import astropy.coordinates as acoord
+from radio_beam import Beam
 try:
     from karabo.simulation.telescope import Telescope # type: ignore
     from karabo.simulation.sky_model import SkyModel as KaraboSkyModel # type: ignore

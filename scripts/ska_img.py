@@ -146,6 +146,9 @@ class SKAImage:
                     self.coords_orig = SkyCoord(Galactic((header['CRVAL1'] * u.Unit(header['CUNIT1'])).to(u.deg), (header['CRVAL2'] * u.Unit(header['CUNIT2'])).to(u.deg)), frame=Galactic)
                     self.coords = (self.coords_orig.l, self.coords_orig.b, self.coords_orig.frame)
 
+                if ("BUNIT" in header.keys()):
+                    self.header['BUNIT'] = header['BUNIT'].lower().replace("jy", "Jy")
+
 
 
                 # header['NAXIS'] = 2
@@ -219,6 +222,66 @@ class SKAImage:
         if (not hasattr(self, 'frame')):
             self.frame = FK5
 
+    @classmethod
+    def new_model(cls, center, fov, pixels, freq=1420*u.MHz, beam = None):
+        self = cls.__new__(cls)
+        if not isinstance(center, SkyCoord):
+            raise ValueError("center must be a SkyCoord object")
+        
+        if not hasattr(fov, 'unit'):
+            if isinstance(fov, (int, float)):
+                fov = fov * u.deg
+            elif isinstance(fov, str):
+                try:
+                    fov = Angle(fov)
+                except:
+                    raise ValueError("fov must be an astropy Quantity with angular units (e.g. 1.5deg, 2rad, 30arcmin)")
+            else:       
+                raise ValueError("fov must be an astropy Quantity with angular units")
+        if not fov.unit.is_equivalent(u.deg):
+            raise ValueError("fov must be an angular quantity with astropy units (e.g. 1.5deg, 2rad, 30arcmin)")
+        if not freq.unit.is_equivalent(u.Hz):
+            raise ValueError("freq must be a frequency quantity with astropy units (e.g. 1.4GHz, 150MHz, 3THz)")
+        hdu = pyfits.PrimaryHDU()
+        self.header = hdu.header
+        self.header['SIMPLE'] = True
+        self.header['BITPIX'] = -32
+        self.header['NAXIS'] = 2
+        self.header['NAXIS1'] = pixels
+        self.header['NAXIS2'] = pixels
+        self.header['EXTEND'] = True
+        self.name ="Model"
+        self.header['CRVAL1'] = center.ra.to(u.deg).value
+        self.header['CRVAL2'] = center.dec.to(u.deg).value
+        self.header['CUNIT1'] = 'deg'
+        self.header['CUNIT2'] = 'deg'
+        self.header['CDELT1'] = -1*(fov.to(u.deg).value)/pixels
+        self.header['CDELT2'] = (fov.to(u.deg).value)/pixels
+        self.header['CRPIX1'] = pixels/2 + 0.5
+        self.header['CRPIX2'] = pixels/2 + 0.5
+        self.header['BUNIT'] = 'Jy/beam'
+        self.header['RESTFRQ'] = freq.to(u.Hz).value
+        
+        if center.frame.name.lower() == "galactic":
+            self.frame = Galactic
+            self.header['CTYPE1'] = 'GLON-SIN'
+            self.header['CTYPE2'] = 'GLAT-SIN'
+            self.header['RADESYS'] = 'GALACTIC'
+        else:
+            self.frame = eval(center.frame.name.upper())
+            self.header['CTYPE1'] = 'RA---SIN'
+            self.header['CTYPE2'] = 'DEC--SIN'
+            self.header['RADESYS'] = center.frame.name.upper()
+        self.size = (pixels, pixels)
+        self.data = np.zeros((pixels, pixels))
+
+        if beam:
+            self.set_beam(beam)
+        return self
+
+
+
+
     def reproject(self, img):
         obj = WCS(img.header)
         array, footprint = rp.reproject_interp((self.data, WCS(self.header)), obj, img.data.shape)
@@ -254,27 +317,44 @@ class SKAImage:
             self.header['BUNIT'] = 'Jy/beam'
             self.units = "Jy/beam"
 
+    @property
+    def bunit(self):
+        try:
+            return u.Unit(self.header['BUNIT'])
+        except Exception as e:
+            mylog(show_exc(e))
+            return u.Jy / u.beam
+        return u.Jy / u.beam
 
     def restfreq (self, unit=u.GHz):
-        units_in_header = u.Unit(self.wcs.wcs.cunit[2])
-        if 'WAVELENG' in self.header.keys():
-            return (self.header["WAVELENG"] * units_in_header).to(unit, equivalencies=u.spectral())
-        if 'RESTFRQ' in self.header.keys():
-            return (self.header['RESTFRQ'] * units_in_header).to(unit, equivalencies=u.spectral())
-        elif 'REFFREQ' in self.header.keys():
-            return (self.header['REFFREQ'] * units_in_header).to(unit, equivalencies=u.spectral())
-        elif 'RESTFREQ' in self.header.keys():
-            return (self.header['RESTFREQ'] * units_in_header).to(unit, equivalencies=u.spectral())
-        elif 'CRVAL3' in self.header.keys():
-            return (self.header['CRVAL3'] * units_in_header).to(unit, equivalencies=u.spectral())
-        else:
+        try:
+            units_in_header = u.Unit(self.wcs.wcs.cunit[2])
+            if not units_in_header.is_equivalent(u.Hz):
+                units_in_header = u.Hz
+        except:
+            units_in_header = u.Hz
+        try:    
+            if 'WAVELENG' in self.header.keys():
+                return (self.header["WAVELENG"] * units_in_header).to(unit, equivalencies=u.spectral())
+            if 'RESTFRQ' in self.header.keys():
+                return (self.header['RESTFRQ'] * units_in_header).to(unit, equivalencies=u.spectral())
+            elif 'REFFREQ' in self.header.keys():
+                return (self.header['REFFREQ'] * units_in_header).to(unit, equivalencies=u.spectral())
+            elif 'RESTFREQ' in self.header.keys():
+                return (self.header['RESTFREQ'] * units_in_header).to(unit, equivalencies=u.spectral())
+            elif 'CRVAL3' in self.header.keys():
+                return (self.header['CRVAL3'] * units_in_header).to(unit, equivalencies=u.spectral())
+            else:
+                return None
+        except Exception as e:
+            mylog(show_exc(e))
             return None
     
     def wavelength (self, unit=u.um):
         return (self.restfreq().to(unit, equivalencies=u.spectral()))
 
 
-    def pix2coords(self,x,y=None, freq=0, z = 0):
+    def pix2coords(self,x,y=None, freq=0, z = 0, skyMode=False):
         try:
             if y is None:
                 (x,y) = x
@@ -295,7 +375,14 @@ class SKAImage:
                     x0, y0, _, _  = wcs.wcs_pix2world(x, y, 0, 0, 0)
                 else:
                     x0, y0 = wcs.wcs_pix2world(x, y, 0)
-            return (x0,y0)
+
+            if skyMode:
+                raUnit = u.Unit(self.header['CUNIT1'])
+                decUnit = u.Unit(self.header['CUNIT2'])
+                coord = SkyCoord(x0 * raUnit, y0 * decUnit, frame=self.frame)
+                return coord
+            else:
+                return (x0,y0)
         except Exception as e:
             mylog(show_exc(e))
             raise e
@@ -320,6 +407,12 @@ class SKAImage:
             x0, y0 = wcs.wcs_world2pix(x, y, 0)
         return (x0,y0)
 
+    def world_to_pixel(self, coord):
+        return self.coords2pix(coord)
+
+    def pixel_to_world(self, x, y=None):
+        return self.pix2coords(x,y)
+    
     def get_center(self, frame=None):
         if frame == None:
             frame = self.frame
@@ -382,13 +475,19 @@ class SKAImage:
         else:
             return [coord for coord in coords ]
 
-    def get_beam(self):
+    def get_beam(self, defaultBeam=None):
         try:
             beam = Beam.from_fits_header(self.header)
             return (beam)
         except Exception as e:
-            mylog(show_exc(e), verbose=True, flush=True)
-            return None
+            if defaultBeam is not None:
+                self.set_beam(defaultBeam)
+                print ("Warning: Beam information not found in header. Using default beam of %s" % defaultBeam)
+                return defaultBeam
+            else:
+                defaultBeam = Beam(major=1*u.arcsec, minor=1*u.arcsec, pa=0*u.deg)
+                print ("Warning: Beam information not found in header. Using default beam of %s" % defaultBeam)
+                return defaultBeam
         return None
 
     @property
@@ -521,15 +620,17 @@ class SKAImage:
         return continuum_img, resid_img
     
     
-    def draw(self, img=None, exp=0.3, cmapstr='gray', scale='power', colorbar=False, plot=False, title=None, show_beam = True, filename=None):
+    def draw(self, img=None, exp=0.3, cmapstr='gray', scale='power', colorbar=False, plot=False, title=None, show_beam = True, filename=None, nan2zero = False):
         
         from astropy.wcs import WCS
         if self.data is not None:
+            if nan2zero:
+                self.data2d[np.isnan(self.data2d)] = 0.
          
             # Plot using matplotlib with WCS projection
             if img is None:
                 fig = plt.figure(figsize=(10, 10))
-                ax = fig.add_subplot(1, 1, 1, projection=self.wcs2d)
+                ax = fig.add_subplot(1, 1, 1, projection=self.wcs.celestial)
             else:
                 ax = img
             norm = None
@@ -542,16 +643,17 @@ class SKAImage:
                 norm.autoscale(self.data2d)
 
             if colorbar:
-                im = ax.imshow(self.data2d, origin='lower', norm=norm, cmap=cmapstr)
+                            # ax.imshow(image.data2d, origin='lower', cmap='viridis', interpolation='nearest',vmin=0, vmax=np.percentile(image.data2d, 99))
+
+                im = ax.imshow(self.data2d, origin='lower', norm=norm, cmap=cmapstr, interpolation='nearest')
                 cbar = plt.colorbar(im, ax=ax, extend='both', format=FormatStrFormatter('%.2e'))
                 cbar.set_label(f"[{self.header['BUNIT']}]")
             else:
-                im = ax.imshow(self.data2d, origin='lower', norm=norm, cmap=cmapstr)
+                im = ax.imshow(self.data2d, origin='lower', norm=norm, cmap=cmapstr, interpolation='nearest')
 
             if show_beam:
                 try:
                     self.draw_beam(ax)
-
                 except Exception as e:
                     print (show_exc(e))
 
@@ -591,18 +693,32 @@ class SKAImage:
         try:
             beam = self.get_beam()
             (cx,cy) = (beam.major.to(u.arcsec).value * 0.5 / (self.omega_pix().to(u.arcsec**2).value**0.5),beam.major.to(u.arcsec).value * 0.5/ (self.omega_pix().to(u.arcsec**2).value**0.5))
-            (cx,cy) = self.pix2coords(int(max(cx, 0.1 * self.data.shape[1])),int(max(cy, 0.1 * self.data.shape[0])))
+
+            # Convert major and minor to pixel units
+            major_pix =np.abs(beam.major.to(u.arcsec).value / (self.omega_pix().to(u.arcsec**2).value**0.5))
+            minor_pix =np.abs(beam.minor.to(u.arcsec).value / (self.omega_pix().to(u.arcsec**2).value**0.5))
+            # (cx,cy) = self.pix2coords(int(max(cx, 0.1 * self.data.shape[1])),int(max(cy, 0.1 * self.data.shape[0])))
+            (cx,cy) = (major_pix +1 , major_pix + 1)
             beam_pa_value = np.sign(self.header['CDELT1']) * beam.pa.value
             if beam.minor.value != beam.major.value:
                 try:
-                    frame = patches.Ellipse((cx,cy), width=beam.minor.value, height=beam.major.value, color=color, angle=beam_pa_value, transform=img.get_transform('world'))
+                    frame = patches.Ellipse((cx,cy), width=minor_pix, height=major_pix, color=color, angle=beam_pa_value)
                 except:
-                    frame = patches.Ellipse((cx,cy), width=beam.minor.value, height=beam.major.value, color=color, angle=beam_pa_value)
+                    frame = patches.Ellipse((cx,cy), width=minor_pix, height=major_pix, color=color, angle=beam_pa_value)
+                # try:
+                #     frame = patches.Ellipse((cx,cy), width=beam.minor.value, height=beam.major.value, color=color, angle=beam_pa_value, transform=img.get_transform('world'))
+                # except:
+                #     frame = patches.Ellipse((cx,cy), width=beam.minor.value, height=beam.major.value, color=color, angle=beam_pa_value)
             else:
                 try:
-                    frame = patches.Circle((cx,cy), beam.major.value, color=color, angle=beam.pa.value, transform=img.get_transform('world'))
+                    frame = patches.Circle((cx,cy), major_pix, color=color)
                 except:
-                    frame = patches.Circle((cx,cy), beam.minor.value, color=color, angle=beam.pa.value)
+                    frame = patches.Circle((cx,cy), major_pix, color=color)
+
+                # try:
+                #     frame = patches.Circle((cx,cy), beam.major.value, color=color, angle=beam.pa.value, transform=img.get_transform('world'))
+                # except:
+                #     frame = patches.Circle((cx,cy), beam.minor.value, color=color, angle=beam.pa.value)
             img.add_patch(frame)
 
         except Exception as e:
@@ -806,7 +922,7 @@ class SKAImage:
                 hdu.header['CTYPE2'] = 'GLAT-CAR'
             else:
                 hdu.header['CTYPE1'] = 'RA---SIN'
-                hdu.header['CTYPE2'] = 'DEC---SIN'
+                hdu.header['CTYPE2'] = 'DEC--SIN'
                 hdu.header['RADESYS'] = 'FK5'
             hdu.header['BUNIT'] = 'Jy/beam'
             hdu.header['AUTHOR'] ='IMGCombine by d.diaz@irya.unam.mx'
@@ -1236,7 +1352,8 @@ class SKAImage:
         try:
             wcs = WCS(self.header)
             return wcs
-        except:
+        except Exception as e:
+            print (show_exc(e))
             return None
 
     @property
