@@ -208,9 +208,11 @@ def get_telescope_version(telescope_name):
     """
     # Check if the telescope name contains a version
     version_telescope = None
+    print (f"Getting version for telescope {telescope_name}")
 
     if telescope_name in get_args(OSKARTelescopesWithoutVersionType):
-        return telescope_name
+        print ("Telescope without version")
+        return None
 
 
     if telescope_name in get_args(OSKARTelescopesWithVersionType):
@@ -279,6 +281,7 @@ if __name__ == "__main__":
 
         # Use argparse for define two parameters; first parameter, a list with sources names; second parameters, show or write png
         argparser = argparse.ArgumentParser(description="SKAO simulation script")
+        argparser.add_argument("--model", type=str, help="Sky model file", default=None)
         argparser.add_argument("--fits", type=str, help="FITS file with sources", default=None)
         argparser.add_argument("--json", type=str, help="JSON file with sources", default=None)
         argparser.add_argument("--json_fg", type=str, help="JSON file with foreground sources", default=None)
@@ -313,6 +316,8 @@ if __name__ == "__main__":
         argparser.add_argument("--niter", type=int, default=5000, help="Number of iterations for the imager")
         argparser.add_argument("--scale-I", type=float, default=1.0, help="Scale factor for I intensity")
         argparser.add_argument("--catalogue", type=int, default=0, help="Catalogue to use: 1 - MIGHTEE, 2 - GLEAM, 0 - JSON file or random sources")
+        # Column mapping for FITS files format 0,1,2,3,4,5,6,7,8,9,10,11,12
+        argparser.add_argument( "--column-mapping", type=str, help="Column mapping for FITS files format: id,ra,dec,stokes_i,stokes_q,stokes_u,stokes_v,spectral_index,ref_freq,rm,major,minor,pa,id", default="0,1,2,3,4,5,6,7,8,9,10,11,12", )
         args = argparser.parse_args()
 
         frequency = args.freq * u.MHz
@@ -352,8 +357,8 @@ if __name__ == "__main__":
         backend = SimulatorBackend.OSKAR
         telescope_types = get_args(OSKARTelescopesWithVersionType) + get_args(OSKARTelescopesWithoutVersionType)
         if (args.telescope in telescope_types):
-            if version_telescope is not None:
-                printlog (log_file, f"Using telescope {args.telescope} with version {version_telescope.value}")
+            if version_telescope is not None and version_telescope != args.telescope:
+                printlog (log_file, f"Using telescope {args.telescope} with version {version_telescope}")
                 telescope = Telescope.constructor(args.telescope, backend=backend, version=version_telescope)
             else:
                 printlog (log_file, f"Using telescope {args.telescope} without version")
@@ -386,182 +391,200 @@ if __name__ == "__main__":
         skyModel = None
         skyModel_fg = None
 
+
+
         try:
-            if args.catalogue > 0:
-                if args.catalogue == 1:
-                    printlog (log_file, "Loading sources from MIGHTEE catalogue")
-                    skyModel = SkyModel.get_MIGHTEE_Sky()
-                elif args.catalogue == 2:
-                    printlog (log_file, "Loading sources from GLEAM catalogue")
-                    skyModel = SkyModel.get_GLEAM_Sky()
-                elif args.catalogue == 3:
-                    # Check if exists ./SKAMid_B1_8h_v3.fits; else download from https://owncloud.ia2.inaf.it/index.php/s/H1rAR0A9qmXBbB5/download
-                    skamid_path = os.path.join(os.path.dirname(__file__), 'SKAMid_B1_8h_v3.fits')
-                    if os.path.exists(skamid_path):
-                        printlog (log_file, f"Loading sources from SKAMid catalogue {skamid_path}")
-                        skyModel = SkyModel.get_sky_model_from_fits(fits_file=skamid_path)
-                    else:
-                        printlog (log_file, f"Catalogue {skamid_path} not found. Downloading from https://owncloud.ia2.inaf.it/index.php/s/H1rAR0A9qmXBbB5/download")
-                        skamid_url = "https://owncloud.ia2.inaf.it/index.php/s/H1rAR0A9qmXBbB5/download"
-                        import requests
-                        response = requests.get(skamid_url)
-                        if response.status_code == 200:
-                            with open(skamid_path, 'wb') as f:
-                                f.write(response.content)
-                            printlog (log_file, f"Catalogue {skamid_path} downloaded successfully")
+            if args.model is not None:
+                printlog (log_file, f"Loading sky model from file {args.model}")
+                model_path = args.model
+                if not os.path.isabs(args.model):
+                    model_path = os.path.join(os.path.dirname(__file__), args.model)
+                if not os.path.isfile(model_path):
+                    raise FileNotFoundError(f"Sky model file {model_path} does not exist.")
+                with open(model_path, 'rb') as mf:
+                    skyModel = pickle.load(mf)
+                sources = skyModel.sources
+                printlog (log_file, f"Loaded {len(sources)} sources from sky model {model_path}")
+            else:
+                if args.catalogue > 0:
+                    if args.catalogue == 1:
+                        printlog (log_file, "Loading sources from MIGHTEE catalogue")
+                        skyModel = SkyModel.get_MIGHTEE_Sky()
+                    elif args.catalogue == 2:
+                        printlog (log_file, "Loading sources from GLEAM catalogue")
+                        skyModel = SkyModel.get_GLEAM_Sky()
+                    elif args.catalogue == 3:
+                        # Check if exists ./SKAMid_B1_8h_v3.fits; else download from https://owncloud.ia2.inaf.it/index.php/s/H1rAR0A9qmXBbB5/download
+                        skamid_path = os.path.join(os.path.dirname(__file__), 'SKAMid_B1_8h_v3.fits')
+                        if os.path.exists(skamid_path):
+                            printlog (log_file, f"Loading sources from SKAMid catalogue {skamid_path}")
                             skyModel = SkyModel.get_sky_model_from_fits(fits_file=skamid_path)
                         else:
-                            printlog (log_file, f"Error downloading catalogue {skamid_url}. Status code: {response.status_code}")
-                            sys.exit(1)
-                else:
-                    printlog (log_file, f"Catalogue {args.catalogue} not found. Available catalogues: 1 - MIGHTEE, 2 - GLEAM")
-                    sys.exit(1)
-
-                sources = skyModel.sources
-            elif args.fits is not None:
-                printlog (log_file, f"Loading sources from FITS file {args.fits}")
-                fits_path = args.fits
-                if not os.path.isabs(args.fits):
-                    fits_path = os.path.join(os.path.dirname(__file__), args.fits)
-
-                if not os.path.isfile(fits_path):
-                    raise FileNotFoundError(f"File {fits_path} does not exist.")
-                # survey_file = fits.open(args.fits)
-
-                fits_file = fits.open(fits_path)
-
-                unit_mapping: Dict[str, UnitBase] = {}
-                for col in fits_file[1].columns:
-                    col_unit = mapping_unit(col.unit)
-                    unit_mapping[col.unit] = u.Unit(col_unit) if col_unit else u.dimensionless_unscaled
-                prefix_mapping = SkyPrefixMapping(
-                    ra=fits_file[1].columns.names[1],
-                    dec=fits_file[1].columns.names[2],
-                    stokes_i=fits_file[1].columns.names[3],
-                    stokes_q=fits_file[1].columns.names[4],
-                    stokes_u=fits_file[1].columns.names[5],
-                    stokes_v=fits_file[1].columns.names[6],
-                    spectral_index=fits_file[1].columns.names[7],
-                    ref_freq=fits_file[1].columns.names[8],
-                    rm=fits_file[1].columns.names[9],
-                    major=fits_file[1].columns.names[10],
-                    minor=fits_file[1].columns.names[11],
-                    pa=fits_file[1].columns.names[12],
-                    id=fits_file[1].columns.names[0],
-                )
-                units_sources = SkySourcesUnits(
-                    stokes_i=u.Jy / u.beam,
-                    stokes_q=u.Jy / u.beam,
-                    stokes_u=u.Jy / u.beam,
-                    stokes_v=u.Jy / u.beam,
-                    ref_freq=u.MHz,
-                    major=u.arcsec,
-                    minor=u.arcsec,
-                    pa=u.deg,
-                    rm=u.rad / u.m**2,
-                )
-                skyModel = SkyModel.get_sky_model_from_fits(
-                    fits_file=fits_path,
-                    prefix_mapping=prefix_mapping,
-                    unit_mapping=unit_mapping,
-                    units_sources=units_sources,
-                    min_freq=None,
-                    max_freq=None,
-                    encoded_freq=None,
-                    memmap=False,
-                )
-                skyModel = SkyModel.get_sky_model_from_fits(
-                    fits_file=fits_path,
-                    prefix_mapping=prefix_mapping,
-                    unit_mapping=unit_mapping,
-                    units_sources=units_sources,
-                    min_freq=None,
-                    max_freq=None,
-                    encoded_freq=None,
-                    memmap=False,
-                )
-                sources = skyModel.sources
-                print(f"Loaded {len(sources)} sources from {fits_path}")
-                
-            else:
-                if args.json is not None:
-                    printlog (log_file, f"Loading sources from JSON file {args.json}")
-                    if (not os.path.isabs(args.json)):
-                        fjson = os.path.join(os.path.dirname(__file__), args.json)
+                            printlog (log_file, f"Catalogue {skamid_path} not found. Downloading from https://owncloud.ia2.inaf.it/index.php/s/H1rAR0A9qmXBbB5/download")
+                            skamid_url = "https://owncloud.ia2.inaf.it/index.php/s/H1rAR0A9qmXBbB5/download"
+                            import requests
+                            response = requests.get(skamid_url)
+                            if response.status_code == 200:
+                                with open(skamid_path, 'wb') as f:
+                                    f.write(response.content)
+                                printlog (log_file, f"Catalogue {skamid_path} downloaded successfully")
+                                skyModel = SkyModel.get_sky_model_from_fits(fits_file=skamid_path)
+                            else:
+                                printlog (log_file, f"Error downloading catalogue {skamid_url}. Status code: {response.status_code}")
+                                sys.exit(1)
                     else:
-                        fjson = args.json
+                        printlog (log_file, f"Catalogue {args.catalogue} not found. Available catalogues: 1 - MIGHTEE, 2 - GLEAM")
+                        sys.exit(1)
+
+                    sources = skyModel.sources
+                elif args.fits is not None:
+                    printlog (log_file, f"Loading sources from FITS file {args.fits}")
+                    fits_path = args.fits
+                    if not os.path.isabs(args.fits):
+                        fits_path = os.path.join(os.path.dirname(__file__), args.fits)
+
+                    if not os.path.isfile(fits_path):
+                        raise FileNotFoundError(f"File {fits_path} does not exist.")
+                    # survey_file = fits.open(args.fits)
+
+                    fits_file = fits.open(fits_path)
+
+                    unit_mapping: Dict[str, UnitBase] = {}
+
+                    cols_mapping = [int(i) for i in args.column_mapping.split(",")]
+                    str_cols = []
+                    for idx,col in enumerate(fits_file[1].columns):
+                        str_cols.append([idx,col.name])
+                        col_unit = mapping_unit(col.unit)
+                        unit_mapping[col.unit] = u.Unit(col_unit) if col_unit else u.dimensionless_unscaled
+                    prefix_mapping = SkyPrefixMapping(
+                        ra=fits_file[1].columns.names[cols_mapping[1]],
+                        dec=fits_file[1].columns.names[cols_mapping[2]],
+                        stokes_i=fits_file[1].columns.names[cols_mapping[3]],
+                        stokes_q=fits_file[1].columns.names[cols_mapping[4]] if cols_mapping[4] > -1 else None,
+                        stokes_u=fits_file[1].columns.names[cols_mapping[5]] if cols_mapping[5] > -1 else None,
+                        stokes_v=fits_file[1].columns.names[cols_mapping[6]] if cols_mapping[6] > -1 else None,
+                        spectral_index=fits_file[1].columns.names[cols_mapping[7]] if cols_mapping[7] > -1 else None,
+                        ref_freq=fits_file[1].columns.names[cols_mapping[8]] if cols_mapping[8] > -1 else None,
+                        rm=fits_file[1].columns.names[cols_mapping[9]] if cols_mapping[9] > -1 else None,
+                        major=fits_file[1].columns.names[cols_mapping[10]] if cols_mapping[10] > -1 else None,
+                        minor=fits_file[1].columns.names[cols_mapping[11]] if cols_mapping[11] > -1 else None,
+                        pa=fits_file[1].columns.names[cols_mapping[12]] if cols_mapping[12] > -1 else None,
+                        id=fits_file[1].columns.names[cols_mapping[0]] if cols_mapping[0] > -1 else None,
+                    )
+                    units_sources = SkySourcesUnits(
+                        stokes_i=u.Jy / u.beam,
+                        stokes_q=u.Jy / u.beam,
+                        stokes_u=u.Jy / u.beam,
+                        stokes_v=u.Jy / u.beam,
+                        ref_freq=u.MHz,
+                        major=u.arcsec,
+                        minor=u.arcsec,
+                        pa=u.deg,
+                        rm=u.rad / u.m**2,
+                    )
+                    skyModel = SkyModel.get_sky_model_from_fits(
+                        fits_file=fits_path,
+                        prefix_mapping=prefix_mapping,
+                        unit_mapping=unit_mapping,
+                        units_sources=units_sources,
+                        min_freq=None,
+                        max_freq=None,
+                        encoded_freq=None,
+                        memmap=False,
+                    )
+                    # skyModel = SkyModel.get_sky_model_from_fits(
+                    #     fits_file=fits_path,
+                    #     prefix_mapping=prefix_mapping,
+                    #     unit_mapping=unit_mapping,
+                    #     units_sources=units_sources,
+                    #     min_freq=None,
+                    #     max_freq=None,
+                    #     encoded_freq=None,
+                    #     memmap=False,
+                    # )
+                    sources = skyModel.sources
+                    print(f"Loaded {len(sources)} sources from {fits_path}")
+                    
+                else:
+                    if args.json is not None:
+                        printlog (log_file, f"Loading sources from JSON file {args.json}")
+                        if (not os.path.isabs(args.json)):
+                            fjson = os.path.join(os.path.dirname(__file__), args.json)
+                        else:
+                            fjson = args.json
+                        with open(fjson, 'r') as f:
+                            sources_data = json.load(f)
+                        sources = []
+                        for source_data in sources_data:
+                            source = Source.from_json(source_data)
+                            if args.scale_I is not None:
+                                source.I *= args.scale_I
+                            if source.ref_freq == 0:
+                                source.ref_freq = args.ref_freq[0] * u.Hz if args.ref_freq is not None else frequency.to(u.Hz)
+                            sources.append(source)
+                        if len(sources) == 0:
+                            raise ValueError("No sources found in JSON file")
+                        source_ref = sources[0]
+    
+
+                    else:
+                        source_ref = Source.from_name('HCG16')
+                        N_sources = len(args.I)
+                        intensities = args.I * u.Jy
+                        sources_names = ['Random_{i+1}' for i in range(N_sources)]
+                        sources = []
+                        intensities = args.I
+                        if intensities is not None:
+                            if len(intensities) != len(sources_names):
+                                for i in range(len(sources_names) - len(intensities)):
+                                    intensities.append(0)
+                            intensities = [intensity * u.Jy for intensity in intensities]
+                        else:
+                            intensities = [np.random.randint(1,10) * u.Jy for _ in range(len(sources_names))]
+
+                        for idx,source_name in enumerate(sources_names):
+                            try:
+                                if idx == 0:
+                                    source= source_ref
+                                    source.I = intensities[idx]
+                                else:
+                                    x_coord = np.random.uniform(-fov.value/2, fov.value/2) * 0.8 * u.rad
+                                    y_coord = np.random.uniform(-fov.value/2, fov.value/2) * 0.8 * u.rad
+                                    source = Source(source.ra + x_coord, source.dec + y_coord, intensities[idx],)
+                                
+                                sources.append(source)
+                            except Exception as e:
+                                printlog(log_file, show_exc(e))
+                    skyModel = SkyModel()
+                    sources_list = []
+                    for source in sources:
+                        sources_list.append(source.to_sky_model(reduced_form=True))
+
+                    sources_list = np.array(sources_list)            
+                    skyModel.add_point_sources(sources_list)
+
+                if args.json_fg is not None:
+                    sources_fg = []
+                    printlog (log_file, f"Loading foreground sources from JSON file {args.json_fg}")
+                    if (not os.path.isabs(args.json_fg)):
+                        fjson = os.path.join(os.path.dirname(__file__), args.json_fg)
+                    else:
+                        fjson = args.json_fg
                     with open(fjson, 'r') as f:
                         sources_data = json.load(f)
-                    sources = []
                     for source_data in sources_data:
                         source = Source.from_json(source_data)
-                        if args.scale_I is not None:
-                            source.I *= args.scale_I
-                        if source.ref_freq == 0:
-                            source.ref_freq = args.ref_freq[0] * u.Hz if args.ref_freq is not None else frequency.to(u.Hz)
-                        sources.append(source)
-                    if len(sources) == 0:
-                        raise ValueError("No sources found in JSON file")
-                    source_ref = sources[0]
- 
-
-                else:
-                    source_ref = Source.from_name('HCG16')
-                    N_sources = len(args.I)
-                    intensities = args.I * u.Jy
-                    sources_names = ['Random_{i+1}' for i in range(N_sources)]
-                    sources = []
-                    intensities = args.I
-                    if intensities is not None:
-                        if len(intensities) != len(sources_names):
-                            for i in range(len(sources_names) - len(intensities)):
-                                intensities.append(0)
-                        intensities = [intensity * u.Jy for intensity in intensities]
-                    else:
-                        intensities = [np.random.randint(1,10) * u.Jy for _ in range(len(sources_names))]
-
-                    for idx,source_name in enumerate(sources_names):
-                        try:
-                            if idx == 0:
-                                source= source_ref
-                                source.I = intensities[idx]
-                            else:
-                                x_coord = np.random.uniform(-fov.value/2, fov.value/2) * 0.8 * u.rad
-                                y_coord = np.random.uniform(-fov.value/2, fov.value/2) * 0.8 * u.rad
-                                source = Source(source.ra + x_coord, source.dec + y_coord, intensities[idx],)
-                            
-                            sources.append(source)
-                        except Exception as e:
-                            printlog(log_file, show_exc(e))
-                skyModel = SkyModel()
-                sources_list = []
-                for source in sources:
-                    sources_list.append(source.to_sky_model(reduced_form=True))
-
-                sources_list = np.array(sources_list)            
-                skyModel.add_point_sources(sources_list)
-
-            if args.json_fg is not None:
-                sources_fg = []
-                printlog (log_file, f"Loading foreground sources from JSON file {args.json_fg}")
-                if (not os.path.isabs(args.json_fg)):
-                    fjson = os.path.join(os.path.dirname(__file__), args.json_fg)
-                else:
-                    fjson = args.json_fg
-                with open(fjson, 'r') as f:
-                    sources_data = json.load(f)
-                for source_data in sources_data:
-                    source = Source.from_json(source_data)
-                    sources_fg.append(source)
-                if len(sources_fg) == 0:
-                    raise ValueError("No foreground sources found in JSON file")
-                
-                skyModel_fg = SkyModel()
-                sources_list_fg = []
-                for source in sources_fg:
-                    sources_list_fg.append(source.to_sky_model(reduced_form=True))
-                sources_list_fg = np.array(sources_list_fg)
-                skyModel_fg.add_point_sources(sources_list_fg)
+                        sources_fg.append(source)
+                    if len(sources_fg) == 0:
+                        raise ValueError("No foreground sources found in JSON file")
+                    
+                    skyModel_fg = SkyModel()
+                    sources_list_fg = []
+                    for source in sources_fg:
+                        sources_list_fg.append(source.to_sky_model(reduced_form=True))
+                    sources_list_fg = np.array(sources_list_fg)
+                    skyModel_fg.add_point_sources(sources_list_fg)
 
             if args.center is not None:
                 try:

@@ -62,9 +62,15 @@
 # find . -name *.MS -exec rm -rf {} \;
 # python general.py --n_channels=4096 --bandwidth=720 --freq=1310 --seconds=80 --cleaning --telescope=SKA-MID-AAstar --catalogue 1 --pixels 4096
 # 
-find . -name *.MS -exec rm -rf {} \;
-python general.py --n_channels=4096 --bandwidth=819.2 --freq=1265.6 --seconds=800 --cleaning --telescope=MeerKAT --catalogue 1 --pixels 4096
-find . -name *.MS -exec rm -rf {} \;
-python general.py --n_channels=4096 --bandwidth=720 --freq=1310 --seconds=800 --cleaning --telescope=SKA1MID --catalogue 1 --pixels 4096
-find . -name *.MS -exec rm -rf {} \;
-python general.py --n_channels=4096 --bandwidth=720 --freq=1310 --seconds=800 --cleaning --telescope=SKA-MID-AAstar --catalogue 1 --pixels 4096
+# find . -name *.MS -exec rm -rf {} \;
+# python general.py --n_channels=4096 --bandwidth=819.2 --freq=1265.6 --seconds=800 --cleaning --telescope=MeerKAT --catalogue 1 --pixels 4096
+# find . -name *.MS -exec rm -rf {} \;
+# python general.py --n_channels=4096 --bandwidth=720 --freq=1310 --seconds=800 --cleaning --telescope=SKA1MID --catalogue 1 --pixels 4096
+# find . -name *.MS -exec rm -rf {} \;
+# python general.py --n_channels=4096 --bandwidth=720 --freq=1310 --seconds=800 --cleaning --telescope=SKA-MID-AAstar --catalogue 1 --pixels 4096
+
+
+# Band 1
+#python general.py --catalogue=1 --fov=90arcsec --pixels=4096 --seconds=600 --cleaning --bandwidth=700 --freq=700 --n_channels=2170 --telescope=SKA1MID --center="10h00m27.4474s,+02d20m57s"
+
+ python general.py --fits=./MIGHTEE_Continuum_DR1_COSMOS_5p2arcsec_I_v1.1_FinalCatalogue.srl.fits --pixels=1024 --seconds=600 --cleaning --bandwidth=700 --freq=700 --n_channels=2170 --telescope=SKA1MID --center="10h00m27.4474s,+02d20m57s" --column-mapping="0,2,4,6,-1,-1,-1,-1,-1,-1,10,12,14"

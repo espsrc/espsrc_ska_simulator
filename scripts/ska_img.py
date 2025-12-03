@@ -310,10 +310,10 @@ class SKAImage:
             self.header['BUNIT'] = 'Jy/px'
             self.units = "Jy/px"
 
-    def data_to_beam(self, verbose=False):
+    def data_to_beam(self, beam=None, verbose=False):
         if self.header['BUNIT'] != 'Jy/beam':
             mylog ("\tConverting from Jy/px to Jy/beam...", flush=True, end=" ")
-            self.data *= (self.omega_beam()/self.omega_pix()).value #Convert Jy/px to Jy/beam
+            self.data *= (self.omega_beam(beam)/self.omega_pix()).value #Convert Jy/px to Jy/beam
             self.header['BUNIT'] = 'Jy/beam'
             self.units = "Jy/beam"
 
@@ -485,10 +485,8 @@ class SKAImage:
                 print ("Warning: Beam information not found in header. Using default beam of %s" % defaultBeam)
                 return defaultBeam
             else:
-                defaultBeam = Beam(major=1*u.arcsec, minor=1*u.arcsec, pa=0*u.deg)
-                print ("Warning: Beam information not found in header. Using default beam of %s" % defaultBeam)
-                return defaultBeam
-        return None
+                print ("Warning: Beam information not found in header and no default beam provided.")
+                return None
 
     @property
     def beam_str(self):
@@ -701,24 +699,10 @@ class SKAImage:
             (cx,cy) = (major_pix +1 , major_pix + 1)
             beam_pa_value = np.sign(self.header['CDELT1']) * beam.pa.value
             if beam.minor.value != beam.major.value:
-                try:
-                    frame = patches.Ellipse((cx,cy), width=minor_pix, height=major_pix, color=color, angle=beam_pa_value)
-                except:
-                    frame = patches.Ellipse((cx,cy), width=minor_pix, height=major_pix, color=color, angle=beam_pa_value)
-                # try:
-                #     frame = patches.Ellipse((cx,cy), width=beam.minor.value, height=beam.major.value, color=color, angle=beam_pa_value, transform=img.get_transform('world'))
-                # except:
-                #     frame = patches.Ellipse((cx,cy), width=beam.minor.value, height=beam.major.value, color=color, angle=beam_pa_value)
+                frame = patches.Ellipse((cx,cy), width=minor_pix, height=major_pix, color=color, angle=beam_pa_value)
             else:
-                try:
-                    frame = patches.Circle((cx,cy), major_pix, color=color)
-                except:
-                    frame = patches.Circle((cx,cy), major_pix, color=color)
+                frame = patches.Circle((cx,cy), major_pix, color=color)
 
-                # try:
-                #     frame = patches.Circle((cx,cy), beam.major.value, color=color, angle=beam.pa.value, transform=img.get_transform('world'))
-                # except:
-                #     frame = patches.Circle((cx,cy), beam.minor.value, color=color, angle=beam.pa.value)
             img.add_patch(frame)
 
         except Exception as e:
@@ -819,6 +803,30 @@ class SKAImage:
             range_y = np.abs(coords.dec - end_coords.dec).to(unit)
             return {'x':range_x, 'y':range_y, 'area':range_x * range_y}
         return {'x':0*unit, 'y':0*unit, 'area':0*unit**2}
+    
+    @property
+    def header2d(self):
+        header2d = self.header.copy()
+        header2d['NAXIS'] = 2
+        header2d['WCSAXES'] = 2
+        header2d['NAXIS1'] = self.header['NAXIS1']
+        header2d['NAXIS2'] = self.header['NAXIS2']
+        keys_to_remove = [  'NAXIS3', 'NAXIS4', 
+                            'PC1_1', 'PC2_1', 'PC3_1', 'PC4_1', 'PC1_2', 'PC2_2',
+                            'PC3_2', 'PC4_2', 'PC1_3', 'PC2_3', 'PC3_3', 'PC4_3',
+                            'PC1_4', 'PC2_4', 'PC3_4', 'PC4_4',                            'PC01_03', 'PC02_03', 'PC03_03', 'PC04_03', 'PC01_04', 'PC02_04',
+                                'PC03_04', 'PC04_04', 'PC03_01', 'PC03_02', 'PC03_03', 'PC03_04',
+                                'PC04_01', 'PC04_02', 'PC04_03', 'PC04_04',
+                            'CTYPE3', 'CRVAL3', 'CDELT3', 'CRPIX3', 'CUNIT3', 'NAXIS3', 'CROTA3',
+                            'CTYPE4', 'CRVAL4', 'CDELT4', 'CRPIX4', 'CUNIT4', 'NAXIS4', 'CROTA4',
+                            'PV2_1', 'PV2_2', 'SPECSYS',
+                            'ALTRVAL', 'ALTRPIX', 'VELREF', 'HISTORY',  'COMMENT']
+        for key in keys_to_remove:
+            if key in header2d.keys():
+                del header2d[key]
+        return header2d
+
+
 
     def fix_header(self, header):
         keys_to_remove = [  'NAXIS', 'NAXIS3', 'NAXIS4', 
@@ -827,9 +835,8 @@ class SKAImage:
                             'PC1_4', 'PC2_4', 'PC3_4', 'PC4_4',                            'PC01_03', 'PC02_03', 'PC03_03', 'PC04_03', 'PC01_04', 'PC02_04',
                                 'PC03_04', 'PC04_04', 'PC03_01', 'PC03_02', 'PC03_03', 'PC03_04',
                                 'PC04_01', 'PC04_02', 'PC04_03', 'PC04_04',
-                            'CTYPE3', 'CRVAL3', 
-                            'CDELT3', 'CRPIX3', 'CUNIT3', 'NAXIS3',
-                            'CTYPE4', 'CRVAL4', 'CDELT4', 'CRPIX4', 'CUNIT4', 'NAXIS4',
+                            'CTYPE3', 'CRVAL3', 'CDELT3', 'CRPIX3', 'CUNIT3', 'NAXIS3', 'CROTA3',
+                            'CTYPE4', 'CRVAL4', 'CDELT4', 'CRPIX4', 'CUNIT4', 'NAXIS4', 'CROTA4',
                             'PV2_1', 'PV2_2', 'SPECSYS',
                             'ALTRVAL', 'ALTRPIX', 'VELREF', 'HISTORY', 'COMMENT']
 
@@ -1159,6 +1166,35 @@ class SKAImage:
                     coord_adj = SkyCoord(ra,dec, frame=self.frame, unit=(u.deg, u.deg))
                     coords.append(coord_adj)
         return coords
+    
+    def convolve_to_beam(self, beam):
+        from astropy.convolution import convolve_fft
+        from radio_beam import Beam
+        import warnings
+        try:
+            warnings.simplefilter('ignore')
+            current_beam = self.get_beam()
+ 
+            if current_beam is None:
+                current_beam = beam
+                kernel_array = current_beam.as_kernel(self.omega_pix()**0.5)
+                new_data = np.copy(self.data2d)
+                new_data = convolve_fft(self.data2d, kernel_array, normalize_kernel=True, allow_huge=True)          
+            elif beam > current_beam:
+                kernel = beam.deconvolve(current_beam)
+                kernel_array = kernel.as_kernel(self.omega_pix()**0.5)
+                new_data = np.copy(self.data2d)
+                new_data = convolve_fft(self.data2d, kernel_array, normalize_kernel=True, allow_huge=True)
+            else:
+                new_data = np.copy(self.data2d)
+            new_image = SKAImage(data=new_data, header=self.header2d)
+            new_image.name = self.name + ' Convolved'
+            new_image.set_beam(beam)
+            return new_image
+        except Exception as e:
+            mylog (show_exc(e))
+
+        return None
 
         
 
@@ -1279,8 +1315,9 @@ class SKAImage:
         except:
             return (1 * u.Unit('deg')) **2
 
-    def omega_beam (self):
-        beam = self.get_beam()
+    def omega_beam (self, beam=None):
+        if beam is None:
+            beam = self.get_beam()
         omega_beam = beam.sr.to(u.deg**2)
         return omega_beam
 
