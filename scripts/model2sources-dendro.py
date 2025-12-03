@@ -33,14 +33,15 @@ if __name__ == "__main__":
 
 
         parser.add_argument( "files", type=str, nargs="*", help="List of input files (not used in this test)", )
-        parser.add_argument( "--components", type=int, default=500, help="Number of components for source modeling", )
-        parser.add_argument( "--snr-threshold", type=float, default=1.0, help="SNR threshold for source detection", )
+        parser.add_argument( "--components", type=int, default=None, help="Number of components for source modeling", )
+        parser.add_argument( "--snr-threshold", type=float, default=3.0, help="SNR threshold for source detection", )
         parser.add_argument( "--rms", type=float, default=0.0, help="RMS noise level in Jy/beam (if 0, it will be estimated from the image)", )
-        parser.add_argument( "--trunks", action="store_true", help="Also plot trunks", )
+        # parser.add_argument( "--trunks", action="store_true", help="Also plot trunks", )
         parser.add_argument("--suffix", type=str, default="", help="Suffix for output files", )
         parser.add_argument("--fsources", type=str, default="", help="File with source list to overlay", )
         parser.add_argument('--author', type=str, default='Diaz-Gonzalez, D.J.', help='Author name to include in FITS header')
         parser.add_argument('--beam', type=str, default='', help='Beam parameters to use if not in FITS header (e.g., "10arcsec,8arcsec,30deg")')
+        parser.add_argument('--output', type=str, default=None, help='Output FITS file name')
         args = parser.parse_args()
 
 
@@ -65,16 +66,23 @@ if __name__ == "__main__":
 
         for idx,path in enumerate(args.files):
             image = SKAImage(path=path)
+            mad = image.mad() if args.rms == 0.0 else args.rms
             # Filter components
-            mad = image.mad()
-            flat_data = image.data.flatten()
-            sorted_indices = flat_data.argsort()[::-1]  # Indices of sorted data in descending order
-            threshold_index = sorted_indices[args.components - 1]
-            threshold_value = flat_data[threshold_index]
-            image.data[image.data < threshold_value] = 0.0
+            if args.components is not None:
+                mad = image.mad()
+                flat_data = image.data.flatten()
+                sorted_indices = flat_data.argsort()[::-1]  # Indices of sorted data in descending order
+                threshold_index = sorted_indices[args.components - 1]
+                threshold_value = flat_data[threshold_index]
+                image.data[image.data < threshold_value] = 0.0
+            else:
+                threshold_value = args.snr_threshold * mad
 
 
-            image.name = ('_').join(path.split("/")[-2].split("_")[2:]).replace("_", " ")
+            try:
+                image.name = ('_').join(path.split("/")[-2].split("_")[2:]).replace("_", " ")
+            except Exception as e:
+                image.name = 'model'
             if default_beam is None:
                 default_beam = Beam(image.pixelarea**0.5 * 5, image.pixelarea**0.5 * 5, 0*u.deg)
 
@@ -98,6 +106,10 @@ if __name__ == "__main__":
             else:
                 rms = image.mad(verbose=True)
                 print (f"\tEstimated RMS: {rms:.10f} Jy/beam")
+
+            imgtemp = SKAImage(data=image.data2d, header=image.header2d)
+            temp_path = f"temp_image{suffix}.fits" if args.output is None else args.output.replace(".fits", f"_temp.fits")
+            imgtemp.tofits(temp_path)
             d = Dendrogram.compute(image.data2d, min_value=threshold_value, min_delta=rms, min_npix=pixels_in_beam)
             # p = d.plotter()
             leaves = d.leaves
@@ -112,7 +124,7 @@ if __name__ == "__main__":
             metadata["beam_minor"] = beam.minor
         
 
-            for leaf in leaves:
+            for leaf in d.all_structures:
                 mask = leaf.get_mask()
                 ax.contour(mask, colors='red', linewidths=0.5, alpha=0.7)
                 stat = PPStatistic(leaf, metadata=metadata)
@@ -126,10 +138,10 @@ if __name__ == "__main__":
                 src = Source(ra=ra*u.deg, dec=dec*u.deg, obj_id=f"SRC{leaf.idx:03d}", I=stat.flux, spec_index=0, ref_freq=image.restfreq(), major_axis=stat.major_sigma, minor_axis=stat.minor_sigma, pa=stat.position_angle, isl_rms=rms_src, resolved=n_pix > pixels_in_beam)
                 sources.append(src)
                 
-            if args.trunks:
-                for trunk in d.trunk:
-                    mask = trunk.get_mask()
-                    ax.contour(mask, colors='blue', linewidths=0.5, alpha=0.7)
+            # if args.trunks:
+            #     for trunk in d.trunk:
+            #         mask = trunk.get_mask()
+            #         ax.contour(mask, colors='blue', linewidths=0.5, alpha=0.7)
                     
 
             if args.fsources != "":
@@ -189,19 +201,15 @@ if __name__ == "__main__":
                 prihdu.header['CREATOR'] = 'SKA-Synth'
                 prihdu.header['DATE'] = datetime.datetime.now().strftime("%Y-%m-%d")
 
-                path_fits = f"test_astro_sources{suffix}.fits"
+                path_fits = f"test_astro_sources{suffix}.fits" if args.output is None else args.output
                 hdu1 = fits.HDUList([prihdu, table])
                 hdu1.writeto(path_fits, overwrite=True)
-                print (f"Saved {N_sources} sources to {path_fits}")
+                print (f"Saved {N_sources} sources to {path_fits}")            
 
 
-
-            
-
-
-            print (f"\tFound {len(leaves)} sources")
         plt.tight_layout()
-        plt.savefig(f"plot_dendro{suffix}.png")
+        plot_path = f"plot_dendro{suffix}.png" if args.output is None else args.output.replace(".fits", ".png")
+        plt.savefig(plot_path)
     except Exception as e:
         print (show_exc(e))
 
