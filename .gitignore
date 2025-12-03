@@ -198,3 +198,5 @@ analysis/
 **.csv
 test**
 *.bak
+fits**
+**.mod
