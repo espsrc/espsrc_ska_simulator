@@ -199,3 +199,4 @@ analysis/
 test**
 *.bak
 fits**
+**.mod

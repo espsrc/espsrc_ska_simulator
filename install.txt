@@ -21,9 +21,11 @@ conda install karabo-pipeline
 #### RASCIL ####
 # Ensure CMake is installed
 apt install cmake   # Debian/Ubuntu style
+apt install g++
 #dnf install cmake   # Redhat style
-pip install --upgrade pip setuptools wheel
-pip install git+https://gitlab.com/ska-telescope/external/rascil.git
+#dnf install g++
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install git+https://gitlab.com/ska-telescope/external/rascil.git
 
 #### OSKAR ####
 wget https://github.com/OxfordSKA/OSKAR/archive/refs/tags/2.8.3.tar.gz
@@ -36,6 +38,8 @@ make -j8
 make install
 export OSKAR_INC_DIR=~/oskar-bin/include
 export OSKAR_LIB_DIR=~/oskar-bin/lib
-pip install --use-pep517 'git+https://github.com/OxfordSKA/OSKAR.git@master#egg=oskarpy&subdirectory=python
-pip install ska-sdp-datamodels --extra-index-url https://artefact.skao.int/repository/pypi-internal/simple
+python -m pip install --use-pep517 'git+https://github.com/OxfordSKA/OSKAR.git@master#egg=oskarpy&subdirectory=python'
+python -m pip install ska-sdp-datamodels --extra-index-url https://artefact.skao.int/repository/pypi-internal/simple
+apt install wsclean
+#dnf install wsclean
 
