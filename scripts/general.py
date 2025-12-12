@@ -1,3 +1,13 @@
+try:
+    from pandas.errors import AccessorRegistrationWarning
+    import warnings
+    warnings.filterwarnings(
+        "ignore",
+        category=AccessorRegistrationWarning,
+)
+except ImportError:
+    pass
+
 from matplotlib.colors import PowerNorm
 import multiprocessing as mp
 import json, sys, os, shutil, time, argparse, matplotlib, numpy as np

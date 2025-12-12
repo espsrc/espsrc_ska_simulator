@@ -319,12 +319,16 @@ class Source:
 
     def __str__(self):
         # Return a string representation of the source (only non-zero values)
-        str2print = f"Source(ra={self.ra}, dec={self.dec}, I={self.I}"
+        coord = SkyCoord(ra=self.ra, dec=self.dec, unit=(u.deg, u.deg), frame='icrs')
+        # Print RA/DEC in hms/dms format
+
+        str2print = f"Source({coord.to_string('hmsdms')}, I={self.I:.6f})"
 
         json_values = self.to_json()
         for key, value in json_values.items():
             if key not in ['ra', 'dec', 'I'] and value != 0:
-                str2print += f", {key}={value}"
+                value_with_unit = getattr(self, key)
+                str2print += f", {key}={value_with_unit}"
         str2print += ")"
         return str2print
     

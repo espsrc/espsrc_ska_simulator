@@ -40,6 +40,9 @@ export OSKAR_INC_DIR=~/oskar-bin/include
 export OSKAR_LIB_DIR=~/oskar-bin/lib
 python -m pip install --use-pep517 'git+https://github.com/OxfordSKA/OSKAR.git@master#egg=oskarpy&subdirectory=python'
 python -m pip install ska-sdp-datamodels --extra-index-url https://artefact.skao.int/repository/pypi-internal/simple
+python -m pip install thefuzz
+python -m pip install --upgrade attrs
+python -m pip install radio_beam
 apt install wsclean
 #dnf install wsclean
 
