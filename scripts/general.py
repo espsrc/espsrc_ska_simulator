@@ -1,3 +1,52 @@
+"""general.py — End-to-end interferometric simulation + imaging pipeline (Karabo/OSKAR/WSClean)
+
+This script orchestrates a full “sky → visibilities → image” workflow aimed at SKA-style
+interferometric simulations. It supports multiple sky-model ingestion paths (pickle, FITS
+catalogue, JSON catalogue, built-in catalogues, or simple random sources), runs an OSKAR
+visibility simulation through Karabo, and then produces either:
+
+- a *dirty image* via Karabo's OSKAR imager; or
+- a *cleaned image* via WSClean (invoked as an external binary through a custom command).
+
+Outputs are written into a dedicated working directory named after `--prefix` (or a timestamp
+default) plus the telescope identifier. The directory typically contains:
+
+- `<prefix>.log` (plain-text log produced via `utils.printlog`)
+- `<prefix>_visibilities.MS/` (Measurement Set with visibilities)
+- `<prefix>_<telescope>_<version>_telescope.png` (telescope layout plot)
+- Dirty imaging path:
+  - `<prefix>_dirty.fits`, `<prefix>_dirty.png`
+- Cleaning path (WSClean):
+  - `wsclean-*.fits` intermediate images are renamed to include run parameters and
+    corresponding `*.png` quicklooks are produced.
+
+Assumptions / operational requirements
+--------------------------------------
+1) The Karabo framework is installed and configured, including OSKAR backends.
+2) `wsclean` must be installed and discoverable on `$PATH` when `--cleaning` is used.
+3) A local `utils.py` module must be available next to this script (or on `PYTHONPATH`),
+   providing at least: `printlog`, `show_exc`, `Source`, `SkyModel`, `get_diameter`,
+   `mapping_unit`, and unit helpers.
+
+Astrophysical / interferometric conventions
+-------------------------------------------
+- The default field-of-view uses a diffraction-limited estimate $\mathrm{FoV} \approx 1.25\,\lambda/D$.
+- Imaging cell size is set to `FoV / pixels` (in radians) and passed to imagers accordingly.
+- Robust weighting and multiscale cleaning are controlled through the WSClean custom command.
+
+Known sharp edges (documented but not changed)
+----------------------------------------------
+- `--I` is declared with `nargs='+'` but has a scalar default (`10`), which can lead to
+  runtime errors when `--I` is omitted. Prefer `default=[10.0]`.
+- FITS cube helper `create_fits_cube()` uses `np.concatenate(..., axis=1)` which likely does
+  *not* create a standard spectral cube; `np.stack()` along a new axis is the more typical
+  approach.
+
+This file is intentionally kept close to the original runtime behavior; documentation and
+comments were added without refactoring the control flow.
+
+"""
+
 try:
     from pandas.errors import AccessorRegistrationWarning
     import warnings
