@@ -5,6 +5,9 @@ from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.time import Time
 import astropy.coordinates as acoord
 from radio_beam import Beam
+from astropy.table import Table
+import xarray as xr
+
 try:
     from karabo.simulation.telescope import Telescope # type: ignore
     from karabo.simulation.sky_model import SkyModel as KaraboSkyModel # type: ignore
@@ -536,26 +539,39 @@ try:
             else:
                 raise FileNotFoundError(f"FITS file {fits_file} not found.")
             
-        def get_center(self) -> SkyCoord:
+        def get_center(self, sources=None) -> SkyCoord:
             if self.phase_center is not None:
                 return self.phase_center
             else:
                 # Calculate the center of the sky model if phase_center is not set
-                if self.sources.size > 0:
-                    center_ra = np.mean(np.array(self.sources[:, 0])) * u.deg
-                    center_dec = np.mean(np.array(self.sources[:, 1])) * u.deg
+                if sources is None:
+                    sources = self.sources
+                if sources.size > 0:
+                    center_ra = np.mean(np.array(sources[:, 0])) * u.deg
+                    center_dec = np.mean(np.array(sources[:, 1])) * u.deg
                     self.phase_center = SkyCoord(ra=center_ra, dec=center_dec, frame='icrs')
                     return self.phase_center
                 else:
                     raise ValueError("SkyModel has no sources and phase_center is not set.")
-
-
-
-
-                # pickle_path = os.path.join(os.path.dirname(__file__), f'{prefix}_sky_model.pkl')
-                # with open(pickle_path, 'wb') as f:
-                #     pickle.dump(skyModel.sources, f)
-                # printlog (log_file, f"Sky model saved in {pickle_path}")
+                
+        @staticmethod
+        def from_fits_table(fits_file, log_file='sky_model.log', prefix='sky_model'):
+            """        Load a SkyModel from a FITS table file. 
+            Parameters:
+            - fits_file: Path to the FITS file.
+            Returns:
+            - SkyModel object.
+            """
+            from astropy.io import fits
+            if os.path.exists(fits_file):
+                fits_table = Table.read(fits_file)
+                sources = Source.from_table_in_fits(fits_table)
+                sky_array = np.array([source.to_sky_model() for source in sources])
+                skyModel = SkyModel(sky_array)
+                skyModel.get_center()
+                return skyModel
+            else:
+                raise FileNotFoundError(f"FITS file {fits_file} not found.")
 
 except Exception as e:
     print(f"Error defining SkyModel class: {e}")
