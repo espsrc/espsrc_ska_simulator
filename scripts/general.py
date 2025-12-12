@@ -322,6 +322,98 @@ def get_telescope_version(telescope_name):
 
         return version_telescope
 
+def create_sky_model_from_file(fpath):
+    # Examinate the file extension and then create the sky model
+    ext = os.path.splitext(fpath)[-1].lower()
+    if ext == '.pkl' or ext == '.pickle':
+        with open(fpath, 'rb') as f:
+            skyModel = pickle.load(f)
+        return skyModel
+    elif ext == '.fits' or ext == '.fit':
+        printlog (log_file, f"Loading sources from FITS file {args.fits}")
+        fits_path = fpath
+        if not os.path.isabs(args.fits):
+            fits_path = os.path.join(os.path.dirname(__file__), args.fits)
+
+        if not os.path.isfile(fits_path):
+            raise FileNotFoundError(f"File {fits_path} does not exist.")
+
+        fits_file = fits.open(fits_path)
+
+        unit_mapping: Dict[str, UnitBase] = {}
+
+        cols_mapping = [int(i) for i in args.column_mapping.split(",")]
+        str_cols = []
+        for idx,col in enumerate(fits_file[1].columns):
+            str_cols.append([idx,col.name])
+            col_unit = mapping_unit(col.unit)
+            unit_mapping[col.unit] = u.Unit(col_unit) if col_unit else u.dimensionless_unscaled
+        prefix_mapping = SkyPrefixMapping(
+            ra=fits_file[1].columns.names[cols_mapping[1]],
+            dec=fits_file[1].columns.names[cols_mapping[2]],
+            stokes_i=fits_file[1].columns.names[cols_mapping[3]],
+            stokes_q=fits_file[1].columns.names[cols_mapping[4]] if cols_mapping[4] > -1 else None,
+            stokes_u=fits_file[1].columns.names[cols_mapping[5]] if cols_mapping[5] > -1 else None,
+            stokes_v=fits_file[1].columns.names[cols_mapping[6]] if cols_mapping[6] > -1 else None,
+            spectral_index=fits_file[1].columns.names[cols_mapping[7]] if cols_mapping[7] > -1 else None,
+            ref_freq=fits_file[1].columns.names[cols_mapping[8]] if cols_mapping[8] > -1 else None,
+            rm=fits_file[1].columns.names[cols_mapping[9]] if cols_mapping[9] > -1 else None,
+            major=fits_file[1].columns.names[cols_mapping[10]] if cols_mapping[10] > -1 else None,
+            minor=fits_file[1].columns.names[cols_mapping[11]] if cols_mapping[11] > -1 else None,
+            pa=fits_file[1].columns.names[cols_mapping[12]] if cols_mapping[12] > -1 else None,
+            id=fits_file[1].columns.names[cols_mapping[0]] if cols_mapping[0] > -1 else None,
+        )
+        units_sources = SkySourcesUnits(
+            stokes_i=u.Jy / u.beam,
+            stokes_q=u.Jy / u.beam,
+            stokes_u=u.Jy / u.beam,
+            stokes_v=u.Jy / u.beam,
+            ref_freq=u.MHz,
+            major=u.arcsec,
+            minor=u.arcsec,
+            pa=u.deg,
+            rm=u.rad / u.m**2,
+        )
+        skyModel = SkyModel.get_sky_model_from_fits(
+            fits_file=fits_path,
+            prefix_mapping=prefix_mapping,
+            unit_mapping=unit_mapping,
+            units_sources=units_sources,
+            min_freq=None,
+            max_freq=None,
+            encoded_freq=None,
+            memmap=False,
+        )
+
+        sources = skyModel.sources
+        print(f"Loaded {len(sources)} sources from {fits_path}")
+        return skyModel
+    elif ext == '.json':
+        printlog (log_file, f"Loading sources from JSON file {args.json}")
+        if (not os.path.isabs(args.json)):
+            fjson = os.path.join(os.path.dirname(__file__), args.json)
+        else:
+            fjson = args.json
+        with open(fjson, 'r') as f:
+            sources_data = json.load(f)
+        sources = []
+        for source_data in sources_data:
+            source = Source.from_json(source_data)
+            if args.scale_I is not None:
+                source.I *= args.scale_I
+            if source.ref_freq == 0:
+                source.ref_freq = args.ref_freq[0] * u.Hz if args.ref_freq is not None else frequency.to(u.Hz)
+            sources.append(source)
+        if len(sources) == 0:
+            raise ValueError("No sources found in JSON file")
+        source_ref = sources[0]
+        skyModel = SkyModel(sources=sources)
+        return skyModel
+    
+ 
+
+
+
 
 
 if __name__ == "__main__":
@@ -454,16 +546,19 @@ if __name__ == "__main__":
 
         try:
             if args.model is not None:
-                printlog (log_file, f"Loading sky model from file {args.model}")
-                model_path = args.model
-                if not os.path.isabs(args.model):
-                    model_path = os.path.join(os.path.dirname(__file__), args.model)
-                if not os.path.isfile(model_path):
-                    raise FileNotFoundError(f"Sky model file {model_path} does not exist.")
-                with open(model_path, 'rb') as mf:
-                    skyModel = pickle.load(mf)
+                # printlog (log_file, f"Loading sky model from file {args.model}")
+                # model_path = args.model
+                # if not os.path.isabs(args.model):
+                #     model_path = os.path.join(os.path.dirname(__file__), args.model)
+                # if not os.path.isfile(model_path):
+                #     raise FileNotFoundError(f"Sky model file {model_path} does not exist.")
+                # with open(model_path, 'rb') as mf:
+                #     skyModel = pickle.load(mf)
+                # sources = skyModel.sources
+                # printlog (log_file, f"Loaded {len(sources)} sources from sky model {model_path}")
+                skyModel = create_sky_model_from_file(args.model)
                 sources = skyModel.sources
-                printlog (log_file, f"Loaded {len(sources)} sources from sky model {model_path}")
+                printlog (log_file, f"Loaded {len(sources)} sources from sky model {args.model}")
             else:
                 if args.catalogue > 0:
                     if args.catalogue == 1:
@@ -497,61 +592,51 @@ if __name__ == "__main__":
 
                     sources = skyModel.sources
                 elif args.fits is not None:
-                    printlog (log_file, f"Loading sources from FITS file {args.fits}")
-                    fits_path = args.fits
-                    if not os.path.isabs(args.fits):
-                        fits_path = os.path.join(os.path.dirname(__file__), args.fits)
+                    # printlog (log_file, f"Loading sources from FITS file {args.fits}")
+                    # fits_path = args.fits
+                    # if not os.path.isabs(args.fits):
+                    #     fits_path = os.path.join(os.path.dirname(__file__), args.fits)
 
-                    if not os.path.isfile(fits_path):
-                        raise FileNotFoundError(f"File {fits_path} does not exist.")
-                    # survey_file = fits.open(args.fits)
+                    # if not os.path.isfile(fits_path):
+                    #     raise FileNotFoundError(f"File {fits_path} does not exist.")
+                    # # survey_file = fits.open(args.fits)
 
-                    fits_file = fits.open(fits_path)
+                    # fits_file = fits.open(fits_path)
 
-                    unit_mapping: Dict[str, UnitBase] = {}
+                    # unit_mapping: Dict[str, UnitBase] = {}
 
-                    cols_mapping = [int(i) for i in args.column_mapping.split(",")]
-                    str_cols = []
-                    for idx,col in enumerate(fits_file[1].columns):
-                        str_cols.append([idx,col.name])
-                        col_unit = mapping_unit(col.unit)
-                        unit_mapping[col.unit] = u.Unit(col_unit) if col_unit else u.dimensionless_unscaled
-                    prefix_mapping = SkyPrefixMapping(
-                        ra=fits_file[1].columns.names[cols_mapping[1]],
-                        dec=fits_file[1].columns.names[cols_mapping[2]],
-                        stokes_i=fits_file[1].columns.names[cols_mapping[3]],
-                        stokes_q=fits_file[1].columns.names[cols_mapping[4]] if cols_mapping[4] > -1 else None,
-                        stokes_u=fits_file[1].columns.names[cols_mapping[5]] if cols_mapping[5] > -1 else None,
-                        stokes_v=fits_file[1].columns.names[cols_mapping[6]] if cols_mapping[6] > -1 else None,
-                        spectral_index=fits_file[1].columns.names[cols_mapping[7]] if cols_mapping[7] > -1 else None,
-                        ref_freq=fits_file[1].columns.names[cols_mapping[8]] if cols_mapping[8] > -1 else None,
-                        rm=fits_file[1].columns.names[cols_mapping[9]] if cols_mapping[9] > -1 else None,
-                        major=fits_file[1].columns.names[cols_mapping[10]] if cols_mapping[10] > -1 else None,
-                        minor=fits_file[1].columns.names[cols_mapping[11]] if cols_mapping[11] > -1 else None,
-                        pa=fits_file[1].columns.names[cols_mapping[12]] if cols_mapping[12] > -1 else None,
-                        id=fits_file[1].columns.names[cols_mapping[0]] if cols_mapping[0] > -1 else None,
-                    )
-                    units_sources = SkySourcesUnits(
-                        stokes_i=u.Jy / u.beam,
-                        stokes_q=u.Jy / u.beam,
-                        stokes_u=u.Jy / u.beam,
-                        stokes_v=u.Jy / u.beam,
-                        ref_freq=u.MHz,
-                        major=u.arcsec,
-                        minor=u.arcsec,
-                        pa=u.deg,
-                        rm=u.rad / u.m**2,
-                    )
-                    skyModel = SkyModel.get_sky_model_from_fits(
-                        fits_file=fits_path,
-                        prefix_mapping=prefix_mapping,
-                        unit_mapping=unit_mapping,
-                        units_sources=units_sources,
-                        min_freq=None,
-                        max_freq=None,
-                        encoded_freq=None,
-                        memmap=False,
-                    )
+                    # cols_mapping = [int(i) for i in args.column_mapping.split(",")]
+                    # str_cols = []
+                    # for idx,col in enumerate(fits_file[1].columns):
+                    #     str_cols.append([idx,col.name])
+                    #     col_unit = mapping_unit(col.unit)
+                    #     unit_mapping[col.unit] = u.Unit(col_unit) if col_unit else u.dimensionless_unscaled
+                    # prefix_mapping = SkyPrefixMapping(
+                    #     ra=fits_file[1].columns.names[cols_mapping[1]],
+                    #     dec=fits_file[1].columns.names[cols_mapping[2]],
+                    #     stokes_i=fits_file[1].columns.names[cols_mapping[3]],
+                    #     stokes_q=fits_file[1].columns.names[cols_mapping[4]] if cols_mapping[4] > -1 else None,
+                    #     stokes_u=fits_file[1].columns.names[cols_mapping[5]] if cols_mapping[5] > -1 else None,
+                    #     stokes_v=fits_file[1].columns.names[cols_mapping[6]] if cols_mapping[6] > -1 else None,
+                    #     spectral_index=fits_file[1].columns.names[cols_mapping[7]] if cols_mapping[7] > -1 else None,
+                    #     ref_freq=fits_file[1].columns.names[cols_mapping[8]] if cols_mapping[8] > -1 else None,
+                    #     rm=fits_file[1].columns.names[cols_mapping[9]] if cols_mapping[9] > -1 else None,
+                    #     major=fits_file[1].columns.names[cols_mapping[10]] if cols_mapping[10] > -1 else None,
+                    #     minor=fits_file[1].columns.names[cols_mapping[11]] if cols_mapping[11] > -1 else None,
+                    #     pa=fits_file[1].columns.names[cols_mapping[12]] if cols_mapping[12] > -1 else None,
+                    #     id=fits_file[1].columns.names[cols_mapping[0]] if cols_mapping[0] > -1 else None,
+                    # )
+                    # units_sources = SkySourcesUnits(
+                    #     stokes_i=u.Jy / u.beam,
+                    #     stokes_q=u.Jy / u.beam,
+                    #     stokes_u=u.Jy / u.beam,
+                    #     stokes_v=u.Jy / u.beam,
+                    #     ref_freq=u.MHz,
+                    #     major=u.arcsec,
+                    #     minor=u.arcsec,
+                    #     pa=u.deg,
+                    #     rm=u.rad / u.m**2,
+                    # )
                     # skyModel = SkyModel.get_sky_model_from_fits(
                     #     fits_file=fits_path,
                     #     prefix_mapping=prefix_mapping,
@@ -562,29 +647,42 @@ if __name__ == "__main__":
                     #     encoded_freq=None,
                     #     memmap=False,
                     # )
+                    # # skyModel = SkyModel.get_sky_model_from_fits(
+                    # #     fits_file=fits_path,
+                    # #     prefix_mapping=prefix_mapping,
+                    # #     unit_mapping=unit_mapping,
+                    # #     units_sources=units_sources,
+                    # #     min_freq=None,
+                    # #     max_freq=None,
+                    # #     encoded_freq=None,
+                    # #     memmap=False,
+                    # # )
+                    skyModel = create_sky_model_from_file(args.fits)
                     sources = skyModel.sources
-                    print(f"Loaded {len(sources)} sources from {fits_path}")
+                    print(f"Loaded {len(sources)} sources from {args.fits}")
                     
                 else:
                     if args.json is not None:
-                        printlog (log_file, f"Loading sources from JSON file {args.json}")
-                        if (not os.path.isabs(args.json)):
-                            fjson = os.path.join(os.path.dirname(__file__), args.json)
-                        else:
-                            fjson = args.json
-                        with open(fjson, 'r') as f:
-                            sources_data = json.load(f)
-                        sources = []
-                        for source_data in sources_data:
-                            source = Source.from_json(source_data)
-                            if args.scale_I is not None:
-                                source.I *= args.scale_I
-                            if source.ref_freq == 0:
-                                source.ref_freq = args.ref_freq[0] * u.Hz if args.ref_freq is not None else frequency.to(u.Hz)
-                            sources.append(source)
-                        if len(sources) == 0:
-                            raise ValueError("No sources found in JSON file")
-                        source_ref = sources[0]
+                        # printlog (log_file, f"Loading sources from JSON file {args.json}")
+                        # if (not os.path.isabs(args.json)):
+                        #     fjson = os.path.join(os.path.dirname(__file__), args.json)
+                        # else:
+                        #     fjson = args.json
+                        # with open(fjson, 'r') as f:
+                        #     sources_data = json.load(f)
+                        # sources = []
+                        # for source_data in sources_data:
+                        #     source = Source.from_json(source_data)
+                        #     if args.scale_I is not None:
+                        #         source.I *= args.scale_I
+                        #     if source.ref_freq == 0:
+                        #         source.ref_freq = args.ref_freq[0] * u.Hz if args.ref_freq is not None else frequency.to(u.Hz)
+                        #     sources.append(source)
+                        # if len(sources) == 0:
+                        #     raise ValueError("No sources found in JSON file")
+                        # source_ref = sources[0]
+                        skyModel = create_sky_model_from_file(args.json)
+                        sources = skyModel.sources
     
 
                     else:
