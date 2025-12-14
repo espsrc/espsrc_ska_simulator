@@ -27,7 +27,8 @@ from astrodendro.analysis import PPStatistic
 from radio_beam import Beam
 import reproject as rp
 
-from utils import show_exc, Source
+from utils import show_exc, Source, fit_lines_Npts_per_pixel
+# polyfit
 
 VERBOSE = True
 
@@ -99,6 +100,67 @@ def Lineal(x, m, a):
 class SKAImage:
     data = None
     header = None
+
+    @classmethod
+    def spectral_index(cls, list_images, mask=None, map_mode=False):
+        if not map_mode:
+            if len(list_images) == 2:
+                img1 = list_images[0]
+                img2 = list_images[1]
+                freq1 = img1.restfreq().to(u.Hz).value
+                freq2 = img2.restfreq().to(u.Hz).value
+
+                if mask is not None:
+                    orig_img1 = img1.data
+                    img1.data[~mask] = 0
+                    orig_img2 = img2.data
+                    img2.data[~mask] = 0
+
+
+                if freq1 is None or freq2 is None:
+                    raise Exception ("Cannot compute spectral index: rest frequency not found in one of the images")
+
+                if img1.data.shape != img2.data.shape:
+                    raise Exception ("Cannot compute spectral index: images have different shapes")
+
+                flux_ratio = img1.janskys() / img2.janskys()
+                spectral_index = np.log10(flux_ratio) / np.log10(freq1 / freq2)
+                if mask is not None:
+                    img1.data = orig_img1
+                    img2.data = orig_img2
+                return spectral_index
+            else:
+                # Use S(nu) = S0 (nu/nu0)^alpha
+                # Apply mask if provided
+                if mask is not None:
+                    orig_data = []
+                    for img in list_images:
+                        orig_data.append(img.data)
+                        img.data[~mask] = 0 
+
+                list_log_freqs = [np.log10(img.restfreq().to(u.Hz).value) for img in list_images]
+                list_log_fluxes = [np.log10(img.janskys().to(u.Jy).value) for img in list_images]
+
+                alpha, intercept = np.polyfit(list_log_freqs, list_log_fluxes, 1)
+                if mask is not None:
+                    for i, img in enumerate(list_images):
+                        img.data = orig_data[i]
+                return alpha    
+        else:
+            sorted_images = sorted(list_images, key=lambda x: x.restfreq())
+            list_freqs = [img.restfreq().to(u.Hz).value for img in sorted_images]
+            list_matrix = []
+            for img in sorted_images:
+                img.data_to_pixel()
+                list_matrix.append(img.data2d)
+                img.data_to_beam()
+            list_matrix = np.array(list_matrix)
+
+            alpha_map = fit_lines_Npts_per_pixel(list_matrix, list_freqs, mode="loglog", min_positive=1e-30)[0]
+            alpha_map = alpha_map # Remove extra dimensions
+            img_alpha = SKAImage(data=alpha_map, header=sorted_images[0].header)
+            return img_alpha
+
 
     def __init__(self, path = None, data=None, step = None, x0 = 0, y0 = 0, unit=u.deg, interf=False, frame=None, header=None, extent=None, bunit=None, cube=False):
         if path is not None:
@@ -952,7 +1014,7 @@ class SKAImage:
             mylog (show_exc(e))
             return None
 
-    def tofits(self, filename=None):
+    def tofits(self, filename=None, overwrite=True):
         hdu = pyfits.PrimaryHDU()
         hdu.header = self.header
         hdu.data = self.data
@@ -965,7 +1027,7 @@ class SKAImage:
             while os.path.exists(filename):
                 version +=1
                 filename = 'v%d_%s' % (version,os.path.basename(self.path))
-        hdu.writeto(filename, overwrite=True)
+        hdu.writeto(filename, overwrite=overwrite)
         self.path = filename
         self.fits = [hdu]
 

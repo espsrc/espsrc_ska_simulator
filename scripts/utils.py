@@ -36,6 +36,66 @@ def mapping_unit(unit_str):
         return None
     return unit_mapping.get(unit_str, unit_str)
 
+import numpy as np
+
+def fit_lines_Npts_per_pixel(img_list, freqs_hz, mode="loglog", min_positive=1e-30):
+    """
+    Ajusta una recta por píxel usando N puntos ( N frecuencias).
+
+    Parameters
+    ----------
+    img_list : list of N (ny, nx) arrays
+
+    freqs_hz : array-like length N
+        Frecuencias en Hz (o cualquier unidad consistente).
+    mode : {"linear", "loglog"}
+        "linear": y = a*x + b con x=freq
+        "loglog": y = a*x + b con x=log10(freq), y=log10(flux) => a = alpha
+    min_positive : float
+        Umbral para evitar log de 0/negativos en modo loglog.
+
+    Returns
+    -------
+    slope, intercept : (ny, nx) arrays
+        Pendiente e intercepto por píxel.
+        En mode="loglog": slope=alpha, intercept=log10(S0) (si defines S = 10^b * nu^alpha).
+    valid : (ny, nx) boolean array
+        Máscara de píxeles donde se pudo ajustar.
+    """
+    print(img_list[0].shape)
+    freqs_hz = np.asarray(freqs_hz, dtype=float)
+    if freqs_hz.shape[0] != len(img_list):
+        raise ValueError("freqs_hz debe tener la misma longitud que img_list")
+
+    # Stack -> (N, ny, nx)
+    Y = np.stack(img_list, axis=0).astype(float)
+    print(Y.shape)
+    if mode == "linear":
+        X = freqs_hz
+        y = Y
+        valid = np.isfinite(y).all(axis=0)
+
+    elif mode == "loglog":
+        X = np.log10(freqs_hz)
+        y = Y.copy()
+        # Para log: flux debe ser finito y > 0 (o > umbral)
+        valid = np.isfinite(y).all(axis=0) & (y > min_positive).all(axis=0)
+        y = np.where(valid[None, :, :], np.log10(y), np.nan)
+
+    else:
+        raise ValueError("mode debe ser 'linear' o 'loglog'")
+
+    # Ajuste por píxel usando polyfit vectorizado
+    np.polyfit(X, y[:, valid], 1)
+    slope = np.full(y.shape[1:], np.nan)
+    intercept = np.full(y.shape[1:], np.nan)
+    slope[valid], intercept[valid] = np.polyfit(X, y[:, valid], 1)
+
+
+
+    return slope, intercept, valid
+
+
 
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -145,7 +205,7 @@ class Source:
         self.pa = list_of_values[10]
         self.true_redshift = true_redshift
         self.obs_redshift = obs_redshift
-        self.obj_id = obj_id
+        self.obj_id = obj_id if obj_id is not None else f"Source_{ra.value}_{dec.value}"
         self.resolved = resolved
         self.isl_rms = list_of_values[11]
         self.coord = SkyCoord(ra=self.ra, dec=self.dec, unit=(u.deg, u.deg), frame='icrs')
@@ -420,6 +480,28 @@ class Source:
             obs_redshift=json_data['obs_redshift']
         )
 
+    def to_fits_fmt(self):
+        # Convert the source to a FITS table format (dictionary)
+        return {
+            'RA': self.ra.to(u.deg).value,
+            'DEC': self.dec.to(u.deg).value,
+            'STK_I': self.I.to(u.Jy).value,
+            'STK_Q': self.Q.to(u.Jy).value,
+            'STK_U': self.U.to(u.Jy).value,
+            'STK_V': self.V.to(u.Jy).value,
+            'REFFREQ': self.ref_freq.to(u.Hz).value,
+            'SPECIDX': self.spec_index,
+            'RM': self.rot_meas.value,
+            'MAJ': self.major_axis.to(u.arcsec).value,
+            'MIN': self.minor_axis.to(u.arcsec).value,
+            'PA': self.pa.to(u.deg).value,
+            'true_redshift': self.true_redshift,
+            'obs_redshift': self.obs_redshift,
+            'RESOLVED': self.resolved,
+            'ISL_RMS': self.isl_rms.to(u.Jy).value,
+            'ID': self.obj_id
+        }
+    
 try:
     class SkyModel(KaraboSkyModel):
         phase_center = None

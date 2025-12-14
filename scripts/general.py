@@ -342,6 +342,7 @@ def create_sky_model_from_file(fpath):
 
         unit_mapping: Dict[str, UnitBase] = {}
 
+
         cols_mapping = [int(i) for i in args.column_mapping.split(",")]
         str_cols = []
         for idx,col in enumerate(fits_file[1].columns):
@@ -363,27 +364,51 @@ def create_sky_model_from_file(fpath):
             pa=fits_file[1].columns.names[cols_mapping[12]] if cols_mapping[12] > -1 else None,
             id=fits_file[1].columns.names[cols_mapping[0]] if cols_mapping[0] > -1 else None,
         )
-        units_sources = SkySourcesUnits(
-            stokes_i=u.Jy / u.beam,
-            stokes_q=u.Jy / u.beam,
-            stokes_u=u.Jy / u.beam,
-            stokes_v=u.Jy / u.beam,
-            ref_freq=u.MHz,
-            major=u.arcsec,
-            minor=u.arcsec,
-            pa=u.deg,
-            rm=u.rad / u.m**2,
-        )
-        skyModel = SkyModel.get_sky_model_from_fits(
-            fits_file=fits_path,
-            prefix_mapping=prefix_mapping,
-            unit_mapping=unit_mapping,
-            units_sources=units_sources,
-            min_freq=None,
-            max_freq=None,
-            encoded_freq=None,
-            memmap=False,
-        )
+        try:
+            units_sources = SkySourcesUnits(
+                stokes_i=u.Jy / u.beam,
+                stokes_q=u.Jy / u.beam,
+                stokes_u=u.Jy / u.beam,
+                stokes_v=u.Jy / u.beam,
+                ref_freq=u.MHz,
+                major=u.arcsec,
+                minor=u.arcsec,
+                pa=u.deg,
+                rm=u.rad / u.m**2,
+            )
+            skyModel = SkyModel.get_sky_model_from_fits(
+                fits_file=fits_path,
+                prefix_mapping=prefix_mapping,
+                unit_mapping=unit_mapping,
+                units_sources=units_sources,
+                min_freq=None,
+                max_freq=None,
+                encoded_freq=None,
+                memmap=False,
+            )
+        except u.core.UnitConversionError as e:
+            printlog (log_file, f"Unit conversion error: {e}. Trying without beam units.")
+            units_sources = SkySourcesUnits(
+                stokes_i=u.Jy,
+                stokes_q=u.Jy,
+                stokes_u=u.Jy,
+                stokes_v=u.Jy,
+                ref_freq=u.MHz,
+                major=u.arcsec,
+                minor=u.arcsec,
+                pa=u.deg,
+                rm=u.rad / u.m**2,
+            )
+            skyModel = SkyModel.get_sky_model_from_fits(
+                fits_file=fits_path,
+                prefix_mapping=prefix_mapping,
+                unit_mapping=unit_mapping,
+                units_sources=units_sources,
+                min_freq=None,
+                max_freq=None,
+                encoded_freq=None,
+                memmap=False,
+            )
 
         sources = skyModel.sources
         print(f"Loaded {len(sources)} sources from {fits_path}")
