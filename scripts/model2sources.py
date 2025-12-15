@@ -13,6 +13,7 @@ from oskar.sky import Sky as OskarSky
 from karabo.simulation.sky_model  import SkyModel as KaraboSkyModel
 import pickle
 import argparse
+import numpy as np
 
 
 # ref_freq = 1310 * u.MHz
@@ -48,6 +49,8 @@ if __name__ == "__main__":
     args.add_argument("--fits_model", type=str, required=True, help="Path to the FITS model file")
     args.add_argument("--output", type=str, help="Path to the output model file", default=None)
     args.add_argument("--sigma", type=float, help="Sigma threshold for source detection", default=10.0)
+    args.add_argument("--freq", type=float, help="Frequency in MHz for source fluxes", default=None)
+    args.add_argument("--specindex", type=float, default=-0.7)
     args.add_argument("--components", type=int, help="Number of components to use for source modeling", default=None)
     args = args.parse_args()
 
@@ -60,21 +63,34 @@ if __name__ == "__main__":
     f = args.fits_model
     img = SKAImage(f)
     if args.components is None:
-        img.data[(img.data < args.sigma * img.mad())] = 0.0
+        data = img.data2d
+        threshold_value = args.sigma * img.mad()
+        # data[data < args.sigma * img.mad()] = np.nan
+        # sigma = img.mad()
     else:
         # Keep only the N brightest components
         sigma = img.mad()
-        flat_data = img.data.flatten()
-        sorted_indices = flat_data.argsort()[::-1]  # Indices of sorted data in descending order
+        flat_data = img.data2d[~np.isnan(img.data2d)].flatten()    
+        sorted_indices = np.argsort(flat_data)
+        sorted_indices = sorted(sorted_indices, reverse=True)
+            # Indices of sorted data in descending order
         threshold_index = sorted_indices[args.components - 1]
         threshold_value = flat_data[threshold_index]
-        img.data[img.data < threshold_value] = 0.0
-        print (f"Equivalent sigma: {threshold_value / sigma}")
+        # data = np.copy(img.data2d)
+        # data[data < threshold_value] = np.nan
 
-    img.tofits("tmp.fits")
-    oskar_sky = OskarSky.from_fits_file("tmp.fits")
+
+    # if args.freq is not None:
+    #     img.header["RESTFRQ"] = args.freq * 1e6  # Set the frequency in Hz
+    # new_img = SKAImage(data=data, header=img.header2d)
+
+    # new_img.tofits("tmp.fits")
+    
+    oskar_sky = OskarSky.from_fits_file(f, min_abs_val=threshold_value, frequency_hz = (args.freq * u.MHz).to(u.Hz).value, spectral_index = args.specindex)
     array_sky = oskar_sky.to_array()
     karabo_sky = SkyModel(sources=xr.DataArray(array_sky))
+
+    # print (f"Threshold: {threshold_value}, Equivalent sigma: {threshold_value / sigma}")
     print (f"Sources detected: {len(karabo_sky.sources)}")
     if (args.output is None):
         pickle_file = f.replace('.fits', '.karabo.mod')

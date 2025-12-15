@@ -556,7 +556,7 @@ if __name__ == "__main__":
                 if fov.unit.is_equivalent(u.deg):
                     fov = fov.to(u.rad)
                 elif fov.unit.is_equivalent(u.rad):
-                    fov = fov.t(u.rad)
+                    fov = fov.to(u.rad)
                 else:
                     fov = fov.value * u.deg
             except Exception as e:
