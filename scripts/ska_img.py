@@ -388,7 +388,7 @@ class SKAImage:
             return u.Jy / u.beam
         return u.Jy / u.beam
 
-    def restfreq (self, unit=u.GHz):
+    def restfreq (self, unit=u.GHz, default=None):
         try:
             units_in_header = u.Unit(self.wcs.wcs.cunit[2])
             if not units_in_header.is_equivalent(u.Hz):
@@ -407,10 +407,10 @@ class SKAImage:
             elif 'CRVAL3' in self.header.keys():
                 return (self.header['CRVAL3'] * units_in_header).to(unit, equivalencies=u.spectral())
             else:
-                return None
+                return default
         except Exception as e:
             mylog(show_exc(e))
-            return None
+            return default
     
     def wavelength (self, unit=u.um):
         return (self.restfreq().to(unit, equivalencies=u.spectral()))
