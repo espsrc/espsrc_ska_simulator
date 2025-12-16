@@ -1,6 +1,7 @@
 from ska_img import SKAImage
 import astropy.units as u
-import argparse
+import numpy as np
+import argparse, sys
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Calculate spectral index between  images")
@@ -15,8 +16,20 @@ if __name__ == "__main__":
     images = []
     for img_path in args.images:
         img = SKAImage(img_path)
+        img.header['BUNIT'] = 'Jy/beam'
+        img.data_to_pixel()
         images.append(img)
     images = sorted(images, key=lambda x: x.restfreq())
+    
+    freqs = [img.restfreq().to(u.Hz) for img in images]
+    
+    # center_pixels = [img.data2d[500,500] for img in images]
+    # #Fit using log-log with numpy polyfit
+    # log_freqs = np.log10([f.value for f in freqs])
+    # log_values = np.log10(center_pixels)
+    # slope, intercept = np.polyfit(log_freqs, log_values, 1)
+    # print (slope)
+    # sys.exit()
     if args.map:
         si_map = SKAImage.spectral_index(images, map_mode=True)
         outname = "spectral_index_map.fits"

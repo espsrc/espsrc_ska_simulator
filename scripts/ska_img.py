@@ -151,14 +151,15 @@ class SKAImage:
             list_freqs = [img.restfreq().to(u.Hz).value for img in sorted_images]
             list_matrix = []
             for img in sorted_images:
-                img.data_to_pixel()
+                # img.data_to_pixel()
                 list_matrix.append(img.data2d)
-                img.data_to_beam()
+                # img.data_to_beam()
             list_matrix = np.array(list_matrix)
 
             alpha_map = fit_lines_Npts_per_pixel(list_matrix, list_freqs, mode="loglog", min_positive=1e-30)[0]
-            alpha_map = alpha_map # Remove extra dimensions
-            img_alpha = SKAImage(data=alpha_map, header=sorted_images[0].header)
+            header = sorted_images[0].header
+            header['BUNIT'] = 'dimensionless'
+            img_alpha = SKAImage(data=alpha_map, header=header)
             return img_alpha
 
 

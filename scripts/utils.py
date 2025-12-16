@@ -86,10 +86,20 @@ def fit_lines_Npts_per_pixel(img_list, freqs_hz, mode="loglog", min_positive=1e-
         raise ValueError("mode debe ser 'linear' o 'loglog'")
 
     # Ajuste por píxel usando polyfit vectorizado
-    np.polyfit(X, y[:, valid], 1)
-    slope = np.full(y.shape[1:], np.nan)
-    intercept = np.full(y.shape[1:], np.nan)
-    slope[valid], intercept[valid] = np.polyfit(X, y[:, valid], 1)
+    myfit = np.polyfit(X, y[:, valid], 1)
+    slope = myfit[0, :]
+    intercept = myfit[1, :]
+    slope = np.zeros(Y.shape[1]*Y.shape[2]) * np.nan
+    intercept = np.zeros(Y.shape[1]*Y.shape[2]) * np.nan
+    slope[valid.flatten()] = myfit[0, :]
+    slope = slope.reshape((Y.shape[1], Y.shape[2]))
+    intercept[valid.flatten()] = myfit[1, :]
+    intercept = intercept.reshape((Y.shape[1], Y.shape[2]))
+    # reshape to (ny, nx)
+    print ("DBG", slope.shape, intercept.shape, valid.shape)
+
+    
+
 
 
 
@@ -217,11 +227,12 @@ class Source:
             raise ValueError(f"Source {name} not found")
         return Source(source.ra, source.dec, 1 * u.Jy)
     
-    def to_json(self):
+    def to_json(self, coords_fmt='deg'):
         # Convert the source to a JSON serializable dictionary
+
         return {
-            "ra": self.ra.to(u.deg).value,
-            "dec": self.dec.to(u.deg).value,
+            "ra": self.coords().to_string('hmsdms', sep=':').split()[0] if coords_fmt=='hmsdms' else self.coord.ra.to(u.deg).value,
+            "dec": self.coords().to_string('hmsdms', sep=':').split()[1] if coords_fmt=='hmsdms' else self.coord.dec.to(u.deg).value,
             "I": self.I.to(u.Jy).value,
             "Q": self.Q.to(u.Jy).value,
             "U": self.U.to(u.Jy).value,
