@@ -14,91 +14,64 @@ from karabo.simulation.sky_model  import SkyModel as KaraboSkyModel
 import pickle
 import argparse
 import numpy as np
+from utils import show_exc
 
 
-# ref_freq = 1310 * u.MHz
-# center = SkyCoord("10:00:27.4415357045 +2:20:57.0878906254", unit=(u.hourangle, u.deg), frame='icrs')
-# model = SKAImage.new_model(center=center, fov=90*u.arcsec, pixels=1024, freq=ref_freq)
-
-# fits_file = "./20251001_040_sources.fits"
-# data = Table.read(fits_file)
-# sources = Source.from_table_in_fits(data)
-# print (f"Number of sources loaded: {len(sources)}")
-
-
-
-# for src in sources:
-#     coord_in_model = model.world_to_pixel(src.coord)
-#     if coord_in_model is None:
-#         print (f"Source {src.name} at {src.coord.to_string('hmsdms')} is out of image bounds.")
-#         continue
-#     (x,y) = coord_in_model
-#     if x<0 or x>=model.size[0] or y<0 or y>=model.size[1]:
-#         print (f"Source {src.name} at {src.coord.to_string('hmsdms')} is out of image bounds.")
-#         continue
-#     model.data[int(y), int(x)] += src.get_flux(ref_freq).to(u.Jy).value  # Add flux at 1 GHz
-
-# model.tofits("test_model.fits")
-# sys.exit()
 
 import xarray as xr
 import os
 
 if __name__ == "__main__":
-    args = argparse.ArgumentParser()
-    args.add_argument("--fits_model", type=str, required=True, help="Path to the FITS model file")
-    args.add_argument("--output", type=str, help="Path to the output model file", default=None)
-    args.add_argument("--sigma", type=float, help="Sigma threshold for source detection", default=10.0)
-    args.add_argument("--freq", type=float, help="Frequency in MHz for source fluxes", default=None)
-    args.add_argument("--specindex", type=float, default=-0.7)
-    args.add_argument("--components", type=int, help="Number of components to use for source modeling", default=None)
-    args = args.parse_args()
+    try:
+        args = argparse.ArgumentParser()
+        args.add_argument("--fits_model", type=str, required=True, help="Path to the FITS model file")
+        args.add_argument("--output", type=str, help="Path to the output model file", default=None)
+        args.add_argument("--sigma", type=float, help="Sigma threshold for source detection", default=10.0)
+        args.add_argument("--freq", type=float, help="Frequency in MHz for source fluxes", default=1310)
+        args.add_argument("--specindex", type=float, default=-0.7)
+        args.add_argument("--components", type=int, help="Number of components to use for source modeling", default=None)
+        args = args.parse_args()
 
-    if os.path.exists(args.fits_model) is False:
-        print (f"FITS model file {args.fits_model} does not exist!")
-        sys.exit(1)
-
-
-
-    f = args.fits_model
-    img = SKAImage(f)
-    if args.components is None:
-        data = img.data2d
-        threshold_value = args.sigma * img.mad()
-        # data[data < args.sigma * img.mad()] = np.nan
-        # sigma = img.mad()
-    else:
-        # Keep only the N brightest components
-        sigma = img.mad()
-        flat_data = img.data2d[~np.isnan(img.data2d)].flatten()    
-        sorted_indices = np.argsort(flat_data)
-        sorted_indices = sorted(sorted_indices, reverse=True)
-            # Indices of sorted data in descending order
-        threshold_index = sorted_indices[args.components - 1]
-        threshold_value = flat_data[threshold_index]
-        # data = np.copy(img.data2d)
-        # data[data < threshold_value] = np.nan
+        if os.path.exists(args.fits_model) is False:
+            print (f"FITS model file {args.fits_model} does not exist!")
+            sys.exit(1)
 
 
-    # if args.freq is not None:
-    #     img.header["RESTFRQ"] = args.freq * 1e6  # Set the frequency in Hz
-    # new_img = SKAImage(data=data, header=img.header2d)
 
-    # new_img.tofits("tmp.fits")
-    
-    oskar_sky = OskarSky.from_fits_file(f, min_abs_val=threshold_value, frequency_hz = (args.freq * u.MHz).to(u.Hz).value, spectral_index = args.specindex)
-    array_sky = oskar_sky.to_array()
-    karabo_sky = SkyModel(sources=xr.DataArray(array_sky))
-
-    # print (f"Threshold: {threshold_value}, Equivalent sigma: {threshold_value / sigma}")
-    print (f"Sources detected: {len(karabo_sky.sources)}")
-    if (args.output is None):
-        pickle_file = f.replace('.fits', '.karabo.mod')
-    else:
-        if not args.output.endswith('.karabo.mod'):
-            pickle_file = f"{args.output}_kamod.karabo.mod"
+        f = args.fits_model
+        img = SKAImage(f)
+        if args.components is None:
+            data = img.data2d
+            threshold_value = args.sigma * img.mad()
         else:
-            pickle_file = args.output
-    with open(pickle_file, 'wb') as pf:
-        pickle.dump(karabo_sky, pf)
-    print (f"Saved Karabo sky model to {pickle_file}")
+            sigma = img.mad()
+            flat_data = img.data2d[~np.isnan(img.data2d)].flatten()    
+            sorted_indices = np.argsort(flat_data)
+            sorted_indices = sorted(sorted_indices, reverse=True)
+            threshold_index = sorted_indices[args.components - 1]
+            threshold_value = flat_data[threshold_index]
+        threshold_value /= (img.omega_beam() / img.omega_pix()) # Convert from Jy/beam to Jy/pixel
+
+        img.tofits("temp_thresholded.fits")
+        print(f"Using threshold value: {threshold_value:.6f}. Pixes above threshold: {np.sum(~np.isnan(img.data))}")
+        oskar_sky = OskarSky.from_fits_file("temp_thresholded.fits", min_abs_val=threshold_value, frequency_hz = (args.freq * u.MHz).to(u.Hz).value, spectral_index = args.specindex)
+        oskar_sky.filter_by_flux(min_flux_jy=threshold_value, max_flux_jy=np.inf)
+        print (f"Total sources in OSKAR sky model: {oskar_sky.num_sources}")
+        array_sky = oskar_sky.to_array()
+        karabo_sky = SkyModel(sources=xr.DataArray(array_sky))
+
+        print (f"Sources detected: {len(karabo_sky.sources)}")
+        if (args.output is None):
+            pickle_file = f.replace('.fits', '.kmod')
+        else:
+            if not args.output.endswith('.kmod'):
+                pickle_file = f"{args.output}_kamod.kmod"
+            else:
+                pickle_file = args.output
+        with open(pickle_file, 'wb') as pf:
+            pickle.dump(karabo_sky, pf)
+        print (f"Saved Karabo sky model to {pickle_file}")
+    except Exception as e:
+        print (f"Sorry, an error occurred.")
+        print (show_exc(e))
+        sys.exit(1)
