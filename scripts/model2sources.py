@@ -30,6 +30,7 @@ if __name__ == "__main__":
         args.add_argument("--freq", type=float, help="Frequency in MHz for source fluxes", default=1310)
         args.add_argument("--specindex", type=float, default=-0.7)
         args.add_argument("--components", type=int, help="Number of components to use for source modeling", default=None)
+        args.add_argument("--rms", type=float, help="RMS noise level in Jy/beam to use for thresholding", default=None)
         args = args.parse_args()
 
         if os.path.exists(args.fits_model) is False:
@@ -40,9 +41,13 @@ if __name__ == "__main__":
 
         f = args.fits_model
         img = SKAImage(f)
+        if args.rms is not None:
+            rms = args.rms
+        else:
+            rms = img.mad()
         if args.components is None:
             data = img.data2d
-            threshold_value = args.sigma * img.mad()
+            threshold_value = args.sigma * rms
         else:
             sigma = img.mad()
             flat_data = img.data2d[~np.isnan(img.data2d)].flatten()    
@@ -50,7 +55,7 @@ if __name__ == "__main__":
             sorted_indices = sorted(sorted_indices, reverse=True)
             threshold_index = sorted_indices[args.components - 1]
             threshold_value = flat_data[threshold_index]
-        threshold_value /= (img.omega_beam() / img.omega_pix()) # Convert from Jy/beam to Jy/pixel
+        # threshold_value /= (img.omega_beam() / img.omega_pix()) # Convert from Jy/beam to Jy/pixel
 
         img.tofits("temp_thresholded.fits")
         print(f"Using threshold value: {threshold_value:.6f}. Pixes above threshold: {np.sum(~np.isnan(img.data))}")

@@ -873,7 +873,7 @@ if __name__ == "__main__":
             )
 
             root_path = work_dir
-            visibility_path = os.path.join(root_path, f'{prefix}_visibilities.MS')
+            visibility_path = os.path.join(root_path, f'visibilities.MS')
             if os.path.exists(visibility_path):
                 if args.overwrite:
                     printlog (log_file, f"Visibility file {visibility_path} already exists. Overwriting it")
@@ -941,9 +941,7 @@ if __name__ == "__main__":
                 path_fits = os.path.join(root_path, f"{prefix}_cleaned.fits")
                 print (f"PATH Fits: {path_fits}")
                 threshold_settings = "--auto-threshold 0.3"
-                # if (args.rms) and (args.rms_value > 0):
-                #     threshold_settings = f" --threshold {args.rms_value * args.rms_sigma}"
-                custom_command = f"wsclean -weight briggs {args.robust} -multiscale -size {args.pixels} {args.pixels} -scale {imaging_cellsize.to(u.deg).value}deg -niter {args.niter} -mgain 0.8 {threshold_settings} -auto-mask 3 -channels-out 8 -join-channels {visibility_path}"
+                custom_command = f"wsclean -weight briggs {args.robust} -multiscale -size {args.pixels} {args.pixels} -scale {imaging_cellsize.to(u.arcsec).value:.6f}asec -niter {args.niter} -mgain 0.8 {threshold_settings} -auto-mask 3 -channels-out 8 -join-channels -local-rms {visibility_path}"
                 printlog (log_file, f"Running custom wsclean command: {custom_command}")
                 cleaned = iaa_create_image_custom_command(custom_command, path_fits)
                 # Remove the temporary files created by WSClean
