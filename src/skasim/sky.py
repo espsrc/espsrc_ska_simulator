@@ -495,7 +495,7 @@ class SkyModel(KaraboSkyModel):
             skyModel.phase_center = SkyCoord(ra=center_ra, dec=center_dec, frame="icrs")
             return skyModel
         except Exception as e:
-            print(show_exc(e))
+            print(e)
             return None
 
     @staticmethod
