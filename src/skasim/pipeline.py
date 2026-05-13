@@ -350,9 +350,9 @@ def build_observation(
     df_mhz = config.observation.delta_freq_mhz
     seconds = config.observation.seconds
 
-    if df_mhz == 0.0 and n_ch == 0:
+    if df_mhz is None and n_ch == 0:
         raise ValueError("Provide either n_channels or delta_freq_mhz")
-    if df_mhz != 0.0 and n_ch != 0:
+    if df_mhz is not None and n_ch != 0:
         raise ValueError("Provide only one of n_channels or delta_freq_mhz")
 
     if bw_mhz == 0.0:

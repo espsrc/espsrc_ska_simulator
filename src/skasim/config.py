@@ -13,7 +13,7 @@ class ObsConfig(BaseModel):
     freq_mhz: float = 700.0
     bandwidth_mhz: float = 100.0
     n_channels: int = 8
-    delta_freq_mhz: float = 0.1
+    delta_freq_mhz: Optional[float] = None
     seconds: int = 600
     phase_center_ra_deg: Optional[float] = None
     phase_center_dec_deg: Optional[float] = None

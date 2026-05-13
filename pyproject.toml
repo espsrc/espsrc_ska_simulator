@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skasim"
+version = "0.1.0"
+description = "SKA synthetic observation simulator"
+readme = "README.md"
+requires-python = ">=3.8.5"
+dependencies = [
+    "pydantic>=2.0",
+    "numpy<2.0",
+    "astropy<6.0",
+    "radio_beam>=0.3.9",
+    "xarray>=2022.11.0",
+    "loguru>=0.7.3",
+]
+
+[project.scripts]
+skasim = "skasim.cli:main"
+
+[project.optional-dependencies]
+docs = [
+    "sphinx>=7.4.7,<9",
+    "sphinx-rtd-theme>=3.1.0",
+    "sphinx-autodoc-typehints>=2.3.0,<4",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
