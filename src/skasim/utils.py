@@ -8,6 +8,24 @@ from typing import Optional
 
 import astropy.units as u
 import numpy as np
+from loguru import logger
+
+
+def init_logger(log_file: Optional[str] = None) -> None:
+    """Cconfigure loguru: stderr + optional log file."""
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        colorize=True,
+        level="INFO",
+    )
+    if log_file:
+        logger.add(
+            log_file,
+            colorize=False,
+            level="INFO",
+            enqueue=True,
+        )
 
 
 def define_extra_units() -> None:
@@ -40,14 +58,6 @@ class NpEncoder(json.JSONEncoder):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         return json.JSONEncoder.default(self, obj)
-
-
-def printlog(fname: str, *args) -> None:
-    print(f"[{datetime.now()}]", *args)
-    with open(fname, "a") as f:
-        print(f"[{datetime.now()}]", *args, file=f)
-        f.flush()
-        os.fsync(f.fileno())
 
 
 def show_exc(exception: Exception) -> str:

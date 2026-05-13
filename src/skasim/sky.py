@@ -9,6 +9,7 @@ from astropy import units as u
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord
 from astropy.table import Table
 from astropy.time import Time
+from loguru import logger
 from radio_beam import Beam
 
 
@@ -298,7 +299,7 @@ class Source:
                 sources.append(src)
 
             except Exception as e:
-                print(show_exc(e))
+                logger.error(show_exc(e))
                 continue
 
         return sources
@@ -471,7 +472,7 @@ class SkyModel(KaraboSkyModel):
             kwargs["xlabel"] = "RA (deg)"
         if "ylabel" not in kwargs:
             kwargs["ylabel"] = "DEC (deg)"
-        print(self.phase_center)
+        logger.debug(self.phase_center)
 
         self.explore_sky(
             [
@@ -566,7 +567,7 @@ class SkyModel(KaraboSkyModel):
             progress_to_print = np.linspace(0, total_pixels, 11, dtype=int)
             max_flux = np.max(fluxes)
             t0 = time.time()
-            printlog(log_file, "Starting conversion...")
+            logger.debug("Starting conversion...")
             ra_list = []
             dec_list = []
             flux_list = []
@@ -574,9 +575,8 @@ class SkyModel(KaraboSkyModel):
             if total_intensity.to(u.Jy).value > 0:
                 fluxes = fluxes / sum_weights * total_intensity.to(u.Jy).value
             else:
-                printlog(
-                    log_file,
-                    "Warning: total_intensity is zero or negative, normalizing to 1 Jy",
+                logger.warning(
+                    "Total_intensity is zero or negative, normalizing to 1 Jy"
                 )
                 fluxes = fluxes / sum_weights  # Normalize to 1 Jy
 
@@ -588,14 +588,13 @@ class SkyModel(KaraboSkyModel):
                 dec_list.append(skycoord.dec.value)
                 flux_list.append(intensity.value)
                 progress += 1
-                print(
+                logger.debug(
                     f"Progress: {progress:5.0f}/{total_pixels} ({progress / total_pixels * 100:2.2f}%). Time elapsed: {time.time() - t0:.2f} seconds",
                     end="\r",
                 )
 
                 if progress in progress_to_print:
-                    printlog(
-                        log_file,
+                    logger.debug(
                         f"Progress: {progress:5.0f}/{total_pixels} ({progress / total_pixels * 100:2.2f}%). Time elapsed: {time.time() - t0:.2f} seconds",
                     )
 

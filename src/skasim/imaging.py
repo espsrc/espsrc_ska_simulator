@@ -20,9 +20,10 @@ from karabo.imaging.imager_wsclean import (
 )
 from karabo.simulation.visibility import Visibility
 from karabo.util.file_handler import FileHandler
+from loguru import logger
 
 from .config import SimConfig
-from .utils import printlog, show_exc
+from .utils import show_exc
 
 # --------------------------------------------------------------------------- #
 # dirty imaging (OSKAR)
@@ -35,7 +36,6 @@ def run_dirty_imaging(
     fov: u.Quantity,
     center: SkyCoord,
     work_dir: Path,
-    log_file: str,
 ) -> None:
     """produce dirty image via OSKAR."""
     vis = Visibility(str(visibility_path))
@@ -59,8 +59,8 @@ def run_dirty_imaging(
         ylabel="DEC",
     )
     dirty_image.write_to_file(str(dirty_fits), overwrite=True)
-    printlog(log_file, f"Dirty PNG: {dirty_png}")
-    printlog(log_file, f"Dirty FITS: {dirty_fits}")
+    logger.debug(f"Dirty PNG: {dirty_png}")
+    logger.debug(f"Dirty FITS: {dirty_fits}")
 
 
 # --------------------------------------------------------------------------- #
@@ -73,7 +73,6 @@ def run_wsclean_imaging(
     visibility_path: Path,
     fov: u.Quantity,
     work_dir: Path,
-    log_file: str,
 ) -> None:
     """produce cleaned image via external WSClean binary."""
     imaging_cellsize = fov / config.imaging.pixels
@@ -86,7 +85,7 @@ def run_wsclean_imaging(
         f"-auto-mask 3 -channels-out 8 -join-channels -local-rms "
         f"{visibility_path}"
     )
-    printlog(log_file, f"WSClean command: {custom_command}")
+    logger.info(f"WSClean command: {custom_command}")
 
     FileHandler().get_tmp_dir(
         prefix=TMP_PREFIX_CUSTOM,
@@ -98,17 +97,17 @@ def run_wsclean_imaging(
 
     cmd = f"OPENBLAS_NUM_THREADS=1 {custom_command}"
     proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
-    printlog(log_file, f"WSClean stdout: {proc.stdout}")
+    logger.info(f"WSClean stdout: {proc.stdout}")
 
     # remove the temporary files created by WSClea
     for tmp in glob.glob("wsclean-00*.fits"):
         try:
             os.remove(tmp)
         except Exception as exc:
-            printlog(log_file, show_exc(exc))
+            logger.error(show_exc(exc))
 
     mfs_files = glob.glob("*-MFS-*.fits")
-    printlog(log_file, f"MFS files: {mfs_files}")
+    logger.info(f"MFS files: {mfs_files}")
 
     from matplotlib.colors import PowerNorm
 
@@ -130,4 +129,4 @@ def run_wsclean_imaging(
             f"sec{config.observation.seconds}{img_path.replace('wsclean-', '')}"
         )
         shutil.move(img_path, new_name)
-        printlog(log_file, f"Renamed {img_path} -> {new_name}")
+        logger.debug(f"Renamed {img_path} -> {new_name}")

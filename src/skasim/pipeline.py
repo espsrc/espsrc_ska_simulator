@@ -23,28 +23,29 @@ from karabo.simulation.observation import Observation
 from karabo.simulation.sky_model import SkyPrefixMapping, SkySourcesUnits
 from karabo.simulation.telescope import Telescope
 from karabo.simulator_backend import SimulatorBackend
+from loguru import logger
 
 from .config import SimConfig
 from .imaging import run_dirty_imaging, run_wsclean_imaging
 from .sky import SkyModel, Source
-from .utils import get_diameter, mapping_unit, printlog, show_exc
+from .utils import get_diameter, init_logger
 
 # --------------------------------------------------------------------------- #
 # workdir + logging
 # --------------------------------------------------------------------------- #
 
 
-def setup_workdir(config: SimConfig) -> tuple[Path, str]:
-    """create working directory and return (work_dir, log_file)."""
+def setup_workdir(config: SimConfig) -> Path:
+    """create working directory and return (work_dir)."""
     prefix = config.output_prefix or datetime.now().strftime("%Y%m%d_%H%M")
     prefix = f"{prefix}_{config.telescope.replace('-', '_')}"
     work_dir = Path(prefix).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
     log_file = str(work_dir / f"{prefix}.log")
-    printlog(log_file, "=" * 60)
-    printlog(log_file, f"Prefix : {prefix}")
-    printlog(log_file, f"WorkDir: {work_dir}")
-    return work_dir, log_file
+    init_logger(log_file)
+    logger.debug(f"fPrefix : {prefix}")
+    logger.info(f"WorkDir: {work_dir}")
+    return work_dir
 
 
 # --------------------------------------------------------------------------- #
@@ -52,17 +53,14 @@ def setup_workdir(config: SimConfig) -> tuple[Path, str]:
 # --------------------------------------------------------------------------- #
 
 
-def build_telescope(config: SimConfig, log_file: str):
+def build_telescope(config: SimConfig):
     """return a Karabo Telescope instance."""
     kwargs: dict = {"backend": SimulatorBackend.OSKAR}
     if config.telescope_version is not None:
         kwargs["version"] = config.telescope_version
-        printlog(
-            log_file,
-            f"Telescope {config.telescope}  version={config.telescope_version}",
-        )
+        logger.info(f"Telescope {config.telescope}  version={config.telescope_version}")
     else:
-        printlog(log_file, f"Telescope {config.telescope}  (no version)")
+        logger.info(f"Telescope {config.telescope}  (no version)")
     telescope = Telescope.constructor(config.telescope, **kwargs)
     return telescope
 
@@ -79,6 +77,7 @@ def compute_fov(config: SimConfig, frequency: u.Quantity) -> u.Quantity:
     wavelength = frequency.to(u.m, equivalencies=u.spectral())
     diameter = get_diameter(config.telescope.upper())
     fov = (1.25 * wavelength / diameter) * u.rad
+    logger.debug(f"Computed FOV is: {fov} radians")
     return fov
 
 
@@ -104,7 +103,6 @@ def parse_center(center_str: Optional[str], fallback: SkyCoord) -> SkyCoord:
 
 def _load_sky_from_file(
     fpath: str,
-    log_file: str,
     column_mapping: str = "0,1,2,3,4,5,6,7,8,9,10,11,12",
     scale_I: float = 1.0,
     ref_freq_hz: Optional[float] = None,
@@ -117,7 +115,7 @@ def _load_sky_from_file(
     if ext in (".pkl", ".pickle", ".kmod", ".karabo.mod"):
         with open(fpath, "rb") as fh:
             sky_model = pickle.load(fh)
-        printlog(log_file, f"Loaded pickle model from {fpath}")
+        logger.info(f"Loaded pickle model from {fpath}")
         return sky_model
 
     # json catalogue
@@ -143,13 +141,13 @@ def _load_sky_from_file(
         arr = np.array([s.to_sky_model(reduced_form=True) for s in sources])
         sky_model.add_point_sources(arr)
         sky_model.get_center()
-        printlog(log_file, f"Loaded {len(sources)} sources from JSON {fpath}")
+        logger - info(f"Loaded {len(sources)} sources from JSON {fpath}")
         return sky_model
 
     # fits table or image
     if ext in (".fits", ".fit"):
         return _load_sky_from_fits(
-            fpath, log_file, column_mapping, scale_I, ref_freq_hz, frequency
+            fpath, column_mapping, scale_I, ref_freq_hz, frequency
         )
 
     raise ValueError(f"Unsupported sky-file extension: {ext}")
@@ -157,7 +155,6 @@ def _load_sky_from_file(
 
 def _load_sky_from_fits(
     fpath: str,
-    log_file: str,
     column_mapping: str,
     scale_I: float,
     ref_freq_hz: Optional[float],
@@ -229,12 +226,10 @@ def _load_sky_from_fits(
             encoded_freq=None,
             memmap=False,
         )
-        printlog(log_file, f"Loaded FITS via Karabo: {fpath}")
+        logger.info(f"Loaded FITS via Karabo: {fpath}")
         return sky_model
     except u.core.UnitConversionError as exc:
-        printlog(
-            log_file, f"Beam-unit conversion failed ({exc}); retrying without beam."
-        )
+        logger.error(f"Beam-unit conversion failed ({exc}); retrying without beam.")
 
     # retry without /beam
     units_sources = SkySourcesUnits(
@@ -258,7 +253,7 @@ def _load_sky_from_fits(
         encoded_freq=None,
         memmap=False,
     )
-    printlog(log_file, f"Loaded FITS via Karabo (no-beam fallback): {fpath}")
+    logger.info(f"Loaded FITS via Karabo (no-beam fallback): {fpath}")
     return sky_model
 
 
@@ -270,7 +265,6 @@ def _load_sky_from_fits(
 def build_sky_model(
     config: SimConfig,
     fov: u.Quantity,
-    log_file: str,
 ) -> tuple[SkyModel, SkyCoord]:
     """Return (sky_model, center)."""
 
@@ -281,7 +275,6 @@ def build_sky_model(
             fpath = os.path.join(os.path.dirname(__file__), fpath)
         sky_model = _load_sky_from_file(
             fpath,
-            log_file,
             column_mapping=config.column_mapping or "0,1,2,3,4,5,6,7,8,9,10,11,12",
             scale_I=config.scale_I,
             ref_freq_hz=(config.ref_freq_hz[0] if config.ref_freq_hz else None),
@@ -293,19 +286,19 @@ def build_sky_model(
     # 2) built-in catalogue
     if config.catalogue > 0:
         if config.catalogue == 1:
-            printlog(log_file, "Loading MIGHTEE catalogue")
+            logger.info("Loading MIGHTEE catalogue")
             sky_model = SkyModel.get_MIGHTEE_Sky()
         elif config.catalogue == 2:
-            printlog(log_file, "Loading GLEAM catalogue")
+            logger.info("Loading GLEAM catalogue")
             sky_model = SkyModel.get_GLEAM_Sky()
         elif config.catalogue == 3:
             # TODO: check where this is coming from?
             skamid_path = Path("SKAMid_B1_8h_v3.fits").resolve()
             if skamid_path.exists():
-                printlog(log_file, f"Loading SKAMid catalogue {skamid_path}")
+                logger.info(f"Loading SKAMid catalogue {skamid_path}")
                 sky_model = SkyModel.get_sky_model_from_fits(fits_file=str(skamid_path))
             else:
-                printlog(log_file, f"SKAMid catalogue not found at {skamid_path}")
+                logger.info(f"SKAMid catalogue not found at {skamid_path}")
                 raise FileNotFoundError(str(skamid_path))
         else:
             raise ValueError(
@@ -315,7 +308,7 @@ def build_sky_model(
         return sky_model, center
 
     # 3) random sources around a reference position
-    printlog(log_file, "Generating random sources")
+    logger.info("Generating random sources")
     source_ref = Source.from_name("HCG16")
     intensities = [i * u.Jy for i in config.I]
     n_sources = len(intensities)
@@ -336,7 +329,7 @@ def build_sky_model(
     arr = np.array([s.to_sky_model(reduced_form=True) for s in sources])
     sky_model.add_point_sources(arr)
     center = sky_model.get_center()
-    printlog(log_file, f"Generated {len(sources)} random sources")
+    logger.info(f"Generated {len(sources)} random sources")
     return sky_model, center
 
 
@@ -349,7 +342,6 @@ def build_observation(
     config: SimConfig,
     center: SkyCoord,
     telescope,
-    log_file: str,
 ) -> tuple:
     """Return (observation, frequency, bandwidth, n_channels, delta_freq, start_freq)."""
     freq = config.observation.freq_mhz * u.MHz
@@ -412,26 +404,25 @@ def run_simulation(
     observation,
     sky_model: SkyModel,
     work_dir: Path,
-    log_file: str,
 ) -> Path:
     """Run InterferometerSimulation and return visibility path."""
     visibility_path = work_dir / "visibilities.MS"
 
     if visibility_path.exists():
         if config.overwrite:
-            printlog(log_file, f"Overwriting existing {visibility_path}")
+            logger.info(f"Overwriting existing {visibility_path}")
             shutil.rmtree(visibility_path)
         else:
             ans = input(f"{visibility_path} exists. Overwrite? (y/n): ")
             if ans.lower() != "y":
-                printlog(log_file, "User declined overwrite — exiting")
+                logger.info("User declined overwrite — exiting")
                 sys.exit(0)
             shutil.rmtree(visibility_path)
 
     freq = config.observation.freq_mhz * u.MHz
     fov = compute_fov(config, freq)
     _, _, _, n_channels, delta_freq, _ = build_observation(
-        config, sky_model.get_center(), telescope, log_file
+        config, sky_model.get_center(), telescope
     )
 
     params = {
@@ -454,7 +445,7 @@ def run_simulation(
         visibility_path=str(visibility_path),
         backend=SimulatorBackend.OSKAR,
     )
-    printlog(log_file, f"Visibilities saved in {visibility_path}")
+    logger.info(f"Visibilities saved in {visibility_path}")
     return visibility_path
 
 
@@ -466,17 +457,17 @@ def run_simulation(
 def run(config: SimConfig) -> None:
     """Execute the full simulation pipeline from a SimConfig."""
     t0 = time.time()
-    work_dir, log_file = setup_workdir(config)
+    work_dir = setup_workdir(config)
 
-    printlog(log_file, f"Telescope : {config.telescope}")
-    printlog(log_file, f"Freq      : {config.observation.freq_mhz} MHz")
-    printlog(log_file, f"Bandwidth : {config.observation.bandwidth_mhz} MHz")
-    printlog(log_file, f"Channels  : {config.observation.n_channels}")
-    printlog(log_file, f"Time      : {config.observation.seconds} s")
-    printlog(log_file, f"Pixels    : {config.imaging.pixels}")
-    printlog(log_file, f"Cleaning  : {config.cleaning}")
+    logger.info(f"Telescope : {config.telescope}")
+    logger.info(f"Freq      : {config.observation.freq_mhz} MHz")
+    logger.info(f"Bandwidth : {config.observation.bandwidth_mhz} MHz")
+    logger.info(f"Channels  : {config.observation.n_channels}")
+    logger.info(f"Time      : {config.observation.seconds} s")
+    logger.info(f"Pixels    : {config.imaging.pixels}")
+    logger.info(f"Cleaning  : {config.cleaning}")
 
-    telescope = build_telescope(config, log_file)
+    telescope = build_telescope(config)
     telescope.plot_telescope(
         file=str(
             work_dir
@@ -486,27 +477,27 @@ def run(config: SimConfig) -> None:
 
     freq = config.observation.freq_mhz * u.MHz
     fov = compute_fov(config, freq)
-    printlog(log_file, f"FoV       : {fov.to(u.deg).value:.4f} deg")
+    logger.info(f"FoV       : {fov.to(u.deg).value:.4f} deg")
 
-    sky_model, center = build_sky_model(config, fov, log_file)
+    sky_model, center = build_sky_model(config, fov)
     center = parse_center(config.center, center)
-    printlog(log_file, f"Centre    : {center.to_string('hmsdms')}")
+    logger.info(f"Centre    : {center.to_string('hmsdms')}")
 
     observation, _, bandwidth, n_channels, delta_freq, start_freq = build_observation(
-        config, center, telescope, log_file
+        config, center, telescope
     )
-    printlog(log_file, f"StartFreq : {start_freq.to(u.MHz).value:.3f} MHz")
-    printlog(log_file, f"DeltaFreq : {delta_freq.to(u.MHz).value:.3f} MHz")
-    printlog(log_file, f"N channels: {n_channels}")
+    logger.info(f"StartFreq : {start_freq.to(u.MHz).value:.3f} MHz")
+    logger.info(f"DeltaFreq : {delta_freq.to(u.MHz).value:.3f} MHz")
+    logger.info(f"N channels: {n_channels}")
 
     visibility_path = run_simulation(
-        config, telescope, observation, sky_model, work_dir, log_file
+        config, telescope, observation, sky_model, work_dir
     )
 
     if not config.cleaning:
-        run_dirty_imaging(config, visibility_path, fov, center, work_dir, log_file)
+        run_dirty_imaging(config, visibility_path, fov, center, work_dir)
     else:
-        run_wsclean_imaging(config, visibility_path, fov, work_dir, log_file)
+        run_wsclean_imaging(config, visibility_path, fov, work_dir)
 
     elapsed = time.time() - t0
-    printlog(log_file, f"Done. Elapsed: {elapsed:.1f} s")
+    logger.info(f"Done. Elapsed: {elapsed:.1f} s")
