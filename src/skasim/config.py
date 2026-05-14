@@ -3,29 +3,63 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+# spectral-grid defaults (used when all three are omitted)
+_DEFAULT_BW_MHZ = 100.0
+_DEFAULT_NCH = 8
+_DEFAULT_DF_MHZ = 12.5
 
 
 class ObsConfig(BaseModel):
     """observation parameters for Karabo."""
 
-    # TODO: review defaults
-    freq_mhz: float = 700.0
-    bandwidth_mhz: float = 100.0
-    n_channels: int = 8
-    delta_freq_mhz: Optional[float] = None
-    seconds: int = 600
+    freq_mhz: float = Field(700.0, gt=0)
+    bandwidth_mhz: Optional[float] = Field(default=None)
+    n_channels: Optional[int] = Field(default=None)
+    delta_freq_mhz: Optional[float] = Field(default=None)
+    seconds: int = Field(600, gt=0)
     phase_center_ra_deg: Optional[float] = None
     phase_center_dec_deg: Optional[float] = None
     start_time: Optional[datetime] = None
 
-    # just an example, TODO: add more validations
-    @field_validator("seconds")
-    @classmethod
-    def _positive_time(cls, v: int) -> int:
-        if v <= 0:
-            raise ValueError("Observation time must be > 0 seconds")
-        return v
+    @model_validator(mode="after")
+    def _resolve_spectral_grid(self):
+        bw = self.bandwidth_mhz
+        nch = self.n_channels
+        df = self.delta_freq_mhz
+        defined = sum(v is not None for v in (bw, nch, df))
+
+        if defined == 0:
+            # all omitted — apply defaults
+            self.bandwidth_mhz = _DEFAULT_BW_MHZ
+            self.n_channels = _DEFAULT_NCH
+            self.delta_freq_mhz = _DEFAULT_DF_MHZ
+            return self
+
+        if defined == 1:
+            raise ValueError(
+                "at least two of bandwidth_mhz, n_channels, delta_freq_mhz are required"
+            )
+
+        if defined == 3:
+            # all provided — tolerate if mathematically consistent
+            if abs(bw - nch * df) > 1e-6:
+                raise ValueError(
+                    f"inconsistent grid: {bw=} ≠ {nch} × {df} = {nch * df}"
+                )
+            return self
+
+        # two provided, derive the third
+        if bw is None:
+            self.bandwidth_mhz = nch * df
+        elif nch is None:
+            self.n_channels = max(1, round(bw / df))
+            self.bandwidth_mhz = self.n_channels * df
+        else:  # df is None
+            self.delta_freq_mhz = bw / nch
+
+        return self
 
 
 class ImgConfig(BaseModel):

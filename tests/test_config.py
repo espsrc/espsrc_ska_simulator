@@ -11,12 +11,12 @@ from skasim.config import ImgConfig, ObsConfig, SimConfig
 
 
 def test_obs_config_defaults():
-    """default values."""
+    """all three spectral-grid parameters omitted -> defaults resolved."""
     obs = ObsConfig()
     assert obs.freq_mhz == 700.0
-    assert obs.bandwidth_mhz == 100.0
-    assert obs.n_channels == 8
-    assert obs.delta_freq_mhz == 0.1
+    assert obs.bandwidth_mhz == 100.0  # default resolved
+    assert obs.n_channels == 8  # default resolved
+    assert obs.delta_freq_mhz == 12.5
     assert obs.seconds == 600
     assert obs.phase_center_ra_deg is None
     assert obs.phase_center_dec_deg is None
@@ -29,7 +29,6 @@ def test_obs_config_custom_values():
         freq_mhz=1420.0,
         bandwidth_mhz=200.0,
         n_channels=16,
-        delta_freq_mhz=12.5,
         seconds=3600,
         phase_center_ra_deg=150.0,
         phase_center_dec_deg=2.5,
@@ -37,7 +36,7 @@ def test_obs_config_custom_values():
     assert obs.freq_mhz == pytest.approx(1420.0)
     assert obs.bandwidth_mhz == pytest.approx(200.0)
     assert obs.n_channels == 16
-    assert obs.delta_freq_mhz == pytest.approx(12.5)
+    assert obs.delta_freq_mhz == pytest.approx(12.5)  # derived
     assert obs.seconds == 3600
     assert obs.phase_center_ra_deg == pytest.approx(150.0)
     assert obs.phase_center_dec_deg == pytest.approx(2.5)
@@ -46,8 +45,73 @@ def test_obs_config_custom_values():
 @pytest.mark.parametrize("bad_seconds", [0, -1, -100])
 def test_obs_config_non_positive_seconds_raises(bad_seconds):
     """seconds must be strictly positive."""
-    with pytest.raises(ValidationError, match="Observation time must be > 0"):
+    with pytest.raises(ValidationError):
         ObsConfig(seconds=bad_seconds)
+
+
+# ---------------------------------------------------------------------------
+# consistent_setup
+# ---------------------------------------------------------------------------
+
+
+def test_consistent_setup_bw_and_nch():
+    """bandwidth + n_channels -> delta_freq derived."""
+    obs = ObsConfig(bandwidth_mhz=100.0, n_channels=8)
+    assert obs.bandwidth_mhz == pytest.approx(100.0)
+    assert obs.n_channels == 8
+    assert obs.delta_freq_mhz == pytest.approx(12.5)
+
+
+def test_consistent_setup_bw_and_df():
+    """bandwidth + delta_freq -> n_channels derived (rounded)."""
+    obs = ObsConfig(bandwidth_mhz=100.0, delta_freq_mhz=12.5)
+    assert obs.bandwidth_mhz == pytest.approx(100.0)
+    assert obs.n_channels == 8
+    assert obs.delta_freq_mhz == pytest.approx(12.5)
+
+
+def test_consistent_setup_nch_and_df():
+    """no bandwidth -> bandwidth derived from n_channels * delta_freq."""
+    obs = ObsConfig(n_channels=8, delta_freq_mhz=12.5)
+    assert obs.bandwidth_mhz == pytest.approx(100.0)
+    assert obs.n_channels == 8
+    assert obs.delta_freq_mhz == pytest.approx(12.5)
+
+
+# ---------------------------------------------------------------------------
+# spectral-grid validator — invalid combinations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected_msg",
+    [
+        # all three given but inconsistent
+        (
+            dict(bandwidth_mhz=100.0, n_channels=8, delta_freq_mhz=10.0),
+            "inconsistent grid",
+        ),
+        # only one given — bandwidth
+        (
+            dict(bandwidth_mhz=100.0),
+            "at least two of bandwidth_mhz, n_channels, delta_freq_mhz",
+        ),
+        # only one given — n_channels
+        (
+            dict(n_channels=8),
+            "at least two of bandwidth_mhz, n_channels, delta_freq_mhz",
+        ),
+        # only one given — delta_freq
+        (
+            dict(delta_freq_mhz=12.5),
+            "at least two of bandwidth_mhz, n_channels, delta_freq_mhz",
+        ),
+    ],
+)
+def test_obs_config_invalid_spectral_grid(kwargs, expected_msg):
+    """model_validator rejects inconsistent or under-specified combos."""
+    with pytest.raises(ValidationError, match=expected_msg):
+        ObsConfig(**kwargs)
 
 
 # ---------------------------------------------------------------------------

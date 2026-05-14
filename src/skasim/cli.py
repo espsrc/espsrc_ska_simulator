@@ -60,10 +60,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument(
         "--overwrite", action="store_true", help="Overwrite existing outputs"
     )
-    p.add_argument("--freq", type=float, default=200.0, help="Centre frequency (MHz)")
-    p.add_argument("--bandwidth", type=float, default=100.0, help="Bandwidth (MHz)")
-    p.add_argument("--n-channels", type=int, default=0, help="Number of channels")
-    p.add_argument("--delta-freq", type=float, default=0.0, help="Channel width (MHz)")
+    p.add_argument("--freq", type=float, default=700.0, help="Centre frequency (MHz)")
+    p.add_argument("--bandwidth", type=float, default=None, help="Bandwidth (MHz)")
+    p.add_argument("--n-channels", type=int, default=None, help="Number of channels")
+    p.add_argument("--delta-freq", type=float, default=None, help="Channel width (MHz)")
     p.add_argument("--seconds", type=int, default=10, help="Observation time (s)")
     p.add_argument(
         "--cleaning", action="store_true", help="Use WSClean instead of OSKAR dirty"

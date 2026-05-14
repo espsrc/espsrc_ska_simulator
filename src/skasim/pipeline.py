@@ -344,29 +344,14 @@ def build_observation(
     telescope,
 ) -> tuple:
     """Return (observation, frequency, bandwidth, n_channels, delta_freq, start_freq)."""
-    freq = config.observation.freq_mhz * u.MHz
-    bw_mhz = config.observation.bandwidth_mhz
-    n_ch = config.observation.n_channels
-    df_mhz = config.observation.delta_freq_mhz
+    obs = config.observation
+    freq = obs.freq_mhz * u.MHz
+    bw_mhz = obs.bandwidth_mhz
+    n_channels = obs.n_channels
+    df_mhz = obs.delta_freq_mhz
+    bandwidth = bw_mhz * u.MHz
+    delta_freq = df_mhz * u.MHz
     seconds = config.observation.seconds
-
-    if df_mhz is None and n_ch == 0:
-        raise ValueError("Provide either n_channels or delta_freq_mhz")
-    if df_mhz is not None and n_ch != 0:
-        raise ValueError("Provide only one of n_channels or delta_freq_mhz")
-
-    if bw_mhz == 0.0:
-        n_channels = n_ch
-        bandwidth = df_mhz * n_channels * u.MHz
-        delta_freq = df_mhz * u.MHz
-    else:
-        bandwidth = bw_mhz * u.MHz
-        if n_ch == 0:
-            n_channels = int(bw_mhz / df_mhz)
-            delta_freq = df_mhz * u.MHz
-        else:
-            n_channels = n_ch
-            delta_freq = bandwidth / n_channels
 
     start_freq = freq - n_channels * delta_freq / 2
 
