@@ -421,25 +421,25 @@ def create_sky_model_from_file(fpath):
             print(f"Loaded {len(sources)} sources from {fits_path}")
             return skyModel
         elif ext == '.json':
-            printlog (log_file, f"Loading sources from JSON file {args.json}")
-            if (not os.path.isabs(args.json)):
-                fjson = os.path.join(os.path.dirname(__file__), args.json)
+            printlog (log_file, f"Loading sources from JSON file {fpath}")
+            if (not os.path.isabs(fpath)):
+                fjson = os.path.join(os.path.dirname(__file__), fpath)
             else:
-                fjson = args.json
+                fjson = fpath
             with open(fjson, 'r') as f:
                 sources_data = json.load(f)
-            sources = []
-            for source_data in sources_data:
-                source = Source.from_json(source_data)
-                if args.scale_I is not None:
-                    source.I *= args.scale_I
-                if source.ref_freq == 0:
-                    source.ref_freq = args.ref_freq[0] * u.Hz if args.ref_freq is not None else frequency.to(u.Hz)
-                sources.append(source)
-            if len(sources) == 0:
-                raise ValueError("No sources found in JSON file")
-            source_ref = sources[0]
-            skyModel = SkyModel(sources=sources)
+            # sources = []
+            # for source_data in sources_data:
+            #     source = Source.from_json(source_data)
+            #     if args.scale_I is not None:
+            #         source.I *= args.scale_I
+            #     if source.ref_freq == 0:
+            #         source.ref_freq = args.ref_freq[0] * u.Hz if args.ref_freq is not None else frequency.to(u.Hz)
+            #     sources.append(source)
+            # if len(sources) == 0:
+            #     raise ValueError("No sources found in JSON file")
+            # source_ref = sources[0]
+            skyModel = SkyModel.from_json(sources_data)
             return skyModel
         elif fpath.endswith('.karabo.mod'):
             printlog (log_file, f"Loading sky model from Karabo pickle file {fpath}")
@@ -474,16 +474,16 @@ if __name__ == "__main__":
         # Use argparse for define two parameters; first parameter, a list with sources names; second parameters, show or write png
         argparser = argparse.ArgumentParser(description="SKAO simulation script")
         argparser.add_argument("--model", type=str, help="Sky model file", default=None)
-        argparser.add_argument("--fits", type=str, help="FITS file with sources", default=None)
-        argparser.add_argument("--json", type=str, help="JSON file with sources", default=None)
-        argparser.add_argument("--json_fg", type=str, help="JSON file with foreground sources", default=None)
+        # argparser.add_argument("--fits", type=str, help="FITS file with sources", default=None)
+        # argparser.add_argument("--json", type=str, help="JSON file with sources", default=None)
+        argparser.add_argument("--config", type=str, help="JSON file with instrument configuration", default=None)
         argparser.add_argument("--center", type=str, help="Center of the field in RA,DEC (J2000), format: 10h01m35.1s 2d41m41s", default=None)
         argparser.add_argument("--prefix", type=str, help="Prefix for filenames", default=None)
         argparser.add_argument( "--telescope", choices=telescope_choices, type=str, help="Telescope to use for the simulation, default is 'SKA1LOW'", default="SKA-MID-AAstar", )
-        argparser.add_argument("--I", type=float, default=10, help="Total Intensity in Jy (or max I if multiple sources)", nargs="+")
-        argparser.add_argument("--Q", type=float, default=None, help="Q")
-        argparser.add_argument("--U", type=float, default=None, help="U")
-        argparser.add_argument("--V", type=float, default=None, help="V")
+        # argparser.add_argument("--I", type=float, default=10, help="Total Intensity in Jy (or max I if multiple sources)", nargs="+")
+        # argparser.add_argument("--Q", type=float, default=None, help="Q")
+        # argparser.add_argument("--U", type=float, default=None, help="U")
+        # argparser.add_argument("--V", type=float, default=None, help="V")
         argparser.add_argument("--ref_freq", type=float, nargs="+", default=None, help="Reference frequency in Hz")
         argparser.add_argument("--overwrite", action="store_true", help="Overwrite existing files")
         argparser.add_argument("--freq", type=float, help="Central Freq in MHz", default=200)
@@ -500,7 +500,7 @@ if __name__ == "__main__":
 
         argparser.add_argument("--rms", action="store_true", default=False, help="Enable RMS calculation")
         argparser.add_argument("--rms_value", type=float, default=0.0, help="RMS value in Jy")
-        argparser.add_argument("--rms_sigma", type=float, default=3.0, help="Sigma factor for the RMS calculation to define the cleaning threshold")
+        # argparser.add_argument("--rms_sigma", type=float, default=3.0, help="Sigma factor for the RMS calculation to define the cleaning threshold")
         # Add noise_level argument
         # argparser.add_argument("--rms_start", type=float, default=0, help="Noise level start in Jy for RMS calculation")
         # # Add noise_level_var argument

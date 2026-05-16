@@ -15,6 +15,7 @@ import pickle
 import argparse
 import numpy as np
 from utils import show_exc
+import astropy.io.fits as fits
 
 
 
@@ -27,7 +28,7 @@ if __name__ == "__main__":
         args.add_argument("--fits_model", type=str, required=True, help="Path to the FITS model file")
         args.add_argument("--output", type=str, help="Path to the output model file", default=None)
         args.add_argument("--sigma", type=float, help="Sigma threshold for source detection", default=10.0)
-        args.add_argument("--freq", type=float, help="Frequency in MHz for source fluxes", default=1310)
+        args.add_argument("--freq", type=float, help="Frequency in MHz for source fluxes", default=None)
         args.add_argument("--specindex", type=float, default=-0.7)
         args.add_argument("--components", type=int, help="Number of components to use for source modeling", default=None)
         args.add_argument("--rms", type=float, help="RMS noise level in Jy/beam to use for thresholding", default=None)
@@ -44,9 +45,11 @@ if __name__ == "__main__":
         if args.rms is not None:
             rms = args.rms
         else:
-            rms = img.mad()
+            rms = img.mad(is_model=True)
+            print("Estimated RMS from image MAD:", rms)
         if args.components is None:
             data = img.data2d
+            mask = (~np.isnan(data) & (data > 0))
             threshold_value = args.sigma * rms
         else:
             sigma = img.mad()
@@ -55,11 +58,35 @@ if __name__ == "__main__":
             sorted_indices = sorted(sorted_indices, reverse=True)
             threshold_index = sorted_indices[args.components - 1]
             threshold_value = flat_data[threshold_index]
-        # threshold_value /= (img.omega_beam() / img.omega_pix()) # Convert from Jy/beam to Jy/pixel
+   
+        frequency_mhz = args.freq
+        if (frequency_mhz is None):
+            fits_raw = fits.open(args.fits_model)
+            header = fits_raw[0].header
+            if 'RESTFRQ' in header:
+                frequency_mhz = header['RESTFRQ'] / 1e6  # Convert Hz to MHz
+            elif 'RESTFREQ' in header:
+                frequency_mhz = header['RESTFREQ'] / 1e6  # Convert Hz to MHz
+            elif 'CTYPE3' in header and 'FREQ' in header['CTYPE3'] and 'CRVAL3' in header:
+                frequency_mhz = header['CRVAL3'] / 1e6  # Convert Hz to MHz
+            elif 'CTYPE4' in header and 'FREQ' in header['CTYPE4'] and 'CRVAL4' in header:
+                frequency_mhz = header['CRVAL4'] / 1e6  # Convert Hz to MHz
+            else:
+                print("Frequency not specified and could not be found in FITS header. Please provide --freq argument.")
+                sys.exit(1)
 
-        img.tofits("temp_thresholded.fits")
+        if (hasattr(threshold_value, 'unit')):
+            threshold_value = threshold_value.to(u.Jy).value
         print(f"Using threshold value: {threshold_value:.6f}. Pixes above threshold: {np.sum(~np.isnan(img.data))}")
-        oskar_sky = OskarSky.from_fits_file("temp_thresholded.fits", min_abs_val=threshold_value, frequency_hz = (args.freq * u.MHz).to(u.Hz).value, spectral_index = args.specindex)
+        units = img.get_unit()
+        print (f"Image units: {units}")
+        if ("pix" in str(units).lower()):
+            units = "Jy/pixel"
+        elif ("beam" in str(units).lower()):
+            units = "Jy/beam"
+        else:
+            units = "Jy"
+        oskar_sky = OskarSky.from_fits_file(args.fits_model, min_abs_val=threshold_value, frequency_hz = (frequency_mhz * u.MHz).to(u.Hz).value, default_map_units=units, override_units=True, spectral_index = 0)
         oskar_sky.filter_by_flux(min_flux_jy=threshold_value, max_flux_jy=np.inf)
         print (f"Total sources in OSKAR sky model: {oskar_sky.num_sources}")
         array_sky = oskar_sky.to_array()

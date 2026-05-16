@@ -1259,9 +1259,15 @@ class SKAImage:
 
         return None
 
+    def get_unit(self):
+        if 'BUNIT' in self.header.keys():
+            return u.Unit(self.header['BUNIT'])
+        else:
+            return u.Jy / u.beam
+
         
 
-    def mad(self, iters=100, limit=0.99, stack=False, cutoff=2., mask=None, channel=None, data=None, verbose=False):
+    def mad(self, iters=100, limit=0.99, stack=False, cutoff=2., mask=None, channel=None, data=None, verbose=False, is_model=False):
         import warnings
         try:
             warnings.simplefilter('ignore')
@@ -1279,6 +1285,8 @@ class SKAImage:
                     data[mask] = np.nan
             except Exception as e:
                 mylog ("Warning in combine.mad !!!! We can not masked the image", verbose=verbose)
+            if is_model:
+                data = data[((data > 0.) & ~(np.isnan(data)))]
             next_mad = stats.mad_std(data, axis=None, ignore_nan=True)
             mad = 1e3
             mad_stack = []

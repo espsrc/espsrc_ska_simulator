@@ -474,6 +474,19 @@ class Source:
     
     def from_json(json_data):
         # Create a Source object from a JSON dictionary
+        if json_data["major_axis"] == 0:
+            json_data["major_axis"] = np.random.uniform(0.5, 5.0)
+        if json_data["minor_axis"] == 0:
+            json_data["minor_axis"] = np.random.uniform(0.5, json_data["major_axis"])
+        if json_data["pa"] == 0:
+            json_data["pa"] = np.random.uniform(0, 180)
+        # Check minor_axis <= major_axis
+        if json_data["minor_axis"] > json_data["major_axis"]:
+            temp = json_data["minor_axis"]
+            json_data["minor_axis"] = json_data["major_axis"]
+            json_data["major_axis"] = temp
+
+
         return Source(
             ra=json_data['ra'] * u.deg,
             dec=json_data['dec'] * u.deg,
@@ -481,7 +494,7 @@ class Source:
             Q=json_data['Q'] * u.Jy,
             U=json_data['U'] * u.Jy,
             V=json_data['V'] * u.Jy,
-            ref_freq=json_data['ref_freq'] * u.Hz,
+            ref_freq=json_data['ref_freq'] * u.MHz,
             spec_index=json_data['spec_index'],
             rot_meas=json_data['rot_meas'] * (u.rad/(u.m**2)),
             major_axis=json_data['major_axis'] * u.arcsec,
