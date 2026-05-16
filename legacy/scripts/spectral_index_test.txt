@@ -1,0 +1,78 @@
+Test: Se han generado 3 imagenes simuladas, centradas en la siguiente fuente, a 3 frecuencias distintas (ver frequency de las imagenes).
+File: 0001_sources_interactive.fits, Total sources: 1
+	Source:
+		ID: SRC1
+		RA: 150.11822336511082
+		DEC: 2.220001791029167
+		STK_I: 0.10000000149011612
+		STK_Q: 0.0
+		STK_U: 0.0
+		STK_V: 0.0
+		SPECIDX: -0.699999988079071
+		REFFREQ: 1310000000.0
+		RM: 0.0
+		MAJ: 1.0
+		MIN: 1.0
+		RESOLVED: True
+		ISL_RMS: 0.0
+		PA: 0.0
+	
+20251214_1323_SKA1MID_bw70_ch100_fr700_sec600MFS-image.fits: 0.15672265288192677 Jy 699.65 MHz
+20251214_1312_SKA1MID_bw70_ch100_fr1310_sec600MFS-image.fits: 0.09970113959658457 Jy 1309.65 MHz
+20251214_1332_SKA1MID_bw70_ch100_fr1600_sec600MFS-image.fits: 0.08709532162420454 Jy 1599.65 MHz
+Spectral Index: -0.7130492746062772
+
+Test: Se han generado 3 imagenes simuladas, centradas en la siguiente fuente a 3 freq distintas
+File: 0002_sources_interactive.fits, Total sources: 1
+	Source:
+		ID: SRC1
+		RA: 150.11822336511082
+		DEC: 2.220001791029167
+		STK_I: 0.10000000149011612
+		STK_Q: 0.0
+		STK_U: 0.0
+		STK_V: 0.0
+		SPECIDX: -0.30000001192092896
+		REFFREQ: 1310000000.0
+		RM: 0.0
+		MAJ: 0.0
+		MIN: 0.0
+		RESOLVED: False
+		ISL_RMS: 9.999999747378752e-05
+		PA: 0.0
+
+Test: 3 imagenes simuladas, centradas en la primera fuente y con una segunda muy cerca
+
+File: 0003_sources_interactive.fits, Total sources: 2
+	Source:
+		ID: SRC1
+		RA: 150.11822336511082
+		DEC: 2.220001791029167
+		STK_I: 0.10000000149011612
+		STK_Q: 0.0
+		STK_U: 0.0
+		STK_V: 0.0
+		SPECIDX: -0.699999988079071
+		REFFREQ: 1310000000.0
+		RM: 0.0
+		MAJ: 0.0
+		MIN: 0.0
+		RESOLVED: False
+		ISL_RMS: 0.0
+		PA: 0.0
+	Source:
+		ID: SRC2
+		RA: 150.11807785902224
+		DEC: 2.22017725197066
+		STK_I: 0.10000000149011612
+		STK_Q: 0.0
+		STK_U: 0.0
+		STK_V: 0.0
+		SPECIDX: -0.30000001192092896
+		REFFREQ: 1310000000.0
+		RM: 0.0
+		MAJ: 5.0
+		MIN: 3.0
+		RESOLVED: True
+		ISL_RMS: 0.0
+		PA: 45.0
