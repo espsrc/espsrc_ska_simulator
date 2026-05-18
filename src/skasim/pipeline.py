@@ -141,7 +141,7 @@ def _load_sky_from_file(
         arr = np.array([s.to_sky_model(reduced_form=True) for s in sources])
         sky_model.add_point_sources(arr)
         sky_model.get_center()
-        logger - info(f"Loaded {len(sources)} sources from JSON {fpath}")
+        logger.info(f"Loaded {len(sources)} sources from JSON {fpath}")
         return sky_model
 
     # fits table or image

@@ -1,0 +1,265 @@
+"""tests/test_pipeline.py — unit tests for pipeline functions that don't invoke Karabo simulators."""
+
+import json
+import os
+from unittest.mock import MagicMock, mock_open, patch
+
+import astropy.units as u
+import pytest
+from astropy.coordinates import SkyCoord
+
+from skasim.config import ImgConfig, ObsConfig, SimConfig
+from skasim.sky import SkyModel
+from skasim.pipeline import (
+    _load_sky_from_file,
+    _load_sky_from_fits,
+    build_sky_model,
+    compute_fov,
+    parse_center,
+    setup_workdir,
+    source_ref_get_best_observation_time,
+)
+
+# --------------------------------------------------------------------------- #
+# parse_center
+# --------------------------------------------------------------------------- #
+
+
+def test_parse_center_none_returns_fallback():
+    """None center string returns the fallback coordinate."""
+    fallback = SkyCoord(10 * u.deg, 20 * u.deg)
+    result = parse_center(None, fallback)
+    assert result.ra.value == pytest.approx(10.0)
+    assert result.dec.value == pytest.approx(20.0)
+
+
+def test_parse_center_valid_hmsdms_string():
+    """Space-separated HMS/DMS string parses correctly."""
+    fallback = SkyCoord(0 * u.deg, 0 * u.deg)
+    result = parse_center("10h01m35.1s 2d41m41s", fallback)
+    assert result.ra.to(u.deg).value == pytest.approx(150.3962, abs=1e-3)
+    assert result.dec.to(u.deg).value == pytest.approx(2.6947, abs=1e-4)
+
+
+def test_parse_center_with_colons():
+    """Colon-separated format also parses correctly."""
+    fallback = SkyCoord(0 * u.deg, 0 * u.deg)
+    result = parse_center("10:01:35.1 02:41:41", fallback)
+    assert result.ra.to(u.deg).value == pytest.approx(150.3962, abs=1e-3)
+
+
+def test_parse_center_invalid_returns_fallback():
+    """Unparseable string falls back gracefully."""
+    fallback = SkyCoord(5 * u.deg, -10 * u.deg)
+    result = parse_center("not-a-coordinate", fallback)
+    assert result.ra.value == pytest.approx(5.0)
+    assert result.dec.value == pytest.approx(-10.0)
+
+
+# --------------------------------------------------------------------------- #
+# compute_fov
+# --------------------------------------------------------------------------- #
+
+
+def test_compute_fov_uses_explicit_fov_deg():
+    """When fov_deg is set, return that value converted to radians."""
+    config = SimConfig(
+        observation=ObsConfig(freq_mhz=700, seconds=1),
+        imaging=ImgConfig(fov_deg=2.5),
+    )
+    freq = 700 * u.MHz
+    fov = compute_fov(config, freq)
+    assert fov.to(u.deg).value == pytest.approx(2.5, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    "telescope,expected_diameter_m",
+    [
+        ("SKA1MID", 15.0),
+        ("SKA1LOW", 38.0),
+    ],
+)
+def test_compute_fov_diffraction_limit(telescope, expected_diameter_m):
+    """When fov_deg is None, compute diffraction-limited FoV."""
+    config = SimConfig(
+        telescope=telescope,
+        observation=ObsConfig(freq_mhz=700, seconds=1),
+        imaging=ImgConfig(fov_deg=None),
+    )
+    freq = 700 * u.MHz
+    fov = compute_fov(config, freq)
+    wavelength = freq.to(u.m, equivalencies=u.spectral()).value
+    expected_rad = 1.25 * wavelength / expected_diameter_m
+    assert fov.to(u.rad).value == pytest.approx(expected_rad, rel=1e-6)
+
+
+def test_compute_fov_positive():
+    """Default config produces a positive FoV."""
+    config = SimConfig(observation=ObsConfig(seconds=1))
+    freq = config.observation.freq_mhz * u.MHz
+    fov = compute_fov(config, freq)
+    assert fov.to(u.deg).value > 0
+
+
+# --------------------------------------------------------------------------- #
+# setup_workdir
+# --------------------------------------------------------------------------- #
+
+
+def test_setup_workdir_creates_directory_and_log_file(tmp_path):
+    """setup_workdir creates working directory, returns absolute Path, writes log file."""
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        config = SimConfig(output_prefix="test_run", telescope="SKA1MID")
+        work_dir = setup_workdir(config)
+        assert work_dir.is_absolute()
+        assert work_dir.name.startswith("test_run_SKA1MID")
+        assert work_dir.is_dir()
+        assert (work_dir / f"{work_dir.name}.log").exists()
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_setup_workdir_no_prefix_uses_timestamp(tmp_path):
+    """When output_prefix is None, directory name includes a timestamp-like string."""
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        config = SimConfig(telescope="SKA1MID")
+        work_dir = setup_workdir(config)
+        # prefix defaults to current time as YYYYMMDD_HHMM
+        assert len(work_dir.name) >= 8
+        assert work_dir.is_dir()
+    finally:
+        os.chdir(old_cwd)
+
+
+# --------------------------------------------------------------------------- #
+# helpers for JSON fixture
+# --------------------------------------------------------------------------- #
+
+
+def _single_source_json():
+    return {
+        "ra": 150.0,
+        "dec": 2.5,
+        "I": 1.0,
+        "Q": 0.0,
+        "U": 0.0,
+        "V": 0.0,
+        "ref_freq": 700e6,
+        "spec_index": 0.0,
+        "rot_meas": 0.0,
+        "major_axis": 0.0,
+        "minor_axis": 0.0,
+        "pa": 0.0,
+        "true_redshift": 0.0,
+        "obs_redshift": 0.0,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# _load_sky_from_file — inline JSON via mock_open
+# --------------------------------------------------------------------------- #
+
+
+def test_load_sky_from_json_file():
+    """JSON catalogue loads successfully and returns a SkyModel with one source."""
+    data = [_single_source_json()]
+    mopen = mock_open(read_data=json.dumps(data))
+    with patch("builtins.open", mopen):
+        sky = _load_sky_from_file("catalogue.json")
+    assert sky.sources is not None
+    assert len(sky.sources) == 1
+
+
+def test_load_sky_from_json_scales_intensity():
+    """scale_I != 1 multiplies source intensities."""
+    data = [_single_source_json()]
+    mopen = mock_open(read_data=json.dumps(data))
+    with patch("builtins.open", mopen):
+        sky_before = _load_sky_from_file("catalogue.json", scale_I=1.0)
+    mopen2 = mock_open(read_data=json.dumps(data))
+    with patch("builtins.open", mopen2):
+        sky_after = _load_sky_from_file("catalogue.json", scale_I=3.0)
+    assert len(sky_after.sources) == 1
+    assert sky_after.sources[0, 2] == pytest.approx(sky_before.sources[0, 2] * 3.0)
+
+
+def test_load_sky_from_json_assigns_ref_freq_when_zero():
+    """If JSON source has ref_freq == 0, the loader assigns ref_freq_hz or frequency."""
+    src = _single_source_json()
+    src["ref_freq"] = 0
+    data = [src, {**src, "ra": 150.1}, {**src, "ra": 149.9}]
+    mopen = mock_open(read_data=json.dumps(data))
+    with patch("builtins.open", mopen):
+        sky = _load_sky_from_file("catalogue.json", ref_freq_hz=1.42e9)
+    assert sky.sources is not None
+    # reduced_form only exports (ra, dec, I) so ref_freq is not inspectable
+    # through sources array; smoke test that the path completes without crash
+    assert len(sky.sources) == 3
+
+
+def test_load_sky_from_file_unknown_extension():
+    """Passing an unsupported extension raises ValueError."""
+    with pytest.raises(ValueError, match="Unsupported sky-file extension"):
+        _load_sky_from_file("foo.txt")
+
+
+def test_load_sky_from_file_empty_json_raises():
+    """An empty JSON array raises ValueError about no sources."""
+    mopen = mock_open(read_data="[]")
+    with patch("builtins.open", mopen), pytest.raises(ValueError, match="No sources found in JSON"):
+        _load_sky_from_file("empty.json")
+
+
+# --------------------------------------------------------------------------- #
+# build_sky_model — random source generation
+# --------------------------------------------------------------------------- #
+
+
+def test_build_sky_model_random_source_count():
+    """Random source generation produces exactly len(I) sources."""
+    config = SimConfig(I=[1.0, 5.0, 10.0, 20.0])
+    sky, center = build_sky_model(config, fov=0.2 * u.deg)
+    assert len(sky.sources) == 4
+    assert center is not None
+
+
+def test_build_sky_model_random_single_source():
+    """A single intensity produces one source."""
+    config = SimConfig(I=[42.0])
+    sky, center = build_sky_model(config, fov=0.2 * u.deg)
+    assert len(sky.sources) == 1
+
+
+# --------------------------------------------------------------------------- #
+# build_sky_model — invalid configurations
+# --------------------------------------------------------------------------- #
+
+
+def test_build_sky_model_unsupported_catalogue_raises():
+    """Catalogue ID outside 1-3 raises ValueError inside build_sky_model."""
+    config = SimConfig(observation=ObsConfig(seconds=1), catalogue=1)
+    # bypass pydantic validation; build_sky_model has its own ValueError
+    object.__setattr__(config, "catalogue", 99)
+    with pytest.raises(ValueError, match="Catalogue 99 not available"):
+        build_sky_model(config, fov=0.5 * u.deg)
+
+
+# --------------------------------------------------------------------------- #
+# source_ref_get_best_observation_time
+# --------------------------------------------------------------------------- #
+
+
+def test_source_ref_get_best_observation_time():
+    """Returns an astropy Time around culmination for a mock telescope location."""
+    center = SkyCoord(150 * u.deg, 2.5 * u.deg)
+    telescope = MagicMock()
+    telescope.centre_latitude = -30.0
+    telescope.centre_longitude = 116.0
+    telescope.centre_altitude = 300.0
+    best_time = source_ref_get_best_observation_time(center, telescope)
+    assert best_time is not None
+    assert hasattr(best_time, "iso")  # astropy Time
