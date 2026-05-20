@@ -23,6 +23,7 @@ from karabo.util.file_handler import FileHandler
 from loguru import logger
 
 from .config import SimConfig
+from .manifest import RunContext
 from .utils import show_exc
 
 # --------------------------------------------------------------------------- #
@@ -31,13 +32,14 @@ from .utils import show_exc
 
 
 def run_dirty_imaging(
-    config: SimConfig,
+    ctx: RunContext,
     visibility_path: Path,
     fov: u.Quantity,
     center: SkyCoord,
-    work_dir: Path,
 ) -> None:
     """produce dirty image via OSKAR."""
+    config = ctx.config
+    work_dir = ctx.work_dir
     vis = Visibility(str(visibility_path))
     imaging_cellsize = fov / config.imaging.pixels
     cfg = OskarDirtyImagerConfig(
@@ -62,6 +64,11 @@ def run_dirty_imaging(
     logger.debug(f"Dirty PNG: {dirty_png}")
     logger.debug(f"Dirty FITS: {dirty_fits}")
 
+    ctx.manifest.outputs.extend([
+        str(dirty_png.relative_to(work_dir)),
+        str(dirty_fits.relative_to(work_dir)),
+    ])
+
 
 # --------------------------------------------------------------------------- #
 # cleaned imaging (WSClean)
@@ -69,13 +76,16 @@ def run_dirty_imaging(
 
 
 def run_wsclean_imaging(
-    config: SimConfig,
+    ctx: RunContext,
     visibility_path: Path,
     fov: u.Quantity,
-    work_dir: Path,
 ) -> None:
     """produce cleaned image via external WSClean binary."""
-    # switch to work_dir so WSClean outputs resolve correctly
+    config = ctx.config
+    work_dir = ctx.work_dir
+
+    # switch to work_dir so WSClean outputs and glob-based file ops
+    # resolve relative to the job directory, not the caller's CWD
     orig_cwd = Path.cwd()
     os.chdir(str(work_dir))
 
@@ -104,7 +114,7 @@ def run_wsclean_imaging(
         proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
         logger.info(f"WSClean stdout: {proc.stdout}")
 
-        # remove the temporary files created by WSClea
+        # remove the temporary files created by WSClean
         for tmp in glob.glob("wsclean-00*.fits"):
             try:
                 os.remove(tmp)
@@ -120,8 +130,22 @@ def run_wsclean_imaging(
         for img_path in glob.glob("wsclean-*.fits"):
             img = Image(path=img_path)
             png_name = f"{work_dir.name}_{img_path.replace('.fits', '.png')}"
+
+            # infer image type from filename for correct plot title
+            title = "Imaging output (WSClean)"
+            if "MFS-image" in img_path:
+                title = "Cleaned image (WSClean)"
+            elif "MFS-model" in img_path:
+                title = "Component model (WSClean)"
+            elif "MFS-residual" in img_path:
+                title = "Residual (WSClean)"
+            elif "MFS-dirty" in img_path:
+                title = "Dirty image (WSClean)"
+            elif "MFS-psf" in img_path:
+                title = "Point spread function (WSClean)"
+
             img.plot(
-                title="Cleaned image (WSCLEAN)",
+                title=title,
                 filename=png_name,
                 wcs_enabled=True,
                 xlabel="RA",
@@ -135,5 +159,8 @@ def run_wsclean_imaging(
             )
             shutil.move(img_path, new_name)
             logger.debug(f"Renamed {img_path} -> {new_name}")
+
+            ctx.manifest.outputs.extend([png_name, new_name])
+
     finally:
         os.chdir(str(orig_cwd))

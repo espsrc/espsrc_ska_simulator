@@ -27,25 +27,16 @@ from loguru import logger
 
 from .config import SimConfig
 from .imaging import run_dirty_imaging, run_wsclean_imaging
+from .manifest import RunContext, create_run_context
 from .sky import SkyModel, Source
-from .utils import get_diameter, init_logger
+from .utils import get_diameter
 
 # --------------------------------------------------------------------------- #
 # workdir + logging
 # --------------------------------------------------------------------------- #
 
 
-def setup_workdir(config: SimConfig) -> Path:
-    """create working directory and return (work_dir)."""
-    prefix = config.output_prefix or datetime.now().strftime("%Y%m%d_%H%M")
-    prefix = f"{prefix}_{config.telescope.replace('-', '_')}"
-    work_dir = Path(prefix).resolve()
-    work_dir.mkdir(parents=True, exist_ok=True)
-    log_file = str(work_dir / f"{prefix}.log")
-    init_logger(log_file)
-    logger.debug(f"fPrefix : {prefix}")
-    logger.info(f"WorkDir: {work_dir}")
-    return work_dir
+# (setup_workdir moved to create_run_context in manifest.py)
 
 
 # --------------------------------------------------------------------------- #
@@ -53,8 +44,9 @@ def setup_workdir(config: SimConfig) -> Path:
 # --------------------------------------------------------------------------- #
 
 
-def build_telescope(config: SimConfig):
+def build_telescope(ctx: RunContext):
     """return a Karabo Telescope instance."""
+    config = ctx.config
     kwargs: dict = {"backend": SimulatorBackend.OSKAR}
     if config.telescope_version is not None:
         kwargs["version"] = config.telescope_version
@@ -62,6 +54,11 @@ def build_telescope(config: SimConfig):
     else:
         logger.info(f"Telescope {config.telescope}  (no version)")
     telescope = Telescope.constructor(config.telescope, **kwargs)
+    ctx.add_milestone(
+        "telescope_built",
+        "completed",
+        details={"name": config.telescope, "version": config.telescope_version},
+    )
     return telescope
 
 
@@ -263,24 +260,32 @@ def _load_sky_from_fits(
 
 
 def build_sky_model(
-    config: SimConfig,
+    ctx: RunContext,
     fov: u.Quantity,
 ) -> tuple[SkyModel, SkyCoord]:
     """Return (sky_model, center)."""
+    config = ctx.config
 
     # 1) file path given?
     if config.sky_file is not None:
-        fpath = config.sky_file
-        if not os.path.isabs(fpath):
-            fpath = os.path.join(os.path.dirname(__file__), fpath)
         sky_model = _load_sky_from_file(
-            fpath,
+            str(ctx.sky_file_resolved),
             column_mapping=config.column_mapping or "0,1,2,3,4,5,6,7,8,9,10,11,12",
             scale_I=config.scale_I,
             ref_freq_hz=(config.ref_freq_hz[0] if config.ref_freq_hz else None),
             frequency=config.observation.freq_mhz * u.MHz,
         )
         center = sky_model.get_center()
+        n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
+        ctx.add_milestone(
+            "sky_model_loaded",
+            "completed",
+            details={
+                "path": str(ctx.sky_file_resolved),
+                "format": config.sky_format,
+                "n_sources": n_srcs,
+            },
+        )
         return sky_model, center
 
     # 2) built-in catalogue
@@ -288,15 +293,17 @@ def build_sky_model(
         if config.catalogue == 1:
             logger.info("Loading MIGHTEE catalogue")
             sky_model = SkyModel.get_MIGHTEE_Sky()
+            fmt = "MIGHTEE"
         elif config.catalogue == 2:
             logger.info("Loading GLEAM catalogue")
             sky_model = SkyModel.get_GLEAM_Sky()
+            fmt = "GLEAM"
         elif config.catalogue == 3:
-            # TODO: check where this is coming from?
             skamid_path = Path("SKAMid_B1_8h_v3.fits").resolve()
             if skamid_path.exists():
                 logger.info(f"Loading SKAMid catalogue {skamid_path}")
                 sky_model = SkyModel.get_sky_model_from_fits(fits_file=str(skamid_path))
+                fmt = "SKAMid"
             else:
                 logger.info(f"SKAMid catalogue not found at {skamid_path}")
                 raise FileNotFoundError(str(skamid_path))
@@ -305,6 +312,12 @@ def build_sky_model(
                 f"Catalogue {config.catalogue} not available (1=MIGHTEE, 2=GLEAM, 3=SKAMid)"
             )
         center = sky_model.get_center()
+        n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
+        ctx.add_milestone(
+            "sky_model_loaded",
+            "completed",
+            details={"format": fmt, "n_sources": n_srcs},
+        )
         return sky_model, center
 
     # 3) random sources around a reference position
@@ -329,7 +342,11 @@ def build_sky_model(
     arr = np.array([s.to_sky_model(reduced_form=True) for s in sources])
     sky_model.add_point_sources(arr)
     center = sky_model.get_center()
-    logger.info(f"Generated {len(sources)} random sources")
+    ctx.add_milestone(
+        "sky_model_loaded",
+        "completed",
+        details={"format": "random", "n_sources": n_sources, "reference": "HCG16"},
+    )
     return sky_model, center
 
 
@@ -339,11 +356,12 @@ def build_sky_model(
 
 
 def build_observation(
-    config: SimConfig,
+    ctx: RunContext,
     center: SkyCoord,
     telescope,
 ) -> tuple:
     """Return (observation, frequency, bandwidth, n_channels, delta_freq, start_freq)."""
+    config = ctx.config
     obs = config.observation
     freq = obs.freq_mhz * u.MHz
     bw_mhz = obs.bandwidth_mhz
@@ -369,6 +387,17 @@ def build_observation(
         phase_centre_ra_deg=center.ra.to(u.deg).value,
         phase_centre_dec_deg=center.dec.to(u.deg).value,
     )
+
+    ctx.add_milestone(
+        "observation_configured",
+        "completed",
+        details={
+            "freq_mhz": obs.freq_mhz,
+            "bandwidth_mhz": bw_mhz,
+            "n_channels": n_channels,
+            "seconds": seconds,
+        },
+    )
     return observation, freq, bandwidth, n_channels, delta_freq, start_freq
 
 
@@ -384,14 +413,14 @@ def source_ref_get_best_observation_time(center: SkyCoord, telescope):
 
 
 def run_simulation(
-    config: SimConfig,
+    ctx: RunContext,
     telescope,
     observation,
     sky_model: SkyModel,
-    work_dir: Path,
 ) -> Path:
     """Run InterferometerSimulation and return visibility path."""
-    visibility_path = work_dir / "visibilities.MS"
+    config = ctx.config
+    visibility_path = ctx.visibility_path
 
     if visibility_path.exists():
         if config.overwrite:
@@ -407,7 +436,7 @@ def run_simulation(
     freq = config.observation.freq_mhz * u.MHz
     fov = compute_fov(config, freq)
     _, _, _, n_channels, delta_freq, _ = build_observation(
-        config, sky_model.get_center(), telescope
+        ctx, sky_model.get_center(), telescope
     )
 
     params = {
@@ -431,6 +460,7 @@ def run_simulation(
         backend=SimulatorBackend.OSKAR,
     )
     logger.info(f"Visibilities saved in {visibility_path}")
+    ctx.manifest.outputs.append(str(visibility_path.relative_to(ctx.work_dir)))
     return visibility_path
 
 
@@ -441,48 +471,71 @@ def run_simulation(
 
 def run(config: SimConfig) -> None:
     """Execute the full simulation pipeline from a SimConfig."""
+    from .weblog import render_weblog
+
     t0 = time.time()
-    work_dir = setup_workdir(config)
+    ctx = create_run_context(config)
 
-    logger.info(f"Telescope : {config.telescope}")
-    logger.info(f"Freq      : {config.observation.freq_mhz} MHz")
-    logger.info(f"Bandwidth : {config.observation.bandwidth_mhz} MHz")
-    logger.info(f"Channels  : {config.observation.n_channels}")
-    logger.info(f"Time      : {config.observation.seconds} s")
-    logger.info(f"Pixels    : {config.imaging.pixels}")
-    logger.info(f"Cleaning  : {config.cleaning}")
+    try:
+        logger.info(f"Telescope : {config.telescope}")
+        logger.info(f"Freq      : {config.observation.freq_mhz} MHz")
+        logger.info(f"Bandwidth : {config.observation.bandwidth_mhz} MHz")
+        logger.info(f"Channels  : {config.observation.n_channels}")
+        logger.info(f"Time      : {config.observation.seconds} s")
+        logger.info(f"Pixels    : {config.imaging.pixels}")
+        logger.info(f"Cleaning  : {config.cleaning}")
 
-    telescope = build_telescope(config)
-    telescope.plot_telescope(
-        file=str(
-            work_dir
-            / f"{work_dir.name}_{config.telescope}_{config.telescope_version or ''}_telescope.png"
-        )
-    )
+        telescope = build_telescope(ctx)
+        telescope_png = ctx.work_dir / f"{ctx.work_dir.name}_{config.telescope}_{config.telescope_version or ''}_telescope.png"
+        telescope.plot_telescope(file=str(telescope_png))
+        ctx.manifest.outputs.append(str(telescope_png.relative_to(ctx.work_dir)))
 
-    freq = config.observation.freq_mhz * u.MHz
-    fov = compute_fov(config, freq)
-    logger.info(f"FoV       : {fov.to(u.deg).value:.4f} deg")
+        freq = config.observation.freq_mhz * u.MHz
+        fov = compute_fov(config, freq)
+        logger.info(f"FoV       : {fov.to(u.deg).value:.4f} deg")
 
-    sky_model, center = build_sky_model(config, fov)
-    center = parse_center(config.center, center)
-    logger.info(f"Centre    : {center.to_string('hmsdms')}")
+        sky_model, center = build_sky_model(ctx, fov)
+        center = parse_center(config.center, center)
+        logger.info(f"Centre    : {center.to_string('hmsdms')}")
 
-    observation, _, bandwidth, n_channels, delta_freq, start_freq = build_observation(
-        config, center, telescope
-    )
-    logger.info(f"StartFreq : {start_freq.to(u.MHz).value:.3f} MHz")
-    logger.info(f"DeltaFreq : {delta_freq.to(u.MHz).value:.3f} MHz")
-    logger.info(f"N channels: {n_channels}")
+        observation, _, bandwidth, n_channels, delta_freq, start_freq = build_observation(ctx, center, telescope)
+        logger.info(f"StartFreq : {start_freq.to(u.MHz).value:.3f} MHz")
+        logger.info(f"DeltaFreq : {delta_freq.to(u.MHz).value:.3f} MHz")
+        logger.info(f"N channels: {n_channels}")
 
-    visibility_path = run_simulation(
-        config, telescope, observation, sky_model, work_dir
-    )
+        # phase 1: simulation
+        ctx.add_milestone("simulation_started", "started")
+        t_phase_a = time.time()
+        try:
+            visibility_path = run_simulation(ctx, telescope, observation, sky_model)
+            ctx.add_milestone("simulation_completed", "completed", elapsed_s=time.time() - t_phase_a)
+        except Exception as exc:
+            ctx.add_milestone("simulation_failed", "failed", elapsed_s=time.time() - t_phase_a, details=str(exc))
+            raise
 
-    if not config.cleaning:
-        run_dirty_imaging(config, visibility_path, fov, center, work_dir)
-    else:
-        run_wsclean_imaging(config, visibility_path, fov, work_dir)
+        # phase 2: imaging
+        ctx.add_milestone("imaging_started", "started")
+        t_phase_b = time.time()
+        try:
+            if not config.cleaning:
+                run_dirty_imaging(ctx, visibility_path, fov, center)
+            else:
+                run_wsclean_imaging(ctx, visibility_path, fov)
+            ctx.add_milestone("imaging_completed", "completed", elapsed_s=time.time() - t_phase_b, details={"Imager": "dirty" if not config.cleaning else "wsclean"})
+        except Exception as exc:
+            ctx.add_milestone("imaging_failed", "failed", elapsed_s=time.time() - t_phase_b, details=str(exc))
+            raise
+
+        ctx.manifest.mark_completed()
+        ctx.save_manifest()
+
+        render_weblog(ctx.manifest, ctx.work_dir)
+        logger.info(f"Weblog written to {ctx.weblog_path}")
+
+    except Exception as exc:
+        ctx.manifest.mark_failed(str(exc))
+        ctx.save_manifest()
+        raise
 
     elapsed = time.time() - t0
     logger.info(f"Done. Elapsed: {elapsed:.1f} s")

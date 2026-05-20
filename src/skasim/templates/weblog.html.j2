@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>weblog — {{ manifest.run_id }}</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #1f2328;
+      --muted: #656d76;
+      --accent: #0969da;
+      --success: #1a7f37;
+      --danger: #cf222e;
+      --card: #f6f8fa;
+      --border: #d0d7de;
+      --font: "Ubuntu", "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 0;
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+    h1 { font-size: 1.75rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.6rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .badge.success { background: rgba(63,185,80,0.15); color: var(--success); }
+    .badge.danger { background: rgba(248,81,73,0.15); color: var(--danger); }
+    .badge.running { background: rgba(88,166,255,0.15); color: var(--accent); }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+    .card h3 { margin: 0 0 0.5rem; font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.08em; }
+    .card .value { font-size: 1.1rem; font-weight: 500; }
+    .card .unit { font-size: 0.8rem; color: var(--muted); }
+
+    .timeline { margin: 1.5rem 0; }
+    .timeline-item {
+      display: flex;
+      gap: 1rem;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .timeline-item:last-child { border-bottom: none; }
+    .timeline-time { min-width: 120px; color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+    .timeline-label { font-weight: 500; }
+    .timeline-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.2rem; }
+    .timeline-dot {
+      width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex-shrink: 0;
+    }
+    .dot-started { background: var(--accent); }
+    .dot-completed { background: var(--success); }
+    .dot-failed { background: var(--danger); }
+
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .gallery-item {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .gallery-item img {
+      width: 100%; height: auto; display: block;
+    }
+    .gallery-caption {
+      padding: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .config-block {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      overflow-x: auto;
+    }
+    .config-block pre {
+      margin: 0;
+      font-family: "Fira Code", "SF Mono", monospace;
+      font-size: 0.8rem;
+      color: var(--fg);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.5rem;">
+      <h1>{{ manifest.run_id }}</h1>
+      <span class="badge {{ manifest.status }}">{{ manifest.status }}</span>
+    </div>
+    <div class="subtitle">
+      started {{ manifest.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}
+      {% if manifest.completed_at %}
+        · elapsed {{ total_elapsed or "?" }}
+      {% endif %}
+    </div>
+
+    <!-- summary cards -->
+    <div class="summary">
+      <div class="card">
+        <h3>telescope</h3>
+        <div class="value">{{ manifest.config.telescope }}</div>
+      </div>
+      <div class="card">
+        <h3>frequency</h3>
+        <div class="value">{{ manifest.config.observation.freq_mhz }} <span class="unit">MHz</span></div>
+      </div>
+      <div class="card">
+        <h3>bandwidth</h3>
+        <div class="value">{{ manifest.config.observation.bandwidth_mhz }} <span class="unit">MHz</span></div>
+      </div>
+      <div class="card">
+        <h3>channels</h3>
+        <div class="value">{{ manifest.config.observation.n_channels }}</div>
+      </div>
+      <div class="card">
+        <h3>duration</h3>
+        <div class="value">{{ manifest.config.observation.seconds }} <span class="unit">s</span></div>
+      </div>
+      <div class="card">
+        <h3>pixels</h3>
+        <div class="value">{{ manifest.config.imaging.pixels }}</div>
+      </div>
+    </div>
+
+    <!-- milestone timeline -->
+    <h2 style="margin-top:2rem;">timeline</h2>
+    <div class="timeline">
+      {% for ms in manifest.milestones %}
+      <div class="timeline-item">
+        <div class="timeline-time">{{ ms.timestamp_utc.strftime("%H:%M:%S") }}</div>
+        <div class="timeline-dot dot-{{ ms.status }}"></div>
+        <div>
+          <div class="timeline-label">{{ ms.name }} <span style="color:var(--muted);font-size:0.8rem;">({{ ms.status }})</span></div>
+          {% if ms.elapsed_s %}
+            <div class="timeline-meta">took {{ (ms.elapsed_s // 60)|int }}m {{ (ms.elapsed_s % 60)|int }}s</div>
+          {% endif %}
+          {% if ms.details %}
+            <div class="timeline-meta">{{ ms.details | tojson | truncate(200) }}</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    {% if phase_a_duration or phase_b_duration %}
+    <div class="summary" style="margin-top:1rem;">
+      {% if phase_a_duration != "?" %}
+      <div class="card">
+        <h3>simulation</h3>
+        <div class="value">{{ phase_a_duration }}</div>
+      </div>
+      {% endif %}
+      {% if phase_b_duration != "?" %}
+      <div class="card">
+        <h3>imaging</h3>
+        <div class="value">{{ phase_b_duration }}</div>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- sky model summary -->
+    {% set sky_ms = manifest.milestones | selectattr("name", "equalto", "sky_model_loaded") | first %}
+    {% if sky_ms and sky_ms.details %}
+    <h2 style="margin-top:2rem;">sky model</h2>
+    <div class="card">
+      <div class="value">{{ sky_ms.details.get("n_sources", "?") }} sources</div>
+      <div class="timeline-meta">format: {{ sky_ms.details.get("format", "?") }}</div>
+      {% if sky_ms.details.get("path") %}
+        <div class="timeline-meta">path: {{ sky_ms.details.get("path") }}</div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- output gallery -->
+    {% if images %}
+    <h2 style="margin-top:2rem;">outputs</h2>
+    <div class="gallery">
+      {% for img in images %}
+      <div class="gallery-item">
+        <img src="{{ img.data }}" alt="{{ img.caption }}">
+        <div class="gallery-caption">{{ img.caption }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- resolved config (collapsed) -->
+    <h2 style="margin-top:2rem;">resolved configuration</h2>
+    <div class="config-block">
+      <pre>{{ manifest.config.model_dump_json(indent=2) }}</pre>
+    </div>
+
+    {% if manifest.errors %}
+    <h2 style="margin-top:2rem; color:var(--danger);">errors</h2>
+    <div class="config-block" style="border-color:var(--danger);">
+      {% for err in manifest.errors %}
+      <pre style="color:var(--danger);">{{ err }}</pre>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+  </div>
+</body>
+</html>

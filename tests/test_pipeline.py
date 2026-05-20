@@ -9,6 +9,7 @@ import pytest
 from astropy.coordinates import SkyCoord
 
 from skasim.config import ImgConfig, ObsConfig, SimConfig
+from skasim.manifest import create_run_context
 from skasim.sky import SkyModel
 from skasim.pipeline import (
     _load_sky_from_file,
@@ -16,7 +17,6 @@ from skasim.pipeline import (
     build_sky_model,
     compute_fov,
     parse_center,
-    setup_workdir,
     source_ref_get_best_observation_time,
 )
 
@@ -102,35 +102,38 @@ def test_compute_fov_positive():
 
 
 # --------------------------------------------------------------------------- #
-# setup_workdir
+# create_run_context
 # --------------------------------------------------------------------------- #
 
 
-def test_setup_workdir_creates_directory_and_log_file(tmp_path):
-    """setup_workdir creates working directory, returns absolute Path, writes log file."""
+def test_create_run_context_creates_directory_and_log_file(tmp_path):
+    """create_run_context creates working directory, returns RunContext with paths."""
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
         config = SimConfig(output_prefix="test_run", telescope="SKA1MID")
-        work_dir = setup_workdir(config)
-        assert work_dir.is_absolute()
-        assert work_dir.name.startswith("test_run_SKA1MID")
-        assert work_dir.is_dir()
-        assert (work_dir / f"{work_dir.name}.log").exists()
+        ctx = create_run_context(config)
+        assert ctx.work_dir.is_absolute()
+        assert ctx.work_dir.name.startswith("test_run_SKA1MID")
+        assert ctx.work_dir.is_dir()
+        assert ctx.log_path.exists()
+        assert ctx.manifest_path.exists()
+        assert ctx.manifest.run_id.startswith("test_run_SKA1MID")
+        assert ctx.manifest.status == "running"
     finally:
         os.chdir(old_cwd)
 
 
-def test_setup_workdir_no_prefix_uses_timestamp(tmp_path):
+def test_create_run_context_no_prefix_uses_timestamp(tmp_path):
     """When output_prefix is None, directory name includes a timestamp-like string."""
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
         config = SimConfig(telescope="SKA1MID")
-        work_dir = setup_workdir(config)
-        # prefix defaults to current time as YYYYMMDD_HHMM
-        assert len(work_dir.name) >= 8
-        assert work_dir.is_dir()
+        ctx = create_run_context(config)
+        assert len(ctx.work_dir.name) >= 8
+        assert ctx.work_dir.is_dir()
+        assert ctx.manifest_path.exists()
     finally:
         os.chdir(old_cwd)
 
@@ -139,6 +142,15 @@ def test_setup_workdir_no_prefix_uses_timestamp(tmp_path):
 # helpers for JSON fixture
 # --------------------------------------------------------------------------- #
 
+def _make_ctx(tmp_path, config):
+    """Build a RunContext inside tmp_path for tests that need one."""
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        ctx = create_run_context(config)
+        return ctx
+    finally:
+        os.chdir(old_cwd)
 
 def _single_source_json():
     return {
@@ -219,18 +231,20 @@ def test_load_sky_from_file_empty_json_raises():
 # --------------------------------------------------------------------------- #
 
 
-def test_build_sky_model_random_source_count():
+def test_build_sky_model_random_source_count(tmp_path):
     """Random source generation produces exactly len(I) sources."""
     config = SimConfig(I=[1.0, 5.0, 10.0, 20.0])
-    sky, center = build_sky_model(config, fov=0.2 * u.deg)
+    ctx = _make_ctx(tmp_path, config)
+    sky, center = build_sky_model(ctx, fov=0.2 * u.deg)
     assert len(sky.sources) == 4
     assert center is not None
 
 
-def test_build_sky_model_random_single_source():
+def test_build_sky_model_random_single_source(tmp_path):
     """A single intensity produces one source."""
     config = SimConfig(I=[42.0])
-    sky, center = build_sky_model(config, fov=0.2 * u.deg)
+    ctx = _make_ctx(tmp_path, config)
+    sky, center = build_sky_model(ctx, fov=0.2 * u.deg)
     assert len(sky.sources) == 1
 
 
@@ -239,13 +253,14 @@ def test_build_sky_model_random_single_source():
 # --------------------------------------------------------------------------- #
 
 
-def test_build_sky_model_unsupported_catalogue_raises():
+def test_build_sky_model_unsupported_catalogue_raises(tmp_path):
     """Catalogue ID outside 1-3 raises ValueError inside build_sky_model."""
     config = SimConfig(observation=ObsConfig(seconds=1), catalogue=1)
     # bypass pydantic validation; build_sky_model has its own ValueError
     object.__setattr__(config, "catalogue", 99)
+    ctx = _make_ctx(tmp_path, config)
     with pytest.raises(ValueError, match="Catalogue 99 not available"):
-        build_sky_model(config, fov=0.5 * u.deg)
+        build_sky_model(ctx, fov=0.5 * u.deg)
 
 
 # --------------------------------------------------------------------------- #
