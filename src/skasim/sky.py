@@ -304,6 +304,7 @@ class Source:
 
         return sources
 
+
     def __str__(self):
         # return a string representation of the source (only non-zero values)
         coord = SkyCoord(ra=self.ra, dec=self.dec, unit=(u.deg, u.deg), frame="icrs")
@@ -403,6 +404,18 @@ class Source:
 
         return best_time
 
+    @staticmethod
+    def from_sky_model(data):
+        """Reconstruct Source from 14-element tuple (inverse of to_sky_model)."""
+        return Source(
+            ra=data[0], dec=data[1], I=data[2],
+            Q=data[3], U=data[4], V=data[5],
+            ref_freq=data[6], spec_index=data[7],
+            rot_meas=data[8], major_axis=data[9],
+            minor_axis=data[10], pa=data[11],
+            true_redshift=data[12], obs_redshift=data[13],
+        )
+
     def from_json(json_data):
         # create a Source object from a JSON dictionary
         return Source(
@@ -462,8 +475,14 @@ class SkyModel(KaraboSkyModel):
         self.get_center()  # calculate the phase center if sources are provided
 
     def to_json(self):
-        # convert the SkyModel to a JSON serializable dictionary
+        # convert the SkyModel to a JSON serializable list
+        if self.sources is None:
+            return []
+        import xarray as xr
+        if isinstance(self.sources, xr.DataArray):
+            return [Source.from_sky_model(row.values).to_json() for row in self.sources]
         return [source.to_json() for source in self.sources]
+
 
     def show(self, **kwargs):
         if "block" not in kwargs:

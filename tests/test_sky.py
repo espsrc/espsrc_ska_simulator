@@ -395,9 +395,6 @@ def test_skymodel_get_center_no_sources_raises():
         sm.get_center()
 
 
-@pytest.mark.xfail(
-    reason="SkyModel.sources are DataArrays, and have no .to_json(); review implementation"
-)
 def test_skymodel_to_json():
     """to_json serialises the source list."""
     s1 = Source(ra=10.0, dec=20.0, I=1.0)
@@ -411,18 +408,12 @@ def test_skymodel_to_json():
     assert json_data[0]["ra"] == 10.0
 
 
-@pytest.mark.xfail(
-    reason="SkyModel.sources are DataArrays, and have no .to_json(); review implementation"
-)
 def test_skymodel_to_json_empty_sources():
     """empty source list yields empty JSON list."""
     sm = SkyModel(np.empty((0, 14)))
     assert sm.to_json() == []
 
 
-@pytest.mark.xfail(
-    reason="SkyModel.sources are DataArrays, and have no .to_json(); review implementation"
-)
 def test_skymodel_from_json_roundtrip():
     """from_json reconstructs a SkyModel identically."""
     s1 = Source(ra=10.0, dec=20.0, I=1.0)
