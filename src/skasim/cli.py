@@ -105,6 +105,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         default="oskar-dirty",
         help="Image product imager",
     )
+    p.add_argument(
+        "--wsclean-command",
+        default="wsclean",
+        help="Command used for WSClean imaging",
+    )
     p.add_argument("--pixels", type=int, default=512, help="Image size in pixels")
     p.add_argument(
         "--imaging-niter", type=int, default=1000, help="OSKAR imaging iterations"
@@ -180,6 +185,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         imaging_niter=args.imaging_niter,
         robust=args.robust,
         imager=args.imager,
+        wsclean_command=args.wsclean_command,
         algorithm="wsclean_clean" if args.imager == "wsclean" else "oskar_dirty",
     )
 

@@ -126,6 +126,8 @@ def test_img_config_defaults():
     assert img.fov_deg is None
     assert img.imaging_niter == 1000
     assert img.robust == 0.0
+    assert img.imager == "oskar-dirty"
+    assert img.wsclean_command == "wsclean"
     assert img.algorithm == "oskar_dirty"
 
 

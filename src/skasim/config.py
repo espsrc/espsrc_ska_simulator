@@ -80,6 +80,7 @@ class ImgConfig(BaseModel):
     imaging_niter: int = 1000
     robust: float = 0.0
     imager: Literal["oskar-dirty", "wsclean"] = "oskar-dirty"
+    wsclean_command: str = "wsclean"
     algorithm: Literal["oskar_dirty", "wsclean_clean"] = "oskar_dirty"
 
     @field_validator("pixels")

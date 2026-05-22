@@ -80,3 +80,14 @@ def test_cleaning_flag_has_migration_message(capsys):
 
     captured = capsys.readouterr()
     assert "--imager wsclean" in captured.err
+
+
+def test_wsclean_command_cli_override(monkeypatch):
+    """--wsclean-command stores the configured WSClean command."""
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+    command = "singularity exec /mnt/software/containers/wsclean-3.10-dysco.sif wsclean"
+
+    cli.main(["--imager", "wsclean", "--wsclean-command", command])
+
+    assert captured[0].imaging.wsclean_command == command
