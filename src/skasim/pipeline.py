@@ -457,6 +457,7 @@ def run(config: SimConfig) -> None:
             raise
 
         ctx.manifest.mark_completed()
+        ctx.manifest.add_output("weblog", ctx.weblog_path.name)
         ctx.save_manifest()
 
         render_weblog(ctx.manifest, ctx.work_dir)
@@ -464,7 +465,10 @@ def run(config: SimConfig) -> None:
 
     except Exception as exc:
         ctx.manifest.mark_failed(str(exc))
+        ctx.manifest.add_output("weblog", ctx.weblog_path.name)
         ctx.save_manifest()
+        render_weblog(ctx.manifest, ctx.work_dir)
+        logger.info(f"Failure weblog written to {ctx.weblog_path}")
         raise
 
     elapsed = time.time() - t0

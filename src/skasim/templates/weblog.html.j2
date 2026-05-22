@@ -219,6 +219,32 @@
     </div>
     {% endif %}
 
+    {% if manifest.outputs %}
+    <h2 style="margin-top:2rem;">output records</h2>
+    <div class="config-block">
+      <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+        <thead>
+          <tr>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.35rem;">kind</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.35rem;">path</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.35rem;">imager</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.35rem;">role</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for output in manifest.outputs %}
+          <tr>
+            <td style="padding:0.35rem;">{{ output.kind }}</td>
+            <td style="padding:0.35rem;">{{ output.path }}</td>
+            <td style="padding:0.35rem;">{{ output.imager or "" }}</td>
+            <td style="padding:0.35rem;">{{ output.role or "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
     <!-- resolved config (collapsed) -->
     <h2 style="margin-top:2rem;">resolved configuration</h2>
     <div class="config-block">

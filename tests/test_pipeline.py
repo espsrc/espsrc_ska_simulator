@@ -383,7 +383,39 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
 
     assert called == ["wsclean"]
     assert manifest["config"]["imaging"]["imager"] == "wsclean"
+    assert (tmp_path / "imager_run_SKA1MID" / "weblog.html").exists()
+    assert any(output["kind"] == "weblog" for output in manifest["outputs"])
     imaging_done = [
         item for item in manifest["milestones"] if item["name"] == "imaging_completed"
     ][0]
     assert imaging_done["details"]["Imager"] == "wsclean"
+
+
+def test_run_renders_weblog_on_failure(tmp_path, monkeypatch):
+    """Failed runs save the manifest and render a weblog with the error."""
+    import skasim.pipeline as pipeline
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        monkeypatch.setattr(
+            pipeline,
+            "build_telescope",
+            lambda ctx: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+        config = SimConfig(output_prefix="failed_run")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            pipeline.run(config)
+
+        work_dir = tmp_path / "failed_run_SKA1MID"
+        manifest = json.loads((work_dir / "run_manifest.json").read_text())
+        weblog = (work_dir / "weblog.html").read_text(encoding="utf-8")
+    finally:
+        os.chdir(old_cwd)
+
+    assert manifest["status"] == "failed"
+    assert "boom" in manifest["errors"][0]
+    assert any(output["kind"] == "weblog" for output in manifest["outputs"])
+    assert "failed" in weblog
+    assert "boom" in weblog
