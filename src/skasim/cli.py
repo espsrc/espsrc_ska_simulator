@@ -80,7 +80,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--niter", type=int, default=5000, help="WSClean iterations")
     p.add_argument("--scale-I", type=float, default=1.0, help="Scale Stokes I")
     p.add_argument(
-        "--catalogue", type=int, default=0, help="1=MIGHTEE, 2=GLEAM, 3=SKAMid"
+        "--catalogue",
+        "--catalog",
+        dest="catalogue",
+        type=str,
+        default=None,
+        help="Built-in catalogue name: MIGHTEE, GLEAM, or SKAMid",
     )
     p.add_argument(
         "--column-mapping",

@@ -201,16 +201,20 @@ def build_sky_model(
         return sky_model, center
 
     # 2) built-in catalogue
-    if config.catalogue > 0:
-        if config.catalogue == 1:
+    if config.catalogue is not None:
+        if config.catalogue == "MIGHTEE":
             logger.info("Loading MIGHTEE catalogue")
+            if not hasattr(SkyModel, "get_MIGHTEE_Sky"):
+                require_karabo_module("karabo.simulation.sky_model")
             sky_model = SkyModel.get_MIGHTEE_Sky()
             fmt = "MIGHTEE"
-        elif config.catalogue == 2:
+        elif config.catalogue == "GLEAM":
             logger.info("Loading GLEAM catalogue")
+            if not hasattr(SkyModel, "get_GLEAM_Sky"):
+                require_karabo_module("karabo.simulation.sky_model")
             sky_model = SkyModel.get_GLEAM_Sky()
             fmt = "GLEAM"
-        elif config.catalogue == 3:
+        elif config.catalogue == "SKAMid":
             skamid_path = Path("SKAMid_B1_8h_v3.fits").resolve()
             if skamid_path.exists():
                 logger.info(f"Loading SKAMid catalogue {skamid_path}")
@@ -220,9 +224,7 @@ def build_sky_model(
                 logger.info(f"SKAMid catalogue not found at {skamid_path}")
                 raise FileNotFoundError(str(skamid_path))
         else:
-            raise ValueError(
-                f"Catalogue {config.catalogue} not available (1=MIGHTEE, 2=GLEAM, 3=SKAMid)"
-            )
+            raise ValueError(f"Catalogue {config.catalogue} not available")
         center = sky_model.get_center()
         n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
         ctx.add_milestone(

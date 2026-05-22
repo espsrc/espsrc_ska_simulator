@@ -9,6 +9,16 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 _DEFAULT_BW_MHZ = 100.0
 _DEFAULT_NCH = 8
 _DEFAULT_DF_MHZ = 12.5
+CatalogueName = Literal["MIGHTEE", "GLEAM", "SKAMid"]
+_CATALOGUE_NAMES = {
+    "MIGHTEE": "MIGHTEE",
+    "GLEAM": "GLEAM",
+    "SKAMID": "SKAMid",
+}
+_CATALOGUE_MIGRATION_MESSAGE = (
+    "Numeric catalogue IDs were removed in skasim 0.2; use named catalogues "
+    "such as MIGHTEE, GLEAM, or SKAMid."
+)
 
 
 class ObsConfig(BaseModel):
@@ -85,10 +95,10 @@ class SimConfig(BaseModel):
     telescope: str = "SKA1MID"
     telescope_version: Optional[str] = None
 
-    # sky input (pipeline resolves priority: sky_file > catalogue > random)
+    # sky input (pipeline resolves one explicit source, else generated sources)
     sky_file: Optional[str] = None
     sky_format: Literal["auto", "fits", "json", "pickle", "random"] = "auto"
-    catalogue: Literal[0, 1, 2, 3] = 0
+    catalogue: Optional[CatalogueName] = None
     column_mapping: Optional[str] = "0,1,2,3,4,5,6,7,8,9,10,11,12"
     scale_I: float = 1.0
 
@@ -121,3 +131,30 @@ class SimConfig(BaseModel):
     output_prefix: Optional[str] = None
     overwrite: bool = False
     cleaning: bool = False
+
+    @field_validator("catalogue", mode="before")
+    @classmethod
+    def _normalise_catalogue(cls, value):
+        if value in (None, "", 0):
+            return None
+        if isinstance(value, int) or (isinstance(value, str) and value.isdigit()):
+            raise ValueError(_CATALOGUE_MIGRATION_MESSAGE)
+        if isinstance(value, str):
+            key = value.upper()
+            if key in _CATALOGUE_NAMES:
+                return _CATALOGUE_NAMES[key]
+        return value
+
+    @model_validator(mode="after")
+    def _validate_one_sky_model_source(self):
+        explicit_sources = [
+            source
+            for source in (self.sky_file, self.catalogue)
+            if source is not None
+        ]
+        if len(explicit_sources) > 1:
+            raise ValueError(
+                "Provide one sky model source per run; choose a file-backed "
+                "sky model or a named catalogue."
+            )
+        return self

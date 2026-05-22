@@ -155,7 +155,7 @@ def test_sim_config_defaults():
     assert cfg.telescope_version is None
     assert cfg.sky_file is None
     assert cfg.sky_format == "auto"
-    assert cfg.catalogue == 0
+    assert cfg.catalogue is None
     assert cfg.column_mapping == "0,1,2,3,4,5,6,7,8,9,10,11,12"
     assert cfg.scale_I == 1.0
     assert cfg.I == [10.0]
@@ -186,6 +186,12 @@ def test_sim_config_explicit_telescope_version():
     assert cfg.telescope_version == "AA0.5"
 
 
+def test_sim_config_accepts_named_catalogue():
+    """built-in catalogues are selected by name."""
+    cfg = SimConfig(catalogue="MIGHTEE")
+    assert cfg.catalogue == "MIGHTEE"
+
+
 def test_sim_config_scalar_I_rejected():
     """I must be a list; error otherwise"""
     # this error was documented in the original pipeline
@@ -193,11 +199,16 @@ def test_sim_config_scalar_I_rejected():
         SimConfig(I=10.0)
 
 
-def test_sim_config_invalid_catalogue():
-    """non-existing catalogue, id out of {0,1,2,3}."""
-    # TODO: review implementation of ID=3
-    with pytest.raises(ValidationError):
-        SimConfig(catalogue=4)
+def test_sim_config_numeric_catalogue_has_migration_message():
+    """numeric catalogue IDs are removed in 0.2."""
+    with pytest.raises(ValidationError, match="Numeric catalogue IDs were removed"):
+        SimConfig(catalogue=1)
+
+
+def test_sim_config_rejects_model_and_catalogue_together():
+    """0.2 accepts one explicit sky model source per run."""
+    with pytest.raises(ValidationError, match="one sky model source"):
+        SimConfig(sky_file="sources.json", catalogue="GLEAM")
 
 
 def test_sim_config_nested_observation_override():

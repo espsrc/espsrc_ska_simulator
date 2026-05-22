@@ -5,6 +5,7 @@ import os
 from unittest.mock import MagicMock, mock_open, patch
 
 import astropy.units as u
+import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord
 
@@ -248,18 +249,44 @@ def test_build_sky_model_random_single_source(tmp_path):
     assert len(sky.sources) == 1
 
 
+@pytest.mark.parametrize(
+    ("catalogue", "loader_name"),
+    [
+        ("MIGHTEE", "get_MIGHTEE_Sky"),
+        ("GLEAM", "get_GLEAM_Sky"),
+    ],
+)
+def test_build_sky_model_named_catalogue(tmp_path, monkeypatch, catalogue, loader_name):
+    """A named built-in catalogue selects the matching catalogue source."""
+    fake_sky = SkyModel(np.array([[10.0, 20.0, 1.0]]))
+    monkeypatch.setattr(
+        SkyModel,
+        loader_name,
+        staticmethod(lambda: fake_sky),
+        raising=False,
+    )
+    config = SimConfig(catalogue=catalogue)
+    ctx = _make_ctx(tmp_path, config)
+
+    sky, center = build_sky_model(ctx, fov=0.2 * u.deg)
+
+    assert sky is fake_sky
+    assert center.ra.value == pytest.approx(10.0)
+    assert ctx.manifest.milestones[-1].details["format"] == catalogue
+
+
 # --------------------------------------------------------------------------- #
 # build_sky_model — invalid configurations
 # --------------------------------------------------------------------------- #
 
 
 def test_build_sky_model_unsupported_catalogue_raises(tmp_path):
-    """Catalogue ID outside 1-3 raises ValueError inside build_sky_model."""
-    config = SimConfig(observation=ObsConfig(seconds=1), catalogue=1)
-    # bypass pydantic validation; build_sky_model has its own ValueError
-    object.__setattr__(config, "catalogue", 99)
+    """Unsupported catalogue names raise ValueError inside build_sky_model."""
+    config = SimConfig(observation=ObsConfig(seconds=1), catalogue="MIGHTEE")
+    # bypass pydantic validation; build_sky_model has its own ValueError guard
+    object.__setattr__(config, "catalogue", "UNKNOWN")
     ctx = _make_ctx(tmp_path, config)
-    with pytest.raises(ValueError, match="Catalogue 99 not available"):
+    with pytest.raises(ValueError, match="Catalogue UNKNOWN not available"):
         build_sky_model(ctx, fov=0.5 * u.deg)
 
 
