@@ -7,23 +7,14 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 import astropy.units as u
 from astropy.coordinates import SkyCoord
-from karabo.imaging.image import Image
-from karabo.imaging.imager_oskar import OskarDirtyImager, OskarDirtyImagerConfig
-from karabo.imaging.imager_wsclean import (
-    _WSCLEAN_BINARY,
-    TMP_PREFIX_CUSTOM,
-    TMP_PURPOSE_CUSTOM,
-)
-from karabo.simulation.visibility import Visibility
-from karabo.util.file_handler import FileHandler
 from loguru import logger
 
 from .config import SimConfig
 from .manifest import RunContext
+from .runtime import require_karabo_module
 from .utils import show_exc
 
 # --------------------------------------------------------------------------- #
@@ -38,17 +29,19 @@ def run_dirty_imaging(
     center: SkyCoord,
 ) -> None:
     """produce dirty image via OSKAR."""
+    imager_module = require_karabo_module("karabo.imaging.imager_oskar")
+    visibility_module = require_karabo_module("karabo.simulation.visibility")
     config = ctx.config
     work_dir = ctx.work_dir
-    vis = Visibility(str(visibility_path))
+    vis = visibility_module.Visibility(str(visibility_path))
     imaging_cellsize = fov / config.imaging.pixels
-    cfg = OskarDirtyImagerConfig(
+    cfg = imager_module.OskarDirtyImagerConfig(
         imaging_npixel=config.imaging.pixels,
         imaging_cellsize=imaging_cellsize.to(u.rad).value,
         combine_across_frequencies=True,
         imaging_phase_centre=center,
     )
-    imager = OskarDirtyImager(config=cfg)
+    imager = imager_module.OskarDirtyImager(config=cfg)
     dirty_image = imager.create_dirty_image(vis)
 
     dirty_png = work_dir / f"{work_dir.name}_dirty.png"
@@ -81,6 +74,9 @@ def run_wsclean_imaging(
     fov: u.Quantity,
 ) -> None:
     """produce cleaned image via external WSClean binary."""
+    image_module = require_karabo_module("karabo.imaging.image")
+    wsclean_module = require_karabo_module("karabo.imaging.imager_wsclean")
+    file_handler_module = require_karabo_module("karabo.util.file_handler")
     config = ctx.config
     work_dir = ctx.work_dir
 
@@ -102,11 +98,11 @@ def run_wsclean_imaging(
         )
         logger.info(f"WSClean command: {custom_command}")
 
-        FileHandler().get_tmp_dir(
-            prefix=TMP_PREFIX_CUSTOM,
-            purpose=TMP_PURPOSE_CUSTOM,
+        file_handler_module.FileHandler().get_tmp_dir(
+            prefix=wsclean_module.TMP_PREFIX_CUSTOM,
+            purpose=wsclean_module.TMP_PURPOSE_CUSTOM,
         )
-        expected_prefix = f"{_WSCLEAN_BINARY} "
+        expected_prefix = f"{wsclean_module._WSCLEAN_BINARY} "
         if not custom_command.startswith(expected_prefix):
             raise ValueError(f"Command must start with '{expected_prefix}'")
 
@@ -128,7 +124,7 @@ def run_wsclean_imaging(
 
         gamma = 0.3
         for img_path in glob.glob("wsclean-*.fits"):
-            img = Image(path=img_path)
+            img = image_module.Image(path=img_path)
             png_name = f"{work_dir.name}_{img_path.replace('.fits', '.png')}"
 
             # infer image type from filename for correct plot title

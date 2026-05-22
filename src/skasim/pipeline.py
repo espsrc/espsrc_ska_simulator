@@ -11,25 +11,18 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
-from astropy.io import fits
-from astropy.table import Table
-from astropy.units import UnitBase
-from karabo.simulation.interferometer import InterferometerSimulation
-from karabo.simulation.observation import Observation
-from karabo.simulation.sky_model import SkyPrefixMapping, SkySourcesUnits
-from karabo.simulation.telescope import Telescope
-from karabo.simulator_backend import SimulatorBackend
 from loguru import logger
 
 from .config import SimConfig
 from .imaging import run_dirty_imaging, run_wsclean_imaging
 from .manifest import RunContext, create_run_context
 from .fits_helper import FitsCatalogLoader
+from .runtime import require_karabo_module
 from .sky import SkyModel, Source
 from .utils import get_diameter, mapping_unit
 
@@ -49,13 +42,15 @@ from .utils import get_diameter, mapping_unit
 def build_telescope(ctx: RunContext):
     """return a Karabo Telescope instance."""
     config = ctx.config
-    kwargs: dict = {"backend": SimulatorBackend.OSKAR}
+    simulator_backend = require_karabo_module("karabo.simulator_backend")
+    telescope_module = require_karabo_module("karabo.simulation.telescope")
+    kwargs: dict = {"backend": simulator_backend.SimulatorBackend.OSKAR}
     if config.telescope_version is not None:
         kwargs["version"] = config.telescope_version
         logger.info(f"Telescope {config.telescope}  version={config.telescope_version}")
     else:
         logger.info(f"Telescope {config.telescope}  (no version)")
-    telescope = Telescope.constructor(config.telescope, **kwargs)
+    telescope = telescope_module.Telescope.constructor(config.telescope, **kwargs)
     ctx.add_milestone(
         "telescope_built",
         "completed",
@@ -278,6 +273,7 @@ def build_observation(
     telescope,
 ) -> tuple:
     """Return (observation, frequency, bandwidth, n_channels, delta_freq, start_freq)."""
+    observation_module = require_karabo_module("karabo.simulation.observation")
     config = ctx.config
     obs = config.observation
     freq = obs.freq_mhz * u.MHz
@@ -294,7 +290,7 @@ def build_observation(
     obs_time = source_ref_get_best_observation_time(center, telescope)
     n_timesteps = max(1, int(seconds / 7.997))
 
-    observation = Observation(
+    observation = observation_module.Observation(
         start_frequency_hz=start_freq.to(u.Hz).value,
         start_date_and_time=obs_time,
         frequency_increment_hz=delta_freq.to(u.Hz).value,
@@ -336,6 +332,8 @@ def run_simulation(
     sky_model: SkyModel,
 ) -> Path:
     """Run InterferometerSimulation and return visibility path."""
+    interferometer_module = require_karabo_module("karabo.simulation.interferometer")
+    simulator_backend = require_karabo_module("karabo.simulator_backend")
     config = ctx.config
     visibility_path = ctx.visibility_path
 
@@ -368,13 +366,13 @@ def run_simulation(
         params["noise_freq"] = "Telescope model"
         params["noise_rms"] = "Telescope model"
 
-    simulation = InterferometerSimulation(**params)
+    simulation = interferometer_module.InterferometerSimulation(**params)
     simulation.run_simulation(
         telescope=telescope,
         observation=observation,
         sky=sky_model,
         visibility_path=str(visibility_path),
-        backend=SimulatorBackend.OSKAR,
+        backend=simulator_backend.SimulatorBackend.OSKAR,
     )
     logger.info(f"Visibilities saved in {visibility_path}")
     ctx.manifest.outputs.append(str(visibility_path.relative_to(ctx.work_dir)))

@@ -14,11 +14,11 @@ import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 from astropy.units import UnitBase
-from karabo.simulation.sky_model import SkyPrefixMapping, SkySourcesUnits
 from .sky import SkyModel, Source
 
 from loguru import logger
 
+from .runtime import require_karabo_module
 from .utils import mapping_unit
 
 ''' TODO: Review & simplify.
@@ -345,6 +345,7 @@ class FitsCatalogLoader:
 
     # Karabo loader (all columns have unit)
     def _load_karabo(self) -> "SkyModel":
+        sky_model_module = require_karabo_module("karabo.simulation.sky_model")
         with fits.open(self.fpath) as hdul:
             hdu1 = hdul[1]
             unit_mapping: Dict[str, UnitBase] = {}
@@ -356,7 +357,7 @@ class FitsCatalogLoader:
                     mapped = mapping_unit(col.unit)
                     unit_mapping[col.unit] = u.Unit(mapped) if mapped else u.dimensionless_unscaled
 
-            prefix_mapping = SkyPrefixMapping(
+            prefix_mapping = sky_model_module.SkyPrefixMapping(
                 ra=hdu1.columns.names[self.cols_mapping[1]],
                 dec=hdu1.columns.names[self.cols_mapping[2]],
                 stokes_i=hdu1.columns.names[self.cols_mapping[3]],
@@ -382,7 +383,7 @@ class FitsCatalogLoader:
                 if self.cols_mapping[0] > -1 else None,
             )
 
-        units_sources = SkySourcesUnits(
+        units_sources = sky_model_module.SkySourcesUnits(
             stokes_i=u.Jy / u.beam,
             stokes_q=u.Jy / u.beam,
             stokes_u=u.Jy / u.beam,
@@ -410,7 +411,7 @@ class FitsCatalogLoader:
         except u.core.UnitConversionError as exc:
             logger.error(f"Beam-unit conversion failed ({exc}); retrying without beam.")
 
-        units_sources = SkySourcesUnits(
+        units_sources = sky_model_module.SkySourcesUnits(
             stokes_i=u.Jy,
             stokes_q=u.Jy,
             stokes_u=u.Jy,

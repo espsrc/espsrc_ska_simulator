@@ -10,7 +10,7 @@ import sys
 from typing import List, Optional
 
 from .config import ImgConfig, ObsConfig, SimConfig
-from .pipeline import run
+from .runtime import require_karabo_module
 
 
 def _list_str_to_floats(s: Optional[str]) -> Optional[List[float]]:
@@ -99,9 +99,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     if args.show_telescopes:
         from typing import get_args
 
-        from karabo.simulation.telescope import (
-            OSKARTelescopesWithoutVersionType,
-            OSKARTelescopesWithVersionType,
+        telescope_module = require_karabo_module("karabo.simulation.telescope")
+        OSKARTelescopesWithoutVersionType = (
+            telescope_module.OSKARTelescopesWithoutVersionType
+        )
+        OSKARTelescopesWithVersionType = (
+            telescope_module.OSKARTelescopesWithVersionType
         )
 
         choices = get_args(OSKARTelescopesWithVersionType) + get_args(
@@ -164,6 +167,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         overwrite=args.overwrite,
         cleaning=args.cleaning,
     )
+
+    from .pipeline import run
 
     run(config)
 
