@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
 import astropy.units as u
@@ -20,6 +21,11 @@ from skasim.pipeline import (
     parse_center,
     source_ref_get_best_observation_time,
 )
+
+
+class _FakeTelescope:
+    def plot_telescope(self, file):
+        Path(file).write_text("plot", encoding="utf-8")
 
 # --------------------------------------------------------------------------- #
 # parse_center
@@ -315,3 +321,69 @@ def test_source_ref_get_best_observation_time():
     best_time = source_ref_get_best_observation_time(center, telescope)
     assert best_time is not None
     assert hasattr(best_time, "iso")  # astropy Time
+
+
+def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
+    """run() selects imaging from config.imaging.imager and records it."""
+    import skasim.pipeline as pipeline
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        center = SkyCoord(10 * u.deg, 20 * u.deg)
+        fake_sky = MagicMock()
+        fake_sky.get_center.return_value = center
+        called = []
+
+        monkeypatch.setattr(pipeline, "build_telescope", lambda ctx: _FakeTelescope())
+        monkeypatch.setattr(pipeline, "compute_fov", lambda config, freq: 0.2 * u.deg)
+        monkeypatch.setattr(pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center))
+        monkeypatch.setattr(
+            pipeline,
+            "build_observation",
+            lambda ctx, center, telescope: (
+                object(),
+                700 * u.MHz,
+                100 * u.MHz,
+                8,
+                12.5 * u.MHz,
+                650 * u.MHz,
+            ),
+        )
+        monkeypatch.setattr(
+            pipeline,
+            "run_simulation",
+            lambda ctx, telescope, observation, sky_model: ctx.visibility_path,
+        )
+        monkeypatch.setattr(
+            pipeline,
+            "run_dirty_imaging",
+            lambda *args, **kwargs: pytest.fail("dirty imaging should not run"),
+        )
+        monkeypatch.setattr(
+            pipeline,
+            "run_wsclean_imaging",
+            lambda *args, **kwargs: called.append("wsclean"),
+        )
+
+        config = SimConfig(
+            output_prefix="imager_run",
+            imaging=ImgConfig(imager="wsclean", algorithm="wsclean_clean"),
+            observation=ObsConfig(seconds=1),
+        )
+        pipeline.run(config)
+
+        manifest = json.loads(
+            (tmp_path / "imager_run_SKA1MID" / "run_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    assert called == ["wsclean"]
+    assert manifest["config"]["imaging"]["imager"] == "wsclean"
+    imaging_done = [
+        item for item in manifest["milestones"] if item["name"] == "imaging_completed"
+    ][0]
+    assert imaging_done["details"]["Imager"] == "wsclean"

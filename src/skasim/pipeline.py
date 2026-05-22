@@ -401,7 +401,7 @@ def run(config: SimConfig) -> None:
         logger.info(f"Channels  : {config.observation.n_channels}")
         logger.info(f"Time      : {config.observation.seconds} s")
         logger.info(f"Pixels    : {config.imaging.pixels}")
-        logger.info(f"Cleaning  : {config.cleaning}")
+        logger.info(f"Imager    : {config.imaging.imager}")
 
         telescope = build_telescope(ctx)
         telescope_png = ctx.work_dir / f"{ctx.work_dir.name}_{config.telescope}_{config.telescope_version or ''}_telescope.png"
@@ -435,11 +435,16 @@ def run(config: SimConfig) -> None:
         ctx.add_milestone("imaging_started", "started")
         t_phase_b = time.time()
         try:
-            if not config.cleaning:
+            if config.imaging.imager == "oskar-dirty":
                 run_dirty_imaging(ctx, visibility_path, fov, center)
             else:
                 run_wsclean_imaging(ctx, visibility_path, fov)
-            ctx.add_milestone("imaging_completed", "completed", elapsed_s=time.time() - t_phase_b, details={"Imager": "dirty" if not config.cleaning else "wsclean"})
+            ctx.add_milestone(
+                "imaging_completed",
+                "completed",
+                elapsed_s=time.time() - t_phase_b,
+                details={"Imager": config.imaging.imager},
+            )
         except Exception as exc:
             ctx.add_milestone("imaging_failed", "failed", elapsed_s=time.time() - t_phase_b, details=str(exc))
             raise

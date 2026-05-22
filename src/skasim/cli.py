@@ -27,6 +27,11 @@ class _DeprecatedIAction(argparse.Action):
         )
 
 
+class _DeprecatedCleaningAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        parser.error("--cleaning was removed in skasim 0.2; use --imager wsclean.")
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     p = argparse.ArgumentParser(
         description="SKA simulator — sky -> visibilities -> image"
@@ -88,7 +93,17 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--delta-freq", type=float, default=None, help="Channel width (MHz)")
     p.add_argument("--seconds", type=int, default=10, help="Observation time (s)")
     p.add_argument(
-        "--cleaning", action="store_true", help="Use WSClean instead of OSKAR dirty"
+        "--cleaning",
+        nargs=0,
+        default=None,
+        action=_DeprecatedCleaningAction,
+        help=argparse.SUPPRESS,
+    )
+    p.add_argument(
+        "--imager",
+        choices=["oskar-dirty", "wsclean"],
+        default="oskar-dirty",
+        help="Image product imager",
     )
     p.add_argument("--pixels", type=int, default=512, help="Image size in pixels")
     p.add_argument(
@@ -164,7 +179,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         fov_deg=fov_deg,
         imaging_niter=args.imaging_niter,
         robust=args.robust,
-        algorithm="wsclean_clean" if args.cleaning else "oskar_dirty",
+        imager=args.imager,
+        algorithm="wsclean_clean" if args.imager == "wsclean" else "oskar_dirty",
     )
 
     sky_file = args.model or args.fits_file or args.json_file
@@ -193,7 +209,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         imaging=img,
         output_prefix=args.prefix,
         overwrite=args.overwrite,
-        cleaning=args.cleaning,
+        cleaning=False,
     )
 
     from .pipeline import run

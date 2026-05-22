@@ -79,6 +79,7 @@ class ImgConfig(BaseModel):
     fov_deg: Optional[float] = None
     imaging_niter: int = 1000
     robust: float = 0.0
+    imager: Literal["oskar-dirty", "wsclean"] = "oskar-dirty"
     algorithm: Literal["oskar_dirty", "wsclean_clean"] = "oskar_dirty"
 
     @field_validator("pixels")

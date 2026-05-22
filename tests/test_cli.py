@@ -50,3 +50,33 @@ def test_legacy_i_flag_has_migration_message(capsys):
     captured = capsys.readouterr()
     assert "--flux-density" in captured.err
     assert "--stokes-i" in captured.err
+
+
+def test_default_imager_is_oskar_dirty(monkeypatch):
+    """The CLI defaults to the OSKAR dirty imager."""
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    cli.main([])
+
+    assert captured[0].imaging.imager == "oskar-dirty"
+
+
+def test_wsclean_imager_is_selected_explicitly(monkeypatch):
+    """--imager wsclean selects WSClean image production."""
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    cli.main(["--imager", "wsclean"])
+
+    assert captured[0].imaging.imager == "wsclean"
+    assert captured[0].imaging.algorithm == "wsclean_clean"
+
+
+def test_cleaning_flag_has_migration_message(capsys):
+    """--cleaning fails with a migration message for --imager wsclean."""
+    with pytest.raises(SystemExit):
+        cli.main(["--cleaning"])
+
+    captured = capsys.readouterr()
+    assert "--imager wsclean" in captured.err
