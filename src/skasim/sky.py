@@ -655,7 +655,6 @@ class SkyModel(KaraboSkyModel):
             sources = Source.from_table_in_fits(fits_table)
             sky_array = np.array([source.to_sky_model() for source in sources])
             skyModel = SkyModel(sky_array)
-            skyModel.get_center()
             return skyModel
         else:
             raise FileNotFoundError(f"FITS file {fits_file} not found.")

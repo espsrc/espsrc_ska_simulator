@@ -17,6 +17,7 @@ import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
+from astropy.table import Table
 from astropy.units import UnitBase
 from karabo.simulation.interferometer import InterferometerSimulation
 from karabo.simulation.observation import Observation
@@ -28,8 +29,9 @@ from loguru import logger
 from .config import SimConfig
 from .imaging import run_dirty_imaging, run_wsclean_imaging
 from .manifest import RunContext, create_run_context
+from .fits_helper import FitsCatalogLoader
 from .sky import SkyModel, Source
-from .utils import get_diameter
+from .utils import get_diameter, mapping_unit
 
 # --------------------------------------------------------------------------- #
 # workdir + logging
@@ -150,6 +152,7 @@ def _load_sky_from_file(
     raise ValueError(f"Unsupported sky-file extension: {ext}")
 
 
+
 def _load_sky_from_fits(
     fpath: str,
     column_mapping: str,
@@ -157,101 +160,15 @@ def _load_sky_from_fits(
     ref_freq_hz: Optional[float],
     frequency: Optional[u.Quantity],
 ) -> SkyModel:
-    """try Karabo's get_sky_model_from_fits; fallback to our Source.from_table_in_fits."""
-    cols_mapping = [int(i) for i in column_mapping.split(",")]
-
-    with fits.open(fpath) as hdul:
-        hdu1 = hdul[1]
-        unit_mapping: Dict[str, UnitBase] = {}
-        for col in hdu1.columns:
-            mapped = mapping_unit(col.unit)
-            unit_mapping[col.unit] = (
-                u.Unit(mapped) if mapped else u.dimensionless_unscaled
-            )
-
-        prefix_mapping = SkyPrefixMapping(
-            ra=hdu1.columns.names[cols_mapping[1]],
-            dec=hdu1.columns.names[cols_mapping[2]],
-            stokes_i=hdu1.columns.names[cols_mapping[3]],
-            stokes_q=hdu1.columns.names[cols_mapping[4]]
-            if cols_mapping[4] > -1
-            else None,
-            stokes_u=hdu1.columns.names[cols_mapping[5]]
-            if cols_mapping[5] > -1
-            else None,
-            stokes_v=hdu1.columns.names[cols_mapping[6]]
-            if cols_mapping[6] > -1
-            else None,
-            spectral_index=hdu1.columns.names[cols_mapping[7]]
-            if cols_mapping[7] > -1
-            else None,
-            ref_freq=hdu1.columns.names[cols_mapping[8]]
-            if cols_mapping[8] > -1
-            else None,
-            rm=hdu1.columns.names[cols_mapping[9]] if cols_mapping[9] > -1 else None,
-            major=hdu1.columns.names[cols_mapping[10]]
-            if cols_mapping[10] > -1
-            else None,
-            minor=hdu1.columns.names[cols_mapping[11]]
-            if cols_mapping[11] > -1
-            else None,
-            pa=hdu1.columns.names[cols_mapping[12]] if cols_mapping[12] > -1 else None,
-            id=hdu1.columns.names[cols_mapping[0]] if cols_mapping[0] > -1 else None,
-        )
-
-        units_sources = SkySourcesUnits(
-            stokes_i=u.Jy / u.beam,
-            stokes_q=u.Jy / u.beam,
-            stokes_u=u.Jy / u.beam,
-            stokes_v=u.Jy / u.beam,
-            ref_freq=u.MHz,
-            major=u.arcsec,
-            minor=u.arcsec,
-            pa=u.deg,
-            rm=u.rad / u.m**2,
-        )
-
-    # first attempt with beam units
-    try:
-        sky_model = SkyModel.get_sky_model_from_fits(
-            fits_file=fpath,
-            prefix_mapping=prefix_mapping,
-            unit_mapping=unit_mapping,
-            units_sources=units_sources,
-            min_freq=None,
-            max_freq=None,
-            encoded_freq=None,
-            memmap=False,
-        )
-        logger.info(f"Loaded FITS via Karabo: {fpath}")
-        return sky_model
-    except u.core.UnitConversionError as exc:
-        logger.error(f"Beam-unit conversion failed ({exc}); retrying without beam.")
-
-    # retry without /beam
-    units_sources = SkySourcesUnits(
-        stokes_i=u.Jy,
-        stokes_q=u.Jy,
-        stokes_u=u.Jy,
-        stokes_v=u.Jy,
-        ref_freq=u.MHz,
-        major=u.arcsec,
-        minor=u.arcsec,
-        pa=u.deg,
-        rm=u.rad / u.m**2,
+    """try Karabo's get_sky_model_from_fits; fallback to our own loader when columns lack TUNIT."""
+    loader = FitsCatalogLoader(
+        fpath=fpath,
+        column_mapping=column_mapping,
+        scale_I=scale_I,
+        ref_freq_hz=ref_freq_hz,
+        frequency=frequency,
     )
-    sky_model = SkyModel.get_sky_model_from_fits(
-        fits_file=fpath,
-        prefix_mapping=prefix_mapping,
-        unit_mapping=unit_mapping,
-        units_sources=units_sources,
-        min_freq=None,
-        max_freq=None,
-        encoded_freq=None,
-        memmap=False,
-    )
-    logger.info(f"Loaded FITS via Karabo (no-beam fallback): {fpath}")
-    return sky_model
+    return loader.load()
 
 
 # --------------------------------------------------------------------------- #

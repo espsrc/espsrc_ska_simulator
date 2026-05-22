@@ -122,7 +122,7 @@ def create_run_context(config: SimConfig) -> RunContext:
     if config.sky_file is not None:
         fpath = config.sky_file
         if not os.path.isabs(fpath):
-            fpath = os.path.join(os.path.dirname(__file__), fpath)
+            fpath = os.path.join(os.getcwd(), fpath)
         ctx.sky_file_resolved = Path(fpath).resolve()
 
     ctx.save_manifest()
