@@ -211,6 +211,19 @@ def test_sim_config_rejects_model_and_catalogue_together():
         SimConfig(sky_file="sources.json", catalogue="GLEAM")
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"sky_file": "sources.json"},
+        {"catalogue": "GLEAM"},
+    ],
+)
+def test_sim_config_rejects_source_intensities_with_explicit_source(kwargs):
+    """Source intensity flags are only valid in generated source mode."""
+    with pytest.raises(ValidationError, match="generated source mode"):
+        SimConfig(source_intensities=[1.0], **kwargs)
+
+
 def test_sim_config_nested_observation_override():
     """nested ObsConfig can be fully replaced."""
     cfg = SimConfig(observation=ObsConfig(seconds=1200, freq_mhz=900.0))

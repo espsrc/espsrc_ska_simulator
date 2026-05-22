@@ -249,6 +249,16 @@ def test_build_sky_model_random_single_source(tmp_path):
     assert len(sky.sources) == 1
 
 
+def test_build_sky_model_uses_source_intensities(tmp_path):
+    """Generated source intensities create one generated source per value."""
+    config = SimConfig(source_intensities=[1.0, 5.0, 10.0])
+    ctx = _make_ctx(tmp_path, config)
+    sky, center = build_sky_model(ctx, fov=0.2 * u.deg)
+
+    assert len(sky.sources) == 3
+    assert center is not None
+
+
 @pytest.mark.parametrize(
     ("catalogue", "loader_name"),
     [

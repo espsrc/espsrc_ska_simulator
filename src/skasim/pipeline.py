@@ -237,7 +237,8 @@ def build_sky_model(
     # 3) random sources around a reference position
     logger.info("Generating random sources")
     source_ref = Source.from_name("HCG16")
-    intensities = [i * u.Jy for i in config.I]
+    source_intensities = config.source_intensities or config.I
+    intensities = [i * u.Jy for i in source_intensities]
     n_sources = len(intensities)
     sources: List[Source] = []
     for idx in range(n_sources):

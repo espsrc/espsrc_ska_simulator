@@ -104,6 +104,7 @@ class SimConfig(BaseModel):
 
     # inline / random source generation
     source_names: Optional[List[str]] = None
+    source_intensities: Optional[List[float]] = None
     I: List[float] = Field(default=[10.0])
     Q: Optional[float] = None
     U: Optional[float] = None
@@ -156,5 +157,9 @@ class SimConfig(BaseModel):
             raise ValueError(
                 "Provide one sky model source per run; choose a file-backed "
                 "sky model or a named catalogue."
+            )
+        if self.source_intensities is not None and explicit_sources:
+            raise ValueError(
+                "Source intensity flags are only valid in generated source mode."
             )
         return self

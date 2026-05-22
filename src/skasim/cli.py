@@ -19,6 +19,14 @@ def _list_str_to_floats(s: Optional[str]) -> Optional[List[float]]:
     return [float(x) for x in s.split(",")]
 
 
+class _DeprecatedIAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        parser.error(
+            "--I was removed in skasim 0.2; use --flux-density or --stokes-i "
+            "for generated source intensities."
+        )
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     p = argparse.ArgumentParser(
         description="SKA simulator — sky -> visibilities -> image"
@@ -45,7 +53,21 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--telescope-version", type=str, default=None, help="Explicit telescope version"
     )
     p.add_argument(
-        "--I", type=float, nargs="+", default=[10.0], help="Source intensities (Jy)"
+        "--I",
+        type=float,
+        nargs="+",
+        default=None,
+        action=_DeprecatedIAction,
+        help=argparse.SUPPRESS,
+    )
+    p.add_argument(
+        "--flux-density",
+        "--stokes-i",
+        dest="source_intensities",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Generated source intensities (Jy)",
     )
     p.add_argument("--Q", type=float, default=None, help="Stokes Q")
     p.add_argument("--U", type=float, default=None, help="Stokes U")
@@ -155,7 +177,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         catalogue=args.catalogue,
         column_mapping=args.column_mapping,
         scale_I=args.scale_I,
-        I=args.I,
+        source_intensities=args.source_intensities,
+        I=args.I or [10.0],
         Q=args.Q,
         U=args.U,
         V=args.V,
