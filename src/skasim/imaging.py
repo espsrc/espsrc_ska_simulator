@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import shlex
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -119,6 +118,16 @@ def run_wsclean_command(argv: list[str], work_dir: Path):
     )
 
 
+def collect_wsclean_outputs(work_dir: Path, output_prefix: str) -> list[Path]:
+    """Collect WSClean FITS outputs for one configured output prefix."""
+    return sorted(work_dir.glob(f"{output_prefix}*.fits"))
+
+
+def wsclean_output_prefix(ctx: RunContext) -> str:
+    """Return the stable WSClean output prefix for this run."""
+    return f"{ctx.work_dir.name}_wsclean"
+
+
 def run_wsclean_imaging(
     ctx: RunContext,
     visibility_path: Path,
@@ -131,7 +140,8 @@ def run_wsclean_imaging(
     config = ctx.config
     work_dir = ctx.work_dir
 
-    argv = build_wsclean_argv(config, visibility_path, fov, output_prefix="wsclean")
+    output_prefix = wsclean_output_prefix(ctx)
+    argv = build_wsclean_argv(config, visibility_path, fov, output_prefix=output_prefix)
     logger.info(f"WSClean command: {argv}")
 
     file_handler_module.FileHandler().get_tmp_dir(
@@ -148,15 +158,16 @@ def run_wsclean_imaging(
         except Exception as exc:
             logger.error(show_exc(exc))
 
-    mfs_files = [p.name for p in work_dir.glob("*-MFS-*.fits")]
+    wsclean_outputs = collect_wsclean_outputs(work_dir, output_prefix)
+    mfs_files = [p.name for p in wsclean_outputs if "-MFS-" in p.name]
     logger.info(f"MFS files: {mfs_files}")
 
     from matplotlib.colors import PowerNorm
 
     gamma = 0.3
-    for img_path in work_dir.glob("wsclean-*.fits"):
+    for img_path in wsclean_outputs:
         img = image_module.Image(path=str(img_path))
-        png_name = f"{work_dir.name}_{img_path.name.replace('.fits', '.png')}"
+        png_name = img_path.with_suffix(".png").name
         png_path = work_dir / png_name
 
         # infer image type from filename for correct plot title
@@ -180,13 +191,4 @@ def run_wsclean_imaging(
             ylabel="DEC",
             norm=PowerNorm(gamma),
         )
-        new_name = (
-            f"{work_dir.name}_bw{config.observation.bandwidth_mhz:.0f}_"
-            f"ch{config.observation.n_channels}_fr{config.observation.freq_mhz:.0f}_"
-            f"sec{config.observation.seconds}{img_path.name.replace('wsclean-', '')}"
-        )
-        new_path = work_dir / new_name
-        shutil.move(str(img_path), str(new_path))
-        logger.debug(f"Renamed {img_path} -> {new_path}")
-
-        ctx.manifest.outputs.extend([png_path.name, new_path.name])
+        ctx.manifest.outputs.extend([png_path.name, img_path.name])

@@ -1,11 +1,18 @@
 """Image production behavior."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import astropy.units as u
 
 from skasim.config import ImgConfig, SimConfig
-from skasim.imaging import build_wsclean_argv, run_wsclean_command
+from skasim.imaging import (
+    build_wsclean_argv,
+    collect_wsclean_outputs,
+    run_wsclean_command,
+    wsclean_output_prefix,
+)
+from skasim.manifest import create_run_context
 
 
 def test_build_wsclean_argv_uses_default_command():
@@ -71,3 +78,87 @@ def test_run_wsclean_command_uses_argv_and_working_directory(tmp_path, monkeypat
     assert calls[0][1]["cwd"] == str(tmp_path)
     assert calls[0][1]["shell"] is False
     assert calls[0][1]["check"] is True
+
+
+def test_collect_wsclean_outputs_matches_only_configured_prefix(tmp_path):
+    """WSClean output discovery ignores files from other runs."""
+    expected = [
+        tmp_path / "run-clean-MFS-dirty.fits",
+        tmp_path / "run-clean-MFS-image.fits",
+    ]
+    unrelated = [
+        tmp_path / "old-run-MFS-image.fits",
+        tmp_path / "wsclean-0000-image.fits",
+    ]
+    for path in expected + unrelated:
+        path.write_text("fits", encoding="utf-8")
+
+    outputs = collect_wsclean_outputs(tmp_path, "run-clean")
+
+    assert outputs == expected
+
+
+def test_wsclean_output_prefix_is_run_scoped(tmp_path):
+    """WSClean -name uses a stable prefix scoped to the current run."""
+    config = SimConfig(output_prefix=str(tmp_path / "example"))
+    ctx = create_run_context(config)
+
+    prefix = wsclean_output_prefix(ctx)
+
+    assert prefix == "example_SKA1MID_wsclean"
+
+
+def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
+    tmp_path, monkeypatch
+):
+    """WSClean imaging records only stable outputs for the current prefix."""
+    from skasim.imaging import run_wsclean_imaging
+
+    class FakeImage:
+        def __init__(self, path):
+            self.path = path
+
+        def plot(self, filename, **kwargs):
+            Path(filename).write_text("png", encoding="utf-8")
+
+    def fake_require(module_name):
+        if module_name == "karabo.imaging.image":
+            return SimpleNamespace(Image=FakeImage)
+        if module_name == "karabo.imaging.imager_wsclean":
+            return SimpleNamespace(TMP_PREFIX_CUSTOM="tmp", TMP_PURPOSE_CUSTOM="test")
+        if module_name == "karabo.util.file_handler":
+            return SimpleNamespace(
+                FileHandler=lambda: SimpleNamespace(get_tmp_dir=lambda **kwargs: tmp_path)
+            )
+        raise AssertionError(module_name)
+
+    captured_argv = []
+
+    def fake_run(argv, work_dir):
+        captured_argv.append(argv)
+        prefix = argv[argv.index("-name") + 1]
+        (work_dir / f"{prefix}-MFS-image.fits").write_text("fits", encoding="utf-8")
+        (work_dir / "old-run-MFS-image.fits").write_text("old", encoding="utf-8")
+
+        class Result:
+            stdout = "ok"
+
+        return Result()
+
+    monkeypatch.setattr("skasim.imaging.require_karabo_module", fake_require)
+    monkeypatch.setattr("skasim.imaging.run_wsclean_command", fake_run)
+
+    config = SimConfig(
+        output_prefix=str(tmp_path / "example"),
+        imaging=ImgConfig(imager="wsclean"),
+    )
+    ctx = create_run_context(config)
+
+    run_wsclean_imaging(ctx, ctx.visibility_path, 0.2 * u.deg)
+
+    prefix = wsclean_output_prefix(ctx)
+    assert captured_argv[0][captured_argv[0].index("-name") + 1] == prefix
+    assert f"{prefix}-MFS-image.fits" in ctx.manifest.outputs
+    assert f"{prefix}-MFS-image.png" in ctx.manifest.outputs
+    assert all("old-run" not in output for output in ctx.manifest.outputs)
+    assert all("_bw" not in output for output in ctx.manifest.outputs)
