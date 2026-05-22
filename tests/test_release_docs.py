@@ -25,3 +25,35 @@ def test_installation_docs_describe_pip_and_conda_paths():
     assert "--wsclean-command" in text
     assert "singularity exec /mnt/software/containers/wsclean-3.10-dysco.sif wsclean" in text
     assert "example" in text.lower()
+
+
+def test_release_examples_use_0_2_cli_language():
+    """Release-facing examples use 0.2 CLI flags."""
+    combined = "\n".join(
+        [
+            Path("README.md").read_text(encoding="utf-8"),
+            Path("docs/guide.rst").read_text(encoding="utf-8"),
+            Path("docs/examples.rst").read_text(encoding="utf-8"),
+        ]
+    )
+
+    assert "--flux-density" in combined
+    assert "--stokes-i" in combined
+    assert "--imager" in combined
+    assert "--wsclean-command" in combined
+    assert "--catalogue MIGHTEE" in combined
+    assert "--catalogue 1" not in combined
+    assert "--cleaning" not in combined
+    assert "--I" not in combined
+
+
+def test_smoke_docs_include_named_catalogue_and_fits_shapes():
+    """Smoke docs include named-catalogue and file-backed FITS run shapes."""
+    text = Path("docs/examples.rst").read_text(encoding="utf-8")
+
+    assert "MeerKAT" in text
+    assert "--catalogue MIGHTEE" in text
+    assert "--imager wsclean" in text
+    assert "--wsclean-command" in text
+    assert "--model" in text
+    assert "FITS" in text

@@ -17,6 +17,12 @@ This development folder contains the local planning artifacts for the skasim 0.2
 - `python -m py_compile src/skasim/*.py` passes in the base environment.
 - `python -m pytest -q` does not collect in the base environment because `pydantic` is missing and the local package is not installed on `PYTHONPATH`.
 
+## Implementation Checks
+
+- Lightweight test path used during implementation: `PYTHONPATH=/tmp/skasim-pydeps:src python -m pytest -q`.
+- Syntax check used during implementation: `PYTHONPATH=/tmp/skasim-pydeps:src python -m py_compile src/skasim/*.py`.
+- The temporary dependency path contains downloaded test dependencies for this session only; the supported full-runtime path remains `conda env create -f environment.yml`.
+
 ## Commit Message Rule
 
 After implementing each issue, create a clear commit message that names the completed vertical slice. Each local issue includes a suggested commit message.

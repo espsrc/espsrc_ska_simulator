@@ -31,8 +31,8 @@ cd espsrc_ska_simulator
 # Install (into a Karabo environment)
 pip install -e .
 
-# Run a simple simulation with 3 random point sources, SKA1-MID, clean imaging
-skasim --I 1.0 5.0 10.0 --telescope SKA1MID --seconds 600 --freq 1300 --pixels 1024 --cleaning
+# Run a simple simulation with 3 generated point sources and WSClean imaging
+skasim --flux-density 1.0 5.0 10.0 --telescope SKA1MID --seconds 600 --freq 1300 --pixels 1024 --imager wsclean
 ```
 
 See [full installation](https://github.com/espsrc/espsrc_ska_simulator/blob/main/docs/installation.rst) for environment setup.
@@ -59,7 +59,11 @@ Key options:
   --bandwidth MHz         Bandwidth
   --n-channels N          Number of channels
   --seconds N             Observation duration
-  --cleaning              Use WSClean instead of OSKAR dirty
+  --flux-density Jy...    Generated source intensities
+  --stokes-i Jy...        Alias for generated source intensities
+  --catalogue NAME        Built-in catalogue: MIGHTEE, GLEAM, or SKAMid
+  --imager NAME           oskar-dirty (default) or wsclean
+  --wsclean-command CMD   WSClean command or container invocation
 ```
 
 Run `skasim --help` for the complete reference, or check the full API documentation.
