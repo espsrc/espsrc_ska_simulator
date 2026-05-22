@@ -56,10 +56,21 @@ def run_dirty_imaging(
     logger.debug(f"Dirty PNG: {dirty_png}")
     logger.debug(f"Dirty FITS: {dirty_fits}")
 
-    ctx.manifest.outputs.extend([
+    image_product_id = f"{work_dir.name}_dirty"
+    ctx.manifest.add_output(
+        "image_product",
         str(dirty_png.relative_to(work_dir)),
+        image_product_id=image_product_id,
+        imager="oskar-dirty",
+        role="preview",
+    )
+    ctx.manifest.add_output(
+        "image_product",
         str(dirty_fits.relative_to(work_dir)),
-    ])
+        image_product_id=image_product_id,
+        imager="oskar-dirty",
+        role="image",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -191,4 +202,27 @@ def run_wsclean_imaging(
             ylabel="DEC",
             norm=PowerNorm(gamma),
         )
-        ctx.manifest.outputs.extend([png_path.name, img_path.name])
+        role = "image"
+        lower_name = img_path.name.lower()
+        if "model" in lower_name:
+            role = "model"
+        elif "residual" in lower_name:
+            role = "residual"
+        elif "dirty" in lower_name:
+            role = "dirty"
+        elif "psf" in lower_name:
+            role = "psf"
+        ctx.manifest.add_output(
+            "image_product",
+            png_path.name,
+            image_product_id=output_prefix,
+            imager="wsclean",
+            role=f"{role}_preview",
+        )
+        ctx.manifest.add_output(
+            "image_product",
+            img_path.name,
+            image_product_id=output_prefix,
+            imager="wsclean",
+            role=role,
+        )

@@ -378,7 +378,10 @@ def run_simulation(
         backend=simulator_backend.SimulatorBackend.OSKAR,
     )
     logger.info(f"Visibilities saved in {visibility_path}")
-    ctx.manifest.outputs.append(str(visibility_path.relative_to(ctx.work_dir)))
+    ctx.manifest.add_output(
+        "visibility",
+        str(visibility_path.relative_to(ctx.work_dir)),
+    )
     return visibility_path
 
 
@@ -406,7 +409,11 @@ def run(config: SimConfig) -> None:
         telescope = build_telescope(ctx)
         telescope_png = ctx.work_dir / f"{ctx.work_dir.name}_{config.telescope}_{config.telescope_version or ''}_telescope.png"
         telescope.plot_telescope(file=str(telescope_png))
-        ctx.manifest.outputs.append(str(telescope_png.relative_to(ctx.work_dir)))
+        ctx.manifest.add_output(
+            "plot",
+            str(telescope_png.relative_to(ctx.work_dir)),
+            role="telescope",
+        )
 
         freq = config.observation.freq_mhz * u.MHz
         fov = compute_fov(config, freq)

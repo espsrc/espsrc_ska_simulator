@@ -26,12 +26,13 @@ def _find_image_outputs(manifest: RunManifest, work_dir: Path) -> list[dict]:
     """extract image paths, captions, and base64 data for inline embedding."""
     results: list[dict] = []
     for o in manifest.outputs:
-        if not o.endswith((".png", ".jpg", ".jpeg")):
+        output_path = o.path if hasattr(o, "path") else o
+        if not output_path.endswith((".png", ".jpg", ".jpeg")):
             continue
-        fpath = work_dir / o
-        caption = _infer_image_caption(Path(o).name)
+        fpath = work_dir / output_path
+        caption = _infer_image_caption(Path(output_path).name)
         data_b64 = _file_to_base64_data_uri(fpath)
-        results.append({"path": o, "caption": caption, "data": data_b64})
+        results.append({"path": output_path, "caption": caption, "data": data_b64})
     return results
 
 

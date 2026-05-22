@@ -157,8 +157,9 @@ def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
     run_wsclean_imaging(ctx, ctx.visibility_path, 0.2 * u.deg)
 
     prefix = wsclean_output_prefix(ctx)
+    output_paths = [output.path for output in ctx.manifest.outputs]
     assert captured_argv[0][captured_argv[0].index("-name") + 1] == prefix
-    assert f"{prefix}-MFS-image.fits" in ctx.manifest.outputs
-    assert f"{prefix}-MFS-image.png" in ctx.manifest.outputs
-    assert all("old-run" not in output for output in ctx.manifest.outputs)
-    assert all("_bw" not in output for output in ctx.manifest.outputs)
+    assert f"{prefix}-MFS-image.fits" in output_paths
+    assert f"{prefix}-MFS-image.png" in output_paths
+    assert all("old-run" not in output for output in output_paths)
+    assert all("_bw" not in output for output in output_paths)

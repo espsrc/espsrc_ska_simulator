@@ -13,6 +13,16 @@ from pydantic import BaseModel, Field
 from .config import SimConfig
 from .utils import init_logger
 
+OutputKind = Literal[
+    "visibility",
+    "image_product",
+    "plot",
+    "log",
+    "manifest",
+    "weblog",
+    "sky_model",
+]
+
 
 class Milestone(BaseModel):
     """single checkpoint in a simulation run."""
@@ -24,6 +34,17 @@ class Milestone(BaseModel):
     details: dict = Field(default_factory=dict)
 
 
+class OutputRecord(BaseModel):
+    """One output produced by a run."""
+
+    kind: OutputKind
+    path: str
+    image_product_id: Optional[str] = None
+    imager: Optional[str] = None
+    role: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+
+
 class RunManifest(BaseModel):
     """canonical machine-readable record of one simulation run."""
 
@@ -33,7 +54,7 @@ class RunManifest(BaseModel):
     completed_at: Optional[datetime] = None
     config: SimConfig
     milestones: list[Milestone] = Field(default_factory=list)
-    outputs: list[str] = Field(default_factory=list)
+    outputs: list[OutputRecord] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
     def add_milestone(
@@ -53,6 +74,27 @@ class RunManifest(BaseModel):
         )
         self.milestones.append(ms)
         return ms
+
+    def add_output(
+        self,
+        kind: OutputKind,
+        path: str,
+        image_product_id: Optional[str] = None,
+        imager: Optional[str] = None,
+        role: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> OutputRecord:
+        """append a structured output record and return it."""
+        output = OutputRecord(
+            kind=kind,
+            path=path,
+            image_product_id=image_product_id,
+            imager=imager,
+            role=role,
+            metadata=metadata or {},
+        )
+        self.outputs.append(output)
+        return output
 
     def mark_completed(self) -> None:
         """mark the run as completed."""
@@ -99,7 +141,7 @@ def create_run_context(config: SimConfig) -> RunContext:
     work_dir = Path(prefix).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    log_file = str(work_dir / f"{prefix}.log")
+    log_file = str(work_dir / f"{work_dir.name}.log")
     init_logger(log_file)
 
     manifest = RunManifest(
@@ -118,6 +160,8 @@ def create_run_context(config: SimConfig) -> RunContext:
         weblog_path=work_dir / "weblog.html",
         sky_file_resolved=None,
     )
+    ctx.manifest.add_output("log", ctx.log_path.name)
+    ctx.manifest.add_output("manifest", ctx.manifest_path.name)
 
     if config.sky_file is not None:
         fpath = config.sky_file
