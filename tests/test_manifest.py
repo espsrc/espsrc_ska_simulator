@@ -1,6 +1,7 @@
 """Run manifest behavior."""
 
 import json
+import re
 from datetime import datetime
 
 from skasim.config import SimConfig
@@ -43,3 +44,13 @@ def test_create_run_context_records_log_and_manifest_outputs(tmp_path):
 
     assert outputs["log"].endswith(".log")
     assert outputs["manifest"] == "run_manifest.json"
+
+
+def test_default_run_id_uses_second_precision(tmp_path, monkeypatch):
+    """Default run IDs use YYYYMMDD_HHMMSS_<telescope> without random suffixes."""
+    monkeypatch.chdir(tmp_path)
+
+    ctx = create_run_context(SimConfig(telescope="MEERKAT"))
+
+    assert re.fullmatch(r"\d{8}_\d{6}_MEERKAT", ctx.manifest.run_id)
+    assert ctx.work_dir.name == ctx.manifest.run_id

@@ -198,6 +198,11 @@ def build_sky_model(
                 "n_sources": n_srcs,
             },
         )
+        ctx.manifest.add_output(
+            "sky_model",
+            str(ctx.sky_file_resolved),
+            metadata={"format": config.sky_format, "n_sources": n_srcs},
+        )
         return sky_model, center
 
     # 2) built-in catalogue
@@ -353,9 +358,7 @@ def run_simulation(
 
     freq = config.observation.freq_mhz * u.MHz
     fov = compute_fov(config, freq)
-    _, _, _, n_channels, delta_freq, _ = build_observation(
-        ctx, sky_model.get_center(), telescope
-    )
+    delta_freq = config.observation.delta_freq_mhz * u.MHz
 
     params = {
         "channel_bandwidth_hz": delta_freq.to(u.Hz).value,

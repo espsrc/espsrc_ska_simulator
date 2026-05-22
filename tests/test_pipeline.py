@@ -19,6 +19,7 @@ from skasim.pipeline import (
     build_sky_model,
     compute_fov,
     parse_center,
+    run_simulation,
     source_ref_get_best_observation_time,
 )
 
@@ -238,6 +239,21 @@ def test_load_sky_from_file_empty_json_raises():
 # --------------------------------------------------------------------------- #
 
 
+def test_build_sky_model_file_records_sky_model_output(tmp_path):
+    """File-backed sky model sources are recorded as sky_model outputs."""
+    source_file = tmp_path / "sources.json"
+    source_file.write_text(json.dumps([_single_source_json()]), encoding="utf-8")
+    config = SimConfig(sky_file=str(source_file))
+    ctx = _make_ctx(tmp_path, config)
+
+    build_sky_model(ctx, fov=0.2 * u.deg)
+
+    sky_outputs = [
+        output for output in ctx.manifest.outputs if output.kind == "sky_model"
+    ]
+    assert sky_outputs[0].path == str(source_file.resolve())
+
+
 def test_build_sky_model_random_source_count(tmp_path):
     """Random source generation produces exactly len(I) sources."""
     config = SimConfig(I=[1.0, 5.0, 10.0, 20.0])
@@ -419,3 +435,40 @@ def test_run_renders_weblog_on_failure(tmp_path, monkeypatch):
     assert any(output["kind"] == "weblog" for output in manifest["outputs"])
     assert "failed" in weblog
     assert "boom" in weblog
+
+
+def test_run_simulation_does_not_rebuild_observation(tmp_path, monkeypatch):
+    """Simulation uses the already-built observation instead of duplicating setup."""
+    class FakeInterferometerSimulation:
+        params = None
+        run_args = None
+
+        def __init__(self, **params):
+            FakeInterferometerSimulation.params = params
+
+        def run_simulation(self, **kwargs):
+            FakeInterferometerSimulation.run_args = kwargs
+
+    def fake_require(module_name):
+        if module_name == "karabo.simulation.interferometer":
+            return MagicMock(InterferometerSimulation=FakeInterferometerSimulation)
+        if module_name == "karabo.simulator_backend":
+            return MagicMock(SimulatorBackend=MagicMock(OSKAR="OSKAR"))
+        raise AssertionError(module_name)
+
+    monkeypatch.setattr("skasim.pipeline.require_karabo_module", fake_require)
+    monkeypatch.setattr(
+        "skasim.pipeline.build_observation",
+        lambda *args, **kwargs: pytest.fail("build_observation should not run"),
+    )
+    config = SimConfig(output_prefix=str(tmp_path / "sim"))
+    ctx = create_run_context(config)
+    sky_model = MagicMock()
+
+    visibility_path = run_simulation(ctx, object(), object(), sky_model)
+
+    assert visibility_path == ctx.visibility_path
+    assert FakeInterferometerSimulation.params["channel_bandwidth_hz"] == pytest.approx(
+        config.observation.delta_freq_mhz * 1e6
+    )
+    assert FakeInterferometerSimulation.run_args["observation"] is not None

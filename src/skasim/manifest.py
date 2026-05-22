@@ -136,7 +136,7 @@ class RunContext(BaseModel):
 
 def create_run_context(config: SimConfig) -> RunContext:
     """create work_dir, init logger, build RunContext with empty manifest."""
-    prefix = config.output_prefix or datetime.now().strftime("%Y%m%d_%H%M")
+    prefix = config.output_prefix or datetime.now().strftime("%Y%m%d_%H%M%S")
     prefix = f"{prefix}_{config.telescope.replace('-', '_')}"
     work_dir = Path(prefix).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
