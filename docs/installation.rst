@@ -1,85 +1,56 @@
 Installation
 ============
 
-``skasim`` depends on the `Karabo <https://i4ds.github.io/Karabo-Pipeline/>`_
-pipeline framework, the `OSKAR <https://ska-telescope.gitlab.io/sim/oskar/index.html>`_
-simulation backend and, optionally, on the `WSClean <https://gitlab.com/aroffringa/wsclean>`_
-imager for cleaned-image production.
+``skasim`` supports two installation paths:
 
-Prerequisites
--------------
+- a **pip-only** path for lightweight use, including imports, configuration
+  validation, CLI help, documentation builds, and lightweight tests;
+- a **conda full-runtime** path for executing simulations with Karabo, OSKAR,
+  and the supported runtime stack.
 
-- Python ≥ 3.8
-- `Karabo` with its full dependency stack (OSKAR, RASCIL, ska-sdp-datamodels)
-- (Optional) ``wsclean`` binary on ``$PATH``, if you plan to use the cleaned imaging pathway
+Pip-only lightweight install
+----------------------------
 
-Start with a Miniconda environment
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-It is recommended to use a clean Conda environment to manage the complex dependency stack::
-
-    # Get Miniconda
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-    bash Miniconda3-latest-Linux-x86_64.sh
-    source ~/miniconda3/bin/activate
-    conda init bash
-    conda install -n base conda-libmamba-solver
-
-    # Create and activate environment
-    conda create -n karabo python=3.9
-    conda activate karabo
-
-Install Karabo pipeline
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Install the Karabo pipeline via Conda::
-
-    conda install -c nvidia/label/cuda-11.7.0 -c i4ds -c conda-forge karabo-pipeline
-
-Install RASCIL
-~~~~~~~~~~~~~~
-
-RASCIL must be installed from source. Ensure ``cmake`` and ``g++`` are available on your system::
-
-    python -m pip install --upgrade pip setuptools wheel
-    python -m pip install git+https://gitlab.com/ska-telescope/external/rascil.git
-
-Install remaining dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Install OSKAR and other required packages::
-
-    python -m pip install --use-pep517 'git+https://github.com/OxfordSKA/OSKAR.git@master#egg=oskarpy&subdirectory=python'
-    python -m pip install ska-sdp-datamodels --extra-index-url https://artefact.skao.int/repository/pypi-internal/simple
-    python -m pip install thefuzz attrs radio-beam
-
-Installing skasim
------------------
-
-Clone the repository and install in editable mode::
+Use this path when you want to inspect the CLI, validate configuration, build
+the documentation, or run tests that do not execute Karabo simulations::
 
     git clone git@github.com:espsrc/espsrc_ska_simulator.git
     cd espsrc_ska_simulator
-    pip install -e .
+    python -m pip install -e .
 
-.. note::
-   If you are installing into a pre-configured Karabo environment, use the ``--no-deps`` flag to avoid overwriting pinned dependencies:
-   ``pip install -e . --no-deps``
+This install intentionally does not provide the full Karabo simulation runtime.
+Commands such as ``skasim --help`` should work, but running a simulation requires
+the conda environment below.
 
-WSClean (optional)
-------------------
-
-If you want to use the cleaned imaging pathway (``--cleaning`` flag), the
-``wsclean`` binary must be installed separately and available on your
-``$PATH``. On Debian/Ubuntu systems with the ``casacore`` stack::
-
-    sudo apt install wsclean
-
-Verifying the installation
+Conda full-runtime install
 --------------------------
 
-After installation, confirm the CLI is available::
+Use the checked-in environment file for simulation runs::
+
+    conda env create -f environment.yml
+    conda activate skasim
+
+The environment is named ``skasim`` and installs ``karabo-pipeline`` from the
+supported conda channels. It also installs this repository in editable mode.
+
+WSClean
+-------
+
+The WSClean command defaults to ``wsclean``. If WSClean is available through a
+wrapper or container, pass it explicitly with ``--wsclean-command``.
+
+On this machine, the Singularity container can be used as an example::
+
+    skasim --imager wsclean \
+      --wsclean-command "singularity exec /mnt/software/containers/wsclean-3.10-dysco.sif wsclean"
+
+This command is an environment-specific example, not the default.
+
+Verifying The Installation
+--------------------------
+
+For the pip-only path, confirm that the CLI can be inspected::
 
     skasim --help
 
-You should see the help menu with options for telescope, frequency, imaging, and source settings.
+For the conda full-runtime path, activate ``skasim`` before running simulations.

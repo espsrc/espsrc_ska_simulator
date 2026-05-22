@@ -1,0 +1,11 @@
+name: skasim
+channels:
+  - nvidia/label/cuda-11.7.0
+  - i4ds
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pip
+  - karabo-pipeline
+  - pip:
+      - -e .
