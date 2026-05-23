@@ -4,6 +4,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import astropy.units as u
+import numpy as np
+import pytest
+from astropy.io import fits
 
 from skasim.config import ImgConfig, ObsConfig, SimConfig
 from skasim.imaging import (
@@ -11,6 +14,7 @@ from skasim.imaging import (
     collect_wsclean_outputs,
     run_wsclean_command,
     wsclean_output_prefix,
+    write_fits_preview,
 )
 from skasim.manifest import create_run_context
 
@@ -123,6 +127,40 @@ def test_wsclean_output_prefix_is_run_scoped(tmp_path):
     prefix = wsclean_output_prefix(ctx)
 
     assert prefix == "example_wsclean"
+
+
+def test_write_fits_preview_uses_aplpy_cmasher_renderer(tmp_path):
+    """WSClean FITS previews are rendered as WCS-aware APLpy PNGs."""
+    pytest.importorskip("aplpy")
+    pytest.importorskip("cmasher")
+
+    fits_path = tmp_path / "image.fits"
+    png_path = tmp_path / "image.png"
+    data = np.array(
+        [
+            [0.0, 1.0e-6, 2.0e-6],
+            [3.0e-6, 4.0e-6, 5.0e-6],
+            [6.0e-6, 7.0e-6, 8.0e-6],
+        ]
+    )
+    header = fits.Header()
+    header["CTYPE1"] = "RA---SIN"
+    header["CTYPE2"] = "DEC--SIN"
+    header["CRVAL1"] = 150.0
+    header["CRVAL2"] = 2.0
+    header["CRPIX1"] = 2.0
+    header["CRPIX2"] = 2.0
+    header["CDELT1"] = -1.0 / 3600.0
+    header["CDELT2"] = 1.0 / 3600.0
+    header["BUNIT"] = "Jy/beam"
+    header["BMAJ"] = 2.0 / 3600.0
+    header["BMIN"] = 1.5 / 3600.0
+    header["BPA"] = 35.0
+    fits.writeto(fits_path, data, header, overwrite=True)
+
+    write_fits_preview(fits_path, png_path, "Ignored title")
+
+    assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(

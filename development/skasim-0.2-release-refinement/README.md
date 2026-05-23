@@ -86,6 +86,8 @@ Post-assessment changes are currently uncommitted. They address
 - `--output-dir` names the exact output directory.
 - Imaging is selected explicitly with `--imager oskar-dirty` or
   `--imager wsclean`.
+- `--list-telescopes` separates telescopes that need no version from those
+  that require `--telescope-version`, and shows accepted version names.
 - WSClean iterations use `--clean-iterations`.
 - WSClean invocation is configurable through `--wsclean-command`.
 - WSClean commands are parsed into argv and executed with `shell=False`.
@@ -93,8 +95,16 @@ Post-assessment changes are currently uncommitted. They address
   products.
 - WSClean `-channels-out` is capped to the simulated channel count, up to 8,
   so reduced-channel smoke runs are valid.
-- WSClean PNG previews are rendered directly from FITS files with a non-
-  interactive Matplotlib backend to avoid Karabo/X shutdown errors.
+- FITS image-product PNG previews are rendered with APLpy and CMasher using
+  in-memory 2D celestial HDUs, a non-interactive Matplotlib backend, WCS axes,
+  `cmr.rainforest`, mJy/beam color scales, RMS-based clipping, optional
+  contours, and beam overlays when FITS beam metadata is available.
+- The weblog groups WSClean MFS model, clean, and residual products as the
+  primary science products. The PSF is linked from the product header rather
+  than shown as a fourth image.
+- The weblog places the telescope layout next to the compact
+  observation/telescope configuration, keeps run timing small in the header,
+  and moves the detailed milestone timeline after the science images.
 - Every run records logs, manifest, visibility data, image products, plots, sky
   model source, and weblog outputs by structured kind where applicable.
 - Every run writes `weblog.html`, including failed runs.
@@ -121,6 +131,12 @@ Post-assessment changes are currently uncommitted. They address
 - Config models reject unknown fields with Pydantic `extra="forbid"`.
 - Scientific/configuration metadata is no longer encoded in WSClean output
   filenames; it belongs in the manifest.
+- The proposed full Python f-string weblog rewrite was rejected. The weblog
+  remains Jinja2-based so HTML structure stays separated from Python data
+  preparation.
+- The proposed pipeline-level sky-model preview generator was rejected for this
+  pass because it added a second plotting subsystem beyond the requested
+  weblog/image-product presentation changes.
 
 ## Modified Files By Area
 
@@ -155,7 +171,7 @@ PYTHONPATH=/tmp/skasim-pydeps:src python -m pytest -q
 Latest result:
 
 ```text
-97 passed in the focused CLI/config/pipeline/manifest/imaging/runtime subset
+109 passed in the focused CLI/config/pipeline/manifest/imaging/runtime/docs/weblog subset
 ```
 
 The temporary dependency path is only for this development session. The verified

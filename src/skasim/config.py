@@ -139,7 +139,7 @@ class SimConfig(BaseModel):
             return data
         if (
             any(
-                data.get(field) is not None
+                data.get(field) not in (None, [])
                 for field in (
                     "source_flux_jy",
                     "stokes_q_jy",

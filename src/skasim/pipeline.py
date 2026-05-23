@@ -49,10 +49,20 @@ def build_telescope(ctx: RunContext):
     else:
         logger.info(f"Telescope {config.telescope}  (no version)")
     telescope = telescope_module.Telescope.constructor(config.telescope, **kwargs)
+    details = {"name": config.telescope, "version": config.telescope_version}
+    try:
+        if hasattr(telescope, "antennas") and telescope.antennas is not None:
+            details["n_stations"] = len(telescope.antennas)
+        elif hasattr(telescope, "num_antennas"):
+            details["n_stations"] = telescope.num_antennas
+        elif hasattr(telescope, "num_stations"):
+            details["n_stations"] = telescope.num_stations
+    except Exception:
+        pass
     ctx.add_milestone(
         "telescope_built",
         "completed",
-        details={"name": config.telescope, "version": config.telescope_version},
+        details=details,
     )
     return telescope
 
@@ -274,11 +284,6 @@ def build_sky_model(
         details={"format": "random", "n_sources": n_sources, "reference": "HCG16"},
     )
     return sky_model, center
-
-
-# --------------------------------------------------------------------------- #
-# observation
-# --------------------------------------------------------------------------- #
 
 
 def build_observation(

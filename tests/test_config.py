@@ -199,6 +199,14 @@ def test_sim_config_accepts_named_catalog():
     assert cfg.stokes_v_jy is None
 
 
+def test_sim_config_accepts_serialized_catalog_run_empty_source_flux():
+    """Manifest round-trips keep explicit-source runs loadable."""
+    cfg = SimConfig(catalog="MIGHTEE", source_flux_jy=[])
+
+    assert cfg.catalog == "MIGHTEE"
+    assert cfg.source_flux_jy == []
+
+
 def test_sim_config_numeric_catalog_zero_has_migration_message():
     """catalog=0 triggers the numeric migration error, not silent None."""
     with pytest.raises(ValidationError, match="Numeric catalog IDs were removed"):

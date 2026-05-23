@@ -226,12 +226,18 @@ def main(argv: Optional[List[str]] = None) -> None:
         OSKARTelescopesWithVersionType = (
             telescope_module.OSKARTelescopesWithVersionType
         )
-
-        choices = get_args(OSKARTelescopesWithVersionType) + get_args(
-            OSKARTelescopesWithoutVersionType
+        OSKAR_TELESCOPE_TO_VERSIONS = (
+            telescope_module.OSKAR_TELESCOPE_TO_VERSIONS
         )
-        for t in choices:
-            print(t)
+
+        print("=== Telescopes (No version required) ===")
+        for t in sorted(get_args(OSKARTelescopesWithoutVersionType)):
+            print(f"  {t}")
+        
+        print("\n=== Telescopes requiring a version (Supply via --telescope-version) ===")
+        for t in sorted(get_args(OSKARTelescopesWithVersionType)):
+            versions = [v.name for v in OSKAR_TELESCOPE_TO_VERSIONS.get(t, [])]
+            print(f"  {t:<18} | Accepted versions: {', '.join(versions)}")
         sys.exit(0)
 
     # map CLI args to SimConfig

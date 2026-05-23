@@ -48,9 +48,31 @@ This note records the implementation decisions made after reviewing
   prefix-plus-telescope behavior was removed.
 - CLI users use `--clean-iterations`, not `--niter`.
 
+## Weblog And Preview Refinement
+
+- APLpy and CMasher are accepted runtime dependencies for FITS image-product
+  preview rendering.
+- FITS previews are generated from in-memory 2D celestial HDUs so WCS axes,
+  colorbar, beam overlay, and contours are handled by APLpy without temporary
+  files.
+- Preview display data are converted to mJy/beam and the rendered HDU metadata
+  records `BUNIT=mJy/beam`.
+- The weblog remains Jinja2-based. Removing Jinja2 in favor of large Python
+  f-string HTML was rejected because it made the rendering code harder to
+  maintain while adding heavier plotting dependencies anyway.
+- The weblog now prioritizes science products: WSClean MFS Model, Clean, and
+  Residual images are shown together, with the PSF exposed as a direct link.
+- The telescope layout plot is displayed in the compact
+  Observation/Telescope section instead of the supporting-plot gallery.
+- Runtime timing is summarized in the small header metadata, and the detailed
+  milestone timeline is placed after the science images.
+- The broader pipeline-level sky-model preview generator proposed during
+  weblog polishing was rejected for now; sky-model preview generation needs a
+  separate design and tests before it becomes pipeline behavior.
+
 ## Verification
 
 - `PYTHONPATH=/tmp/skasim-pydeps:src python -m py_compile src/skasim/*.py`
 - `PYTHONPATH=/tmp/skasim-pydeps:src python -m pytest -q`
 - Latest focused result:
-  `97 passed in tests/test_config.py tests/test_cli.py tests/test_pipeline.py tests/test_manifest.py tests/test_imaging.py tests/test_runtime_imports.py`.
+  `109 passed in tests/test_config.py tests/test_cli.py tests/test_pipeline.py tests/test_manifest.py tests/test_imaging.py tests/test_runtime_imports.py tests/test_release_docs.py tests/test_weblog.py`.

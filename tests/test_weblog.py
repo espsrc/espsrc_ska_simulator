@@ -2,6 +2,9 @@
 
 from datetime import datetime, timedelta, timezone
 
+import numpy as np
+from astropy.io import fits
+
 from skasim.config import SimConfig
 from skasim.manifest import RunManifest
 from skasim.weblog import render_weblog
@@ -60,7 +63,54 @@ def test_weblog_uses_pipeline_milestone_names_for_durations(tmp_path):
 
     html = render_weblog(manifest, tmp_path)
 
-    assert "<h3>simulation</h3>" in html
-    assert "1m 15s" in html
-    assert "<h3>imaging</h3>" in html
-    assert "10.0s" in html
+    assert "simulation 1m 15s" in html
+    assert "imaging 10.0s" in html
+
+
+def test_weblog_groups_wsclean_mfs_products_and_stats(tmp_path):
+    """MFS products render as model/clean/residual with peak and RMS stats."""
+    manifest = RunManifest(
+        run_id="science-products",
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
+        config=SimConfig(),
+    )
+    prefix = "science-products_wsclean"
+    for role in ("model", "image", "residual", "psf"):
+        stem = f"{prefix}-MFS-{role if role != 'image' else 'image'}"
+        fits_path = tmp_path / f"{stem}.fits"
+        png_path = tmp_path / f"{stem}.png"
+        data = np.array([[1.0e-3, 2.0e-3], [3.0e-3, 4.0e-3]])
+        if role == "residual":
+            data = np.array([[0.0, 1.0e-6], [-1.0e-6, 0.0]])
+        fits.writeto(fits_path, data, overwrite=True)
+        png_path.write_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+            b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+            b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        preview_role = role
+        manifest.add_output(
+            "image_product",
+            fits_path.name,
+            image_product_id=prefix,
+            imager="wsclean",
+            role=preview_role,
+        )
+        manifest.add_output(
+            "image_product",
+            png_path.name,
+            image_product_id=prefix,
+            imager="wsclean",
+            role=f"{preview_role}_preview",
+        )
+
+    html = render_weblog(manifest, tmp_path)
+
+    assert "Science Products" in html
+    assert "Model" in html
+    assert "Clean" in html
+    assert "Residual" in html
+    assert "View PSF" in html
+    assert "Peak:" in html
+    assert "4.000 mJy/beam" in html
+    assert "RMS:" in html

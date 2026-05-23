@@ -55,8 +55,18 @@ def test_import_skasim_does_not_require_karabo():
     assert result.stdout.strip() == "ImgConfig,ObsConfig,SimConfig"
 
 
-def test_simulation_without_karabo_fails_with_installation_message(tmp_path):
+def test_simulation_without_karabo_fails_with_installation_message(tmp_path, monkeypatch):
     """Full simulation execution reports the missing Karabo runtime clearly."""
+    import importlib
+    orig_import = importlib.import_module
+
+    def mock_import(name, package=None):
+        if name == "karabo" or name.startswith("karabo."):
+            raise ImportError(f"Mocked missing {name}", name=name)
+        return orig_import(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", mock_import)
+
     from skasim.pipeline import run
 
     config = SimConfig(

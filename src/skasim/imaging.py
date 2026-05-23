@@ -11,6 +11,7 @@ import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
+from astropy.wcs import WCS
 from loguru import logger
 
 from .config import SimConfig
@@ -47,20 +48,12 @@ def run_dirty_imaging(
 
     dirty_png = work_dir / f"{work_dir.name}_dirty.png"
     dirty_fits = work_dir / f"{work_dir.name}_dirty.fits"
-    try:
-        dirty_image.plot(
-            title="Dirty image OSKAR",
-            filename=str(dirty_png),
-            wcs_enabled=True,
-            xlabel="RA",
-            ylabel="DEC",
-            block=False,
-        )
-    finally:
-        import matplotlib.pyplot as plt
-
-        plt.close("all")
     dirty_image.write_to_file(str(dirty_fits), overwrite=True)
+    try:
+        write_fits_preview(dirty_fits, dirty_png, "OSKAR Dirty Image")
+    except Exception as e:
+        logger.warning(f"Failed to generate APLpy dirty image preview: {e}")
+
     logger.debug(f"Dirty PNG: {dirty_png}")
     logger.debug(f"Dirty FITS: {dirty_fits}")
 
@@ -77,7 +70,7 @@ def run_dirty_imaging(
         str(dirty_fits.relative_to(work_dir)),
         image_product_id=image_product_id,
         imager="oskar-dirty",
-        role="image",
+        role="dirty",
     )
 
 
@@ -148,40 +141,87 @@ def wsclean_output_prefix(ctx: RunContext) -> str:
     return f"{ctx.work_dir.name}_wsclean"
 
 
-def write_fits_preview(img_path: Path, png_path: Path, title: str) -> None:
-    """Write a non-interactive PNG preview for a WSClean FITS image."""
+def write_fits_preview(
+    img_path: Path,
+    png_path: Path,
+    title: str,
+    recenter: tuple[float, float, float] | None = None,
+) -> None:
+    """Write a publication-style PNG preview for a WSClean FITS image, optionally recentered."""
     import matplotlib
 
     matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
-    from matplotlib.colors import PowerNorm
+    import aplpy
+    import cmasher as cmr
 
-    data = fits.getdata(img_path)
-    data = data.squeeze()
-    while data.ndim > 2:
-        data = data[0]
+    with fits.open(img_path) as source_hdul:
+        source_hdu = source_hdul[0]
+        data = np.asarray(source_hdu.data).squeeze()
+        while data.ndim > 2:
+            data = data[0]
 
-    fig, ax = plt.subplots(figsize=(7, 6))
-    finite = data[np.isfinite(data)]
-    if finite.size:
-        vmin, vmax = np.nanpercentile(finite, [1, 99])
-        if vmin == vmax:
-            vmin, vmax = None, None
-    else:
-        vmin, vmax = None, None
-    image = ax.imshow(
-        data,
-        origin="lower",
-        cmap="viridis",
-        norm=PowerNorm(0.3, vmin=vmin, vmax=vmax),
-    )
-    ax.set_title(title)
-    ax.set_xlabel("RA")
-    ax.set_ylabel("DEC")
-    fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
-    fig.tight_layout()
-    fig.savefig(png_path, dpi=130)
-    plt.close(fig)
+        display_data = data * 1000.0
+        finite = display_data[np.isfinite(display_data)]
+        if finite.size:
+            rms = float(np.nanstd(finite))
+            vmin = float(np.nanmin(finite))
+            vmax = float(np.nanmax(finite))
+            if rms > 0:
+                vmin = max(vmin, -2.0 * rms)
+                vmax = min(vmax, 20.0 * rms)
+        else:
+            rms = 0.0
+            vmin = vmax = None
+
+        hdu = _make_2d_preview_hdu(display_data, source_hdu.header, bunit="mJy/beam")
+        hdul = fits.HDUList([hdu])
+        fig = plt.figure(figsize=(7, 6))
+        ffig = aplpy.FITSFigure(hdul, figure=fig)
+        
+        if recenter:
+            ra_deg, dec_deg, fov_deg = recenter
+            ffig.recenter(ra_deg, dec_deg, width=fov_deg, height=fov_deg)
+
+        cmap = cmr.get_sub_cmap("cmr.rainforest", 0.30, 0.85)
+        ffig.show_colorscale(cmap=cmap, vmin=vmin, vmax=vmax)
+        if rms > 0 and finite.size:
+            levels = 5.0 * rms * np.sqrt(3.0) ** np.arange(1, 25)
+            drawable_levels = levels[levels <= np.nanmax(finite)]
+            if drawable_levels.size:
+                ffig.show_contour(
+                    hdul,
+                    levels=drawable_levels,
+                    colors="white",
+                    linewidths=0.45,
+                )
+        if "BMAJ" in hdu.header and "BMIN" in hdu.header:
+            ffig.add_beam()
+            ffig.beam.set_color("white")
+            ffig.beam.set_edgecolor("black")
+        ffig.axis_labels.set_xtext("RA")
+        ffig.axis_labels.set_ytext("Dec")
+        ffig.add_colorbar()
+        ffig.colorbar.set_axis_label_text("mJy/beam")
+        ffig.savefig(str(png_path), dpi=130)
+        plt.close(fig)
+
+def _make_2d_preview_hdu(
+    data: np.ndarray,
+    header: fits.Header,
+    bunit: str | None = None,
+) -> fits.PrimaryHDU:
+    """Build an in-memory 2D celestial HDU suitable for APLpy rendering."""
+    try:
+        preview_header = WCS(header).celestial.to_header()
+    except Exception:
+        preview_header = fits.Header()
+    for key in ("BMAJ", "BMIN", "BPA", "BUNIT", "OBJECT", "TELESCOP", "INSTRUME"):
+        if key in header:
+            preview_header[key] = header[key]
+    if bunit is not None:
+        preview_header["BUNIT"] = bunit
+    return fits.PrimaryHDU(data=data, header=preview_header)
 
 
 def run_wsclean_imaging(
