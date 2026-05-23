@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -68,7 +68,7 @@ class RunManifest(BaseModel):
         ms = Milestone(
             name=name,
             status=status,
-            timestamp_utc=datetime.utcnow(),
+            timestamp_utc=datetime.now(timezone.utc),
             elapsed_s=elapsed_s,
             details=details or {},
         )
@@ -99,7 +99,7 @@ class RunManifest(BaseModel):
     def mark_completed(self) -> None:
         """mark the run as completed."""
         self.status = "completed"
-        self.completed_at = datetime.utcnow()
+        self.completed_at = datetime.now(timezone.utc)
 
     def mark_failed(self, error: str) -> None:
         """mark the run as failed and record the error."""
@@ -136,17 +136,21 @@ class RunContext(BaseModel):
 
 def create_run_context(config: SimConfig) -> RunContext:
     """create work_dir, init logger, build RunContext with empty manifest."""
-    prefix = config.output_prefix or datetime.now().strftime("%Y%m%d_%H%M%S")
-    prefix = f"{prefix}_{config.telescope.replace('-', '_')}"
-    work_dir = Path(prefix).resolve()
+    if config.output_dir is not None:
+        work_dir = Path(config.output_dir).resolve()
+        run_id = work_dir.name
+    else:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_id = f"{run_id}_{config.telescope.replace('-', '_')}"
+        work_dir = Path(run_id).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = str(work_dir / f"{work_dir.name}.log")
     init_logger(log_file)
 
     manifest = RunManifest(
-        run_id=prefix,
-        started_at=datetime.utcnow(),
+        run_id=run_id,
+        started_at=datetime.now(timezone.utc),
         config=config,
     )
 

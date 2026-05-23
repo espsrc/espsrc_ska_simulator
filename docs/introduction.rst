@@ -23,12 +23,16 @@ What skasim provides
 
 The goal of ``skasim`` is to deliver a low-friction wrapper that bundles existing astronomy tools to simulate observations and produce imaging products, facilitating the generation of synthetic images even for users with little experience on radio astronomy.
 
-- **A unified configuration model** based on Pydantic — ``SimConfig``,
-  ``ObsConfig``, ``ImgConfig`` — that validates parameters at construction time.
-- **Multiple sky-model inputs**: FITS catalogues, JSON source lists, Pickle/Karabo models, and built-in catalogues (MIGHTEE, GLEAM).
+- **A strict configuration model** based on Pydantic — ``SimConfig``,
+  ``ObsConfig``, ``ImgConfig`` — that validates parameters at construction time
+  and rejects removed 0.1 fields.
+- **Multiple sky-model inputs**: generated source intensities, FITS catalogs,
+  JSON source lists, Pickle/Karabo models, and named built-in catalogs
+  (MIGHTEE, GLEAM, SKAMid).
 - **Two imaging pathways**: fast dirty imaging via OSKAR, or cleaned (CLEAN-deconvolved) imaging via the external WSClean binary.
 - **A single CLI entrypoint** — that exposes all options as command-line arguments.
-- TODO: add more (web app, etc.)
+- **Run records**: every run writes a structured manifest and a weblog, including
+  failed runs.
 
 How it works
 -------------
@@ -41,7 +45,7 @@ How it works
 The ``run()`` function orchestrates:
 
 1. Telescope construction (loaded by Karabo)
-2. Sky model loading or generation (from file, catalogue, or inline)
+2. Sky model loading or generation (from file, named catalog, or generated source intensities)
 3. Observation definition (frequency, bandwidth, channels, duration)
 4. Visibility simulation via the OSKAR backend
 5. Imaging (dirty via OSKAR, or cleaned via WSClean)

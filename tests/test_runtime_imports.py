@@ -28,7 +28,31 @@ def test_cli_help_does_not_require_karabo():
 
     assert result.returncode == 0, result.stderr
     assert "--model" in result.stdout
-    assert "--catalogue" in result.stdout
+    assert "--catalog" in result.stdout
+
+
+def test_import_skasim_does_not_require_karabo():
+    """The package public API imports without the full Karabo runtime."""
+    repo_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(repo_root / "src"), env.get("PYTHONPATH", "")]
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import skasim; print(','.join(sorted(skasim.__all__)))",
+        ],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ImgConfig,ObsConfig,SimConfig"
 
 
 def test_simulation_without_karabo_fails_with_installation_message(tmp_path):
@@ -36,8 +60,8 @@ def test_simulation_without_karabo_fails_with_installation_message(tmp_path):
     from skasim.pipeline import run
 
     config = SimConfig(
-        output_prefix=str(tmp_path / "missing_karabo"),
-        observation=ObsConfig(seconds=1),
+        output_dir=str(tmp_path / "missing_karabo"),
+        observation=ObsConfig(observation_time_s=1),
     )
 
     with pytest.raises(RuntimeError, match="Karabo.*conda.*skasim"):

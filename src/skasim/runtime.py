@@ -22,6 +22,8 @@ def require_karabo_module(module_name: str) -> ModuleType:
     try:
         return importlib.import_module(module_name)
     except ImportError as exc:
-        if module_name.startswith("karabo") or exc.name == "karabo":
+        # Only translate missing Karabo imports; dependency errors inside Karabo
+        # modules should keep their original traceback.
+        if exc.name == "karabo" or (exc.name or "").startswith("karabo."):
             raise KaraboRuntimeError(KARABO_INSTALL_MESSAGE) from exc
         raise

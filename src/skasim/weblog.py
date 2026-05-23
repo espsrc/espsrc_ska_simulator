@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.resources
-import json
-from pathlib import Path
 import base64
+from pathlib import Path
+
 from jinja2 import Environment, PackageLoader, select_autoescape
 
 from .manifest import RunManifest
@@ -30,6 +29,8 @@ def _find_image_outputs(manifest: RunManifest, work_dir: Path) -> list[dict]:
         if not output_path.endswith((".png", ".jpg", ".jpeg")):
             continue
         fpath = work_dir / output_path
+        if not fpath.exists():
+            continue  # skip missing files (e.g. during failed runs)
         caption = _infer_image_caption(Path(output_path).name)
         data_b64 = _file_to_base64_data_uri(fpath)
         results.append({"path": output_path, "caption": caption, "data": data_b64})
@@ -44,6 +45,7 @@ def _file_to_base64_data_uri(fpath: Path) -> str:
     ext = fpath.suffix.lower()
     mime = "image/png" if ext == ".png" else "image/jpeg"
     return f"data:{mime};base64,{b64}"
+
 
 def _infer_image_caption(filename: str) -> str:
     """return a human-readable caption from an output filename."""
@@ -65,6 +67,7 @@ def _infer_image_caption(filename: str) -> str:
         return "Telescope layout"
     return fname  # fallback to filename
 
+
 def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
     """generate weblog.html content and write it to disk. returns the html string."""
     env = Environment(
@@ -79,27 +82,36 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
         total_elapsed = (manifest.completed_at - manifest.started_at).total_seconds()
 
     milestone_lookup = {m.name: m for m in manifest.milestones}
-    phase_a_duration = None
-    if "phase_a_started" in milestone_lookup and "phase_a_completed" in milestone_lookup:
-        phase_a_duration = (
-            milestone_lookup["phase_a_completed"].timestamp_utc
-            - milestone_lookup["phase_a_started"].timestamp_utc
+    simulation_duration = None
+    if (
+        "simulation_started" in milestone_lookup
+        and "simulation_completed" in milestone_lookup
+    ):
+        simulation_duration = (
+            milestone_lookup["simulation_completed"].timestamp_utc
+            - milestone_lookup["simulation_started"].timestamp_utc
         ).total_seconds()
 
-    phase_b_duration = None
-    if "phase_b_started" in milestone_lookup and "phase_b_completed" in milestone_lookup:
-        phase_b_duration = (
-            milestone_lookup["phase_b_completed"].timestamp_utc
-            - milestone_lookup["phase_b_started"].timestamp_utc
+    imaging_duration = None
+    if (
+        "imaging_started" in milestone_lookup
+        and "imaging_completed" in milestone_lookup
+    ):
+        imaging_duration = (
+            milestone_lookup["imaging_completed"].timestamp_utc
+            - milestone_lookup["imaging_started"].timestamp_utc
         ).total_seconds()
 
     html = template.render(
         manifest=manifest,
         total_elapsed=_humanize_seconds(total_elapsed) if total_elapsed else None,
-        phase_a_duration=_humanize_seconds(phase_a_duration) if phase_a_duration else None,
-        phase_b_duration=_humanize_seconds(phase_b_duration) if phase_b_duration else None,
+        simulation_duration=(
+            _humanize_seconds(simulation_duration) if simulation_duration else None
+        ),
+        imaging_duration=(
+            _humanize_seconds(imaging_duration) if imaging_duration else None
+        ),
         images=_find_image_outputs(manifest, work_dir),
-        json_dump=lambda obj: json.dumps(obj, indent=2, default=str),
     )
 
     weblog_path = work_dir / "weblog.html"

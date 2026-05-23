@@ -136,7 +136,7 @@
       </div>
       <div class="card">
         <h3>frequency</h3>
-        <div class="value">{{ manifest.config.observation.freq_mhz }} <span class="unit">MHz</span></div>
+        <div class="value">{{ manifest.config.observation.frequency_mhz }} <span class="unit">MHz</span></div>
       </div>
       <div class="card">
         <h3>bandwidth</h3>
@@ -148,7 +148,7 @@
       </div>
       <div class="card">
         <h3>duration</h3>
-        <div class="value">{{ manifest.config.observation.seconds }} <span class="unit">s</span></div>
+        <div class="value">{{ manifest.config.observation.observation_time_s }} <span class="unit">s</span></div>
       </div>
       <div class="card">
         <h3>pixels</h3>
@@ -176,25 +176,25 @@
       {% endfor %}
     </div>
 
-    {% if phase_a_duration or phase_b_duration %}
+    {% if simulation_duration or imaging_duration %}
     <div class="summary" style="margin-top:1rem;">
-      {% if phase_a_duration != "?" %}
+      {% if simulation_duration %}
       <div class="card">
         <h3>simulation</h3>
-        <div class="value">{{ phase_a_duration }}</div>
+        <div class="value">{{ simulation_duration }}</div>
       </div>
       {% endif %}
-      {% if phase_b_duration != "?" %}
+      {% if imaging_duration %}
       <div class="card">
         <h3>imaging</h3>
-        <div class="value">{{ phase_b_duration }}</div>
+        <div class="value">{{ imaging_duration }}</div>
       </div>
       {% endif %}
     </div>
     {% endif %}
 
     <!-- sky model summary -->
-    {% set sky_ms = manifest.milestones | selectattr("name", "equalto", "sky_model_loaded") | first %}
+    {% set sky_ms = manifest.milestones | selectattr("name", "equalto", "sky_model_loaded") | list | first | default(none) %}
     {% if sky_ms and sky_ms.details %}
     <h2 style="margin-top:2rem;">sky model</h2>
     <div class="card">

@@ -4,7 +4,7 @@
 
 skasim 0.1 works as an early release baseline, but the repository is not yet shaped for a robust 0.2 release. Users need a clearer command-line interface, reliable installation paths, configurable WSClean execution, inspectable run records, and cleaner module structure without losing the current scientific functionality.
 
-The current interface still exposes ambiguous or transitional concepts: numeric catalogue IDs, `--I` as the source intensity flag, `--cleaning` as a boolean imager switch, and a hardcoded `wsclean` invocation. The code also imports Karabo in places that prevent pip-only imports and lightweight checks from working. Run records are partially flat, weblog generation only happens on success, and imaging output naming/discovery is brittle for future multi-image-product runs.
+The current interface still exposes ambiguous or transitional concepts: numeric catalog IDs, `--I` as the source intensity flag, `--cleaning` as a boolean imager switch, and a hardcoded `wsclean` invocation. The code also imports Karabo in places that prevent pip-only imports and lightweight checks from working. Run records are partially flat, weblog generation only happens on success, and imaging output naming/discovery is brittle for future multi-image-product runs.
 
 The 0.2 release should keep the useful 0.1 behavior, but make the simulator easier to install, test, run, inspect, and extend.
 
@@ -12,7 +12,7 @@ The 0.2 release should keep the useful 0.1 behavior, but make the simulator easi
 
 Create a 0.2 release refinement that preserves the core run behavior while replacing ambiguous interfaces with explicit domain language.
 
-A run should accept one sky model source: a file-backed sky model, a named built-in catalogue, or generated source intensities. Built-in catalogues should be selected by name rather than numeric ID. Generated source mode should use clearer source intensity flags. Imaging should be selected by an explicit imager name, with WSClean configured through a WSClean command that defaults to `wsclean` but can be set to a Singularity invocation on this machine.
+A run should accept one sky model source: a file-backed sky model, a named built-in catalog, or generated source intensities. Built-in catalogs should be selected by name rather than numeric ID. Generated source mode should use clearer source intensity flags. Imaging should be selected by an explicit imager name, with WSClean configured through a WSClean command that defaults to `wsclean` but can be set to a Singularity invocation on this machine.
 
 The package should support pip-only installation for imports, configuration validation, CLI help, docs, and lightweight tests. Full simulation runs remain supported through a conda environment that installs Karabo. Runtime dependencies on Karabo should fail only when execution actually needs Karabo, with clear messages.
 
@@ -25,22 +25,22 @@ Every run should produce a manifest and weblog, including failed runs. The manif
 3. As a simulator user, I want installation instructions for both pip-only and conda workflows, so that I can choose the right setup for my task.
 4. As a simulator user, I want `skasim --help` to work without Karabo installed, so that I can learn the interface before setting up the full runtime stack.
 5. As a simulator user, I want clear runtime errors when Karabo is missing, so that I know how to fix my environment.
-6. As a simulator user, I want built-in catalogues selected by name, so that commands and logs are readable.
-7. As a simulator user, I want numeric catalogue IDs removed, so that outdated commands do not silently encode unclear behavior.
-8. As a simulator user, I want old numeric catalogue IDs to fail with a migration message, so that I know which named catalogue to use.
-9. As a simulator user, I want `--catalog` accepted as an alias for `--catalogue`, so that either spelling works at the CLI.
-10. As a simulator user, I want `--catalogue MIGHTEE`, so that I can use Karabo's built-in MIGHTEE catalogue source.
-11. As a simulator user, I want `--catalogue GLEAM`, so that I can use Karabo's built-in GLEAM catalogue source.
+6. As a simulator user, I want built-in catalogs selected by name, so that commands and logs are readable.
+7. As a simulator user, I want numeric catalog IDs removed, so that outdated commands do not silently encode unclear behavior.
+8. As a simulator user, I want old numeric catalog IDs to fail with a migration message, so that I know which named catalog to use.
+9. As a simulator user, I want `--catalog` accepted as an alias for `--catalog`, so that either spelling works at the CLI.
+10. As a simulator user, I want `--catalog MIGHTEE`, so that I can use Karabo's built-in MIGHTEE catalog source.
+11. As a simulator user, I want `--catalog GLEAM`, so that I can use Karabo's built-in GLEAM catalog source.
 12. As a simulator user, I want file-backed sky models to remain available through `--model`, so that I can run from FITS, JSON, pickle, or Karabo model files.
-13. As a simulator user, I want `--model MIGHTEE_DR1.fits` to be treated differently from `--catalogue MIGHTEE`, so that file-backed and built-in catalogue sources remain distinct.
-14. As a simulator user, I want exactly one explicit sky model source in 0.2, so that accidentally passing both `--model` and `--catalogue` fails rather than being silently prioritized.
-15. As a future simulator user, I want the internal design to be ready for multiple sky model sources, so that later releases can combine background catalogues and foreground source models.
-16. As a simulator user, I want generated source intensity mode to remain available when no file or catalogue is supplied, so that quick random-source runs still work.
+13. As a simulator user, I want `--model MIGHTEE_DR1.fits` to be treated differently from `--catalog MIGHTEE`, so that file-backed and built-in catalog sources remain distinct.
+14. As a simulator user, I want exactly one explicit sky model source in 0.2, so that accidentally passing both `--model` and `--catalog` fails rather than being silently prioritized.
+15. As a future simulator user, I want the internal design to be ready for multiple sky model sources, so that later releases can combine background catalogs and foreground source models.
+16. As a simulator user, I want generated source intensity mode to remain available when no file or catalog is supplied, so that quick random-source runs still work.
 17. As a simulator user, I want a clearer source intensity flag than `--I`, so that I understand it creates generated sources rather than an I/Q/U/V vector.
 18. As a simulator user, I want `--flux-density` to define generated source intensities, so that random source commands read naturally.
 19. As a simulator user, I want `--stokes-i` as a clear alias for source intensities, so that the Stokes meaning is explicit.
 20. As a simulator user, I want old `--I` usage handled with a migration path, so that existing commands fail clearly or remain intentionally supported only if decided during implementation.
-21. As a simulator user, I want source intensity flags rejected when a file or catalogue sky model source is provided, so that unused CLI values do not hide mistakes.
+21. As a simulator user, I want source intensity flags rejected when a file or catalog sky model source is provided, so that unused CLI values do not hide mistakes.
 22. As a simulator user, I want an explicit `--imager` option, so that image production is selected by imager name rather than a cleaning boolean.
 23. As a simulator user, I want `--imager oskar-dirty` as the default, so that existing dirty-image behavior remains the default run mode.
 24. As a simulator user, I want `--imager wsclean`, so that WSClean cleaned imaging is selected explicitly.
@@ -62,8 +62,8 @@ Every run should produce a manifest and weblog, including failed runs. The manif
 40. As a simulator user, I want default run IDs to include seconds, so that repeated runs in the same minute do not collide.
 41. As a simulator user, I do not want random suffixes in default run IDs, so that output directories remain readable.
 42. As a simulator user, I want existing `--output-prefix` behavior to remain understandable, so that I can still choose a run directory base name.
-43. As a simulator user, I want CLI flags for random source mode, FITS catalogue ingestion, WSClean imaging, and weblog output to be documented, so that release examples are executable.
-44. As a simulator maintainer, I want the sky model resolver tested through its interface, so that file, catalogue, and generated-source behavior can change internally without breaking callers.
+43. As a simulator user, I want CLI flags for random source mode, FITS catalog ingestion, WSClean imaging, and weblog output to be documented, so that release examples are executable.
+44. As a simulator maintainer, I want the sky model resolver tested through its interface, so that file, catalog, and generated-source behavior can change internally without breaking callers.
 45. As a simulator maintainer, I want Karabo runtime imports isolated, so that lightweight tests can run without the full simulation stack.
 46. As a simulator maintainer, I want image production tested without executing WSClean, so that command construction and output collection are reliable.
 47. As a simulator maintainer, I want run pipeline tests to verify success and failure records, so that manifest and weblog behavior is stable.
@@ -73,19 +73,54 @@ Every run should produce a manifest and weblog, including failed runs. The manif
 
 ## Implementation Decisions
 
+### Post-assessment CLI consolidation
+
+After testing the 0.2 implementation against the installed `skasim` conda
+environment, the CLI was consolidated more strictly than the original PRD
+stories requested. This repository has no external users yet, so the 0.2
+release should prefer one robust access layer over compatibility aliases.
+
+These decisions supersede user stories that asked to preserve aliases such as
+`--stokes-i` and prefix-style output naming, and they also standardize the
+domain term as `catalog`:
+
+- Keep `--catalog` as the only public built-in catalog flag. The previous
+  alternate spelling is removed from code, tests, and docs.
+- Keep `--model` as the only public file-backed sky model flag. It accepts
+  FITS, JSON, pickle, and Karabo model files. Hidden migration handling for
+  `--fits`, `--json`, and `--json-fg` points users to `--model`.
+- Keep `--flux-density` as the only public generated-source Stokes I flag.
+  Hidden migration handling for `--I` and `--stokes-i` points users to
+  `--flux-density`.
+- Preserve generated-source polarization through explicit lower-case Stokes
+  flags: `--stokes-q`, `--stokes-u`, and `--stokes-v`. The old uppercase
+  `--Q`, `--U`, and `--V` flags are hidden migration paths.
+- Use explicit unit-bearing observation flags: `--frequency-mhz`,
+  `--bandwidth-mhz`, `--channel-width-mhz`, and `--observation-time`.
+  Hidden migration handling for `--freq`, `--bandwidth`, `--delta-freq`,
+  and `--seconds` points users to the canonical names.
+- Use `--output-dir` for an exact output directory name. Supplying
+  `--output-dir run_a` writes to `run_a/`; the telescope name is not appended.
+- Use `--clean-iterations` for WSClean CLEAN iterations. Hidden migration
+  handling for `--niter` points users to the canonical name.
+- Keep `--scale-I` out of the public CLI; use `--flux-scale` for file-backed
+  model flux scaling.
+
 - Treat version 0.1 as the current baseline and this PRD as the 0.2 release refinement.
-- Keep the current scientific functionality: random source mode, FITS catalogue ingestion, WSClean imaging, and weblog output.
-- Preserve file-backed sky model behavior while clarifying that a file-backed sky model and a built-in catalogue are different sky model source types.
+- Keep the current scientific functionality: random source mode, FITS catalog ingestion, WSClean imaging, and weblog output.
+- Preserve file-backed sky model behavior while clarifying that a file-backed sky model and a built-in catalog are different sky model source types.
 - Build or modify a deep sky model resolver module. Its interface should resolve one sky model and phase center from one sky model source. Internally it should be shaped so later releases can compose multiple sky model sources.
 - Keep `skasim`'s current `SkyModel` inheritance approach for 0.2 unless implementation reveals a concrete blocker.
-- Remove numeric built-in catalogue IDs from the 0.2 interface.
-- Built-in catalogues must be selected by name, currently `MIGHTEE`, `GLEAM`, and, if retained, `SKAMid`.
-- Numeric catalogue inputs should fail with targeted migration messages rather than silently mapping to names.
-- Keep `catalogue` as the canonical domain term. Allow `catalog` only as a CLI spelling alias.
-- Enforce one explicit sky model source per run in 0.2. Passing both a model file and a named catalogue should be invalid.
-- Treat generated source intensity mode as the fallback when no file or catalogue sky model source is provided.
-- Reject generated source intensity flags when a file or catalogue sky model source is provided.
-- Replace unclear source intensity language around `--I` with clearer `--flux-density` and `--stokes-i` flags.
+- Remove numeric built-in catalog IDs from the 0.2 interface.
+- Built-in catalogs must be selected by name, currently `MIGHTEE`, `GLEAM`, and, if retained, `SKAMid`.
+- Numeric catalog inputs should fail with targeted migration messages rather than silently mapping to names.
+- Keep `catalog` as the canonical domain term and public CLI spelling.
+- Enforce one explicit sky model source per run in 0.2. Passing both a model file and a named catalog should be invalid.
+- Treat generated source intensity mode as the fallback when no file or catalog sky model source is provided.
+- Reject generated source intensity flags when a file or catalog sky model source is provided.
+- Replace unclear source intensity language around `--I` with `--flux-density`.
+  Keep polarization available through `--stokes-q`, `--stokes-u`, and
+  `--stokes-v`.
 - Do not overload a single flux flag to mean either multiple generated source intensities or an I/Q/U/V vector.
 - Build or modify a runtime backend module that isolates Karabo imports behind execution-time seams.
 - Pip-only installation should support imports, configuration validation, CLI help, docs, and lightweight tests.
@@ -119,15 +154,17 @@ Every run should produce a manifest and weblog, including failed runs. The manif
 ## Testing Decisions
 
 - Tests should focus on external behavior at stable module interfaces rather than implementation details.
-- Configuration and CLI tests should verify named catalogue behavior, `--catalog` aliasing, numeric catalogue migration failures, imager selection, removed `--cleaning` migration, source intensity flags, and WSClean command configuration.
-- Sky model resolver tests should cover file-backed, named catalogue, and generated source intensity modes. Karabo catalogue behavior should be isolated behind test adapters where possible.
+- Configuration and CLI tests should verify named catalog behavior, numeric
+  catalog migration failures, imager selection, removed `--cleaning` migration,
+  source flux and polarization flags, and WSClean command configuration.
+- Sky model resolver tests should cover file-backed, named catalog, and generated source intensity modes. Karabo catalog behavior should be isolated behind test adapters where possible.
 - Runtime backend tests should verify that pip-only imports and CLI help do not require Karabo, and that execution without Karabo fails with a clear message.
 - Image production tests should verify WSClean argv construction, working-directory handling, stable output prefix use, and output collection without running WSClean.
 - Run pipeline tests should verify manifest persistence, structured output records, success weblog generation, and failed-run weblog generation.
 - Manifest/weblog tests should verify that structured outputs render correctly and that failed runs show error information.
 - Installation checks should verify that the pip-only path supports import/help/lightweight tests, and that the conda environment file is documented as the full simulation path.
 - Existing tests in the repository provide prior art for config validation, source and sky model behavior, pipeline helpers, and utility behavior.
-- Smoke testing should include a MeerKAT run with a named MIGHTEE catalogue and WSClean imager using the configured WSClean command where the environment supports it.
+- Smoke testing should include a MeerKAT run with a named MIGHTEE catalog and WSClean imager using the configured WSClean command where the environment supports it.
 
 ## Out of Scope
 
@@ -147,4 +184,4 @@ Every run should produce a manifest and weblog, including failed runs. The manif
 - `gh` is not installed in the local environment, but GitHub connector tooling is available for issue creation.
 - The current WSClean container available on this machine is `/mnt/software/containers/wsclean-3.10-dysco.sif`.
 - The architecture review generated during planning is available locally at `/tmp/architecture-review-20260522-154154.html`.
-- Domain language captured in `CONTEXT.md` should be used in implementation and documentation: catalogue, sky model, sky model source, source intensity, run, image product, WSClean command, and weblog.
+- Domain language captured in `CONTEXT.md` should be used in implementation and documentation: catalog, sky model, sky model source, source intensity, run, image product, WSClean command, and weblog.

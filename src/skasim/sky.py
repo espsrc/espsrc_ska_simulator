@@ -12,6 +12,8 @@ from astropy.table import Table
 from astropy.time import Time
 from astropy.utils.iers import conf as iers_conf
 from loguru import logger
+
+from .utils import show_exc
 from radio_beam import Beam
 
 

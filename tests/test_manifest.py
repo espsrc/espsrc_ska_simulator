@@ -37,7 +37,7 @@ def test_manifest_serializes_structured_outputs():
 
 def test_create_run_context_records_log_and_manifest_outputs(tmp_path):
     """Run contexts identify log and manifest outputs by kind."""
-    config = SimConfig(output_prefix=str(tmp_path / "example"))
+    config = SimConfig(output_dir=str(tmp_path / "example"))
     ctx = create_run_context(config)
 
     outputs = {output.kind: output.path for output in ctx.manifest.outputs}

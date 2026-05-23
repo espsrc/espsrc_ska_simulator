@@ -1,28 +1,284 @@
 # skasim 0.2 Release Refinement
 
-This development folder contains the local planning artifacts for the skasim 0.2 release refinement.
+This directory is the collaborator handoff for the skasim 0.2 release
+refinement. Start here, then use the linked files for detail.
 
-- [PRD](./PRD.md)
-- [Issue index and dependency graph](./ISSUES.md)
-- [Local issues](./issues/)
+## Reading Order
 
-## Baseline
+- [PRD](./PRD.md): original motivation, scope, user stories, and acceptance
+  criteria.
+- [Issue index and dependency graph](./ISSUES.md): the 12 implementation slices.
+- [Local issues](./issues/): per-slice acceptance criteria and suggested commit
+  messages.
+- [Assessment 01](./assessment_01.md): external review of the first 12 commits.
+- [Assessment 01 resolution](./assessment_01_resolution.md): accepted review
+  findings and final decisions.
+- [Installation Insights Instructions](./installation_insights_instructions.md): step-by-step instructions to successfully install the Conda environment and troubleshoot Karabo dependency resolver issues.
 
-- Current release baseline: `0.1.0` as declared in `pyproject.toml` and the public README badge.
-- Target work: skasim `0.2` release refinement described by this folder.
-- Domain language: the repository-level `CONTEXT.md` glossary is the source of truth for catalogue, sky model, sky model source, source intensity, run, image product, WSClean command, and weblog.
 
-## Baseline Checks
+## Current State
 
-- `python -m py_compile src/skasim/*.py` passes in the base environment.
-- `python -m pytest -q` does not collect in the base environment because `pydantic` is missing and the local package is not installed on `PYTHONPATH`.
+- Release target is `0.2.0`, reflected in `pyproject.toml`, `docs/conf.py`, and
+  the public README badge.
+- All 12 planned issues have been implemented and then refined after
+  `assessment_01.md`.
+- The current branch still has uncommitted post-assessment changes.
+- Domain language should follow the repository `CONTEXT.md`: catalog, sky
+  model, sky model source, source intensity, run, image product, WSClean
+  command, manifest, and weblog.
 
-## Implementation Checks
+## Why This Work Was Needed
 
-- Lightweight test path used during implementation: `PYTHONPATH=/tmp/skasim-pydeps:src python -m pytest -q`.
-- Syntax check used during implementation: `PYTHONPATH=/tmp/skasim-pydeps:src python -m py_compile src/skasim/*.py`.
-- The temporary dependency path contains downloaded test dependencies for this session only; the supported full-runtime path remains `conda env create -f environment.yml`.
+The 0.1 interface mixed domain concepts and implementation details:
 
-## Commit Message Rule
+- Built-in catalogs were selected by numeric IDs, which made commands and
+  manifests hard to interpret.
+- `--I` was ambiguous: it looked like one Stokes component but actually created
+  generated source intensities.
+- `--cleaning` was a boolean switch for an imaging backend instead of an
+  explicit image product choice.
+- WSClean was hardcoded as `wsclean`, which did not fit systems where WSClean is
+  provided through Singularity.
+- Karabo imports happened too early for pip-only CLI/help/config workflows.
+- Run records were not structured enough for reliable output inspection.
+- Failed runs did not always produce an inspectable weblog.
+- WSClean output discovery was fragile and could mix old outputs with current
+  outputs.
 
-After implementing each issue, create a clear commit message that names the completed vertical slice. Each local issue includes a suggested commit message.
+The 0.2 work consolidates the interface around explicit domain language and
+makes the runtime behavior easier to test and inspect.
+
+## Implementation Timeline
+
+Initial 12 commits:
+
+- `bdeba01 docs: add skasim 0.2 development baseline`
+- `cf2794b refactor: isolate Karabo behind runtime imports`
+- `a4d4378 docs: add pip and conda installation paths`
+- `6cc4920 feat: use named sky model sources`
+- `365f2fe feat: clarify generated source intensity CLI`
+- `3e32dac feat: replace cleaning flag with explicit imager`
+- `a54f645 feat: configure WSClean command execution`
+- `d7c22d3 refactor: make WSClean outputs run scoped`
+- `183b30a feat: structure run manifest outputs`
+- `3c74c55 feat: render weblogs for every run`
+- `d71f689 refactor: deepen run records and run ids`
+- `7a254ec docs: finalize skasim 0.2 release examples`
+
+Post-assessment changes are currently uncommitted. They address
+`assessment_01.md` and are summarized in
+[assessment_01_resolution.md](./assessment_01_resolution.md).
+
+## New Functionality
+
+- Pip-only imports and `python -m skasim.cli --help` work without Karabo.
+- Full simulation execution loads Karabo only at runtime and fails with a clear
+  installation message when Karabo is unavailable.
+- Built-in catalogs are named: `MIGHTEE`, `GLEAM`, and `SKAMid`.
+- A run accepts one explicit sky model source: file-backed `--model`, named
+  `--catalog`, or generated source flux densities.
+- Generated source Stokes I flux densities use `--flux-density`.
+- Optional generated source polarization uses `--stokes-q`, `--stokes-u`, and
+  `--stokes-v`.
+- Observing frequency, channel width, and duration use explicit unit-bearing
+  flags such as `--frequency-mhz`, `--channel-width-mhz`, and
+  `--observation-time`.
+- `--output-dir` names the exact output directory.
+- Imaging is selected explicitly with `--imager oskar-dirty` or
+  `--imager wsclean`.
+- WSClean iterations use `--clean-iterations`.
+- WSClean invocation is configurable through `--wsclean-command`.
+- WSClean commands are parsed into argv and executed with `shell=False`.
+- WSClean outputs use a run-scoped prefix and are recorded as structured image
+  products.
+- WSClean `-channels-out` is capped to the simulated channel count, up to 8,
+  so reduced-channel smoke runs are valid.
+- WSClean PNG previews are rendered directly from FITS files with a non-
+  interactive Matplotlib backend to avoid Karabo/X shutdown errors.
+- Every run records logs, manifest, visibility data, image products, plots, sky
+  model source, and weblog outputs by structured kind where applicable.
+- Every run writes `weblog.html`, including failed runs.
+- Default run IDs use second precision: `YYYYMMDD_HHMMSS_<telescope>`.
+- Existing visibility output directories require `--overwrite`; there is no
+  interactive prompt.
+
+## Removed Or Rejected
+
+- CLI `--I` is removed and fails with a migration message.
+- CLI `--stokes-i`, `--fits`, `--json`, `--json-fg`, `--Q`,
+  `--U`, `--V`, `--ref-freq`, `--freq`, `--bandwidth`, `--delta-freq`,
+  `--seconds`, `--prefix`, `--niter`, `--scale-I`, and `--imaging-niter` are
+  removed or renamed and fail with migration messages.
+- CLI `--cleaning` is removed and fails with a migration message.
+- Numeric catalog IDs such as `--catalog 1` are removed and fail with a
+  migration message.
+- Python config fields `SimConfig.I`, `SimConfig.Q`, `SimConfig.U`,
+  `SimConfig.V`, `SimConfig.cleaning`, `SimConfig.source_names`,
+  `SimConfig.ref_freq_hz`, `SimConfig.json_fg`, `SimConfig.output_prefix`,
+  `SimConfig.niter`, and `SimConfig.scale_I` are removed.
+- Python config field `ImgConfig.algorithm` is removed; `ImgConfig.imager` is
+  the source of truth.
+- Config models reject unknown fields with Pydantic `extra="forbid"`.
+- Scientific/configuration metadata is no longer encoded in WSClean output
+  filenames; it belongs in the manifest.
+
+## Modified Files By Area
+
+- Release metadata and user docs: `pyproject.toml`, `README.md`,
+  `docs/conf.py`, `docs/installation.rst`, `docs/guide.rst`,
+  `docs/examples.rst`, `docs/introduction.rst`.
+- Planning and handoff: `development/skasim-0.2-release-refinement/README.md`,
+  `ISSUES.md`, `PRD.md`, `issues/*.md`, `assessment_01.md`,
+  `assessment_01_resolution.md`.
+- Public API and configuration: `src/skasim/__init__.py`,
+  `src/skasim/config.py`.
+- CLI and runtime loading: `src/skasim/cli.py`, `src/skasim/runtime.py`.
+- Sky model loading: `src/skasim/sky.py`, `src/skasim/fits_helper.py`.
+- Simulation orchestration: `src/skasim/pipeline.py`.
+- Imaging: `src/skasim/imaging.py`.
+- Run records and weblog: `src/skasim/manifest.py`, `src/skasim/weblog.py`,
+  `src/skasim/templates/weblog.html.j2`.
+- Tests: `tests/test_cli.py`, `tests/test_config.py`,
+  `tests/test_imaging.py`, `tests/test_manifest.py`, `tests/test_pipeline.py`,
+  `tests/test_release_docs.py`, `tests/test_runtime_imports.py`,
+  `tests/test_weblog.py`.
+
+## Runtime Notes
+
+Lightweight verification uses a temporary dependency path:
+
+```bash
+PYTHONPATH=/tmp/skasim-pydeps:src python -m py_compile src/skasim/*.py
+PYTHONPATH=/tmp/skasim-pydeps:src python -m pytest -q
+```
+
+Latest result:
+
+```text
+97 passed in the focused CLI/config/pipeline/manifest/imaging/runtime subset
+```
+
+The temporary dependency path is only for this development session. The verified
+full-runtime installation path is:
+
+```bash
+conda create -y -n skasim python=3.9
+conda install -y -n skasim --no-channel-priority \
+  -c nvidia/label/cuda-11.7.0 \
+  -c i4ds \
+  -c conda-forge \
+  karabo-pipeline "cuda-version=11.7"
+conda run -n skasim pip install -e .
+```
+
+The Conda environment uses the supported `skasim` env name and Karabo conda path.
+The initial handoff was blocked by Conda resolver issues with transitive
+dependencies (e.g., `fftw * mpi_mpich*`) and then by an OSKAR CUDA runtime
+mismatch. The working fix is both:
+
+- disable strict channel priority so MPI dependencies can resolve;
+- pin `cuda-version=11.7` so the OSKAR library finds `libcudart.so.11.0` and
+  `libcufft.so.10`.
+
+For exact commands to install and verify the runtime successfully, see
+[installation_insights_instructions.md](./installation_insights_instructions.md).
+
+Runtime verification commands:
+
+```bash
+conda run -n skasim python -c "import karabo, oskar; print('karabo', karabo.__version__); print('oskar ok')"
+conda run -n skasim which oskar_sim_interferometer
+conda run -n skasim which wsclean
+conda run -n skasim skasim --help
+```
+
+`oskarpy` is not installed and is not required. The working path uses the
+`oskar` module and the OSKAR backend through Karabo; the successful smoke runs
+created `visibilities.MS`.
+
+
+Canonical smoke run command shape after the CLI cleanup:
+
+```bash
+conda run -n skasim skasim \
+  --output-dir smoke_mightee_wsclean \
+  --telescope MeerKAT \
+  --observation-time 60 \
+  --frequency-mhz 1300 \
+  --pixels 512 \
+  --catalog MIGHTEE \
+  --imager wsclean \
+  --clean-iterations 100 \
+  --overwrite
+```
+
+Fast smoke run used for runtime verification:
+
+```bash
+conda run -n skasim skasim \
+  --output-dir smoke_mightee_wsclean_quick \
+  --telescope MeerKAT \
+  --observation-time 30 \
+  --frequency-mhz 1300 \
+  --bandwidth-mhz 25 \
+  --n-channels 2 \
+  --pixels 256 \
+  --catalog MIGHTEE \
+  --imager wsclean \
+  --clean-iterations 20 \
+  --overwrite
+```
+
+Latest runtime result: completed with exit code 0. The manifest reports
+`status: completed`, `catalog: MIGHTEE`, 9896 sky sources, completed simulation
+and imaging milestones, visibility data, WSClean FITS/PNG image products, and
+`weblog.html` under `smoke_mightee_wsclean_quick/`.
+
+The earlier failed run used:
+
+```text
+conda run -n skasim skasim --telescope MeerKAT --seconds 60 --freq 1300 --pixels 1024 --catalog MIGHTEE --niter 500
+```
+
+It selected the default `oskar-dirty` imager, not WSClean, and failed during
+the OSKAR simulation path. The output directory was
+`20260523_064436_MeerKAT/`.
+
+## Current CLI Access Layer
+
+The 0.2 CLI now has one canonical spelling for each concept:
+
+- sky model file: `--model`
+- built-in catalog: `--catalog`
+- generated Stokes I flux densities: `--flux-density`
+- generated polarization: `--stokes-q`, `--stokes-u`, `--stokes-v`
+- observing frequency: `--frequency-mhz`
+- observation duration: `--observation-time`
+- exact output directory: `--output-dir`
+- WSClean iterations: `--clean-iterations`
+- file-backed flux scaling: `--flux-scale`
+
+Removed or renamed flags are hidden from `--help` and fail with targeted
+migration messages: `--I`, `--stokes-i`, `--fits`, `--json`,
+`--json-fg`, `--Q`, `--U`, `--V`, `--ref-freq`, `--freq`, `--bandwidth`,
+`--delta-freq`, `--seconds`, `--prefix`, `--niter`, `--scale-I`,
+`--cleaning`, and `--imaging-niter`.
+
+JSON sky models are still supported through `--model path/to/sources.json`.
+The separate `--json` and `--json-fg` entry points were removed because they
+created parallel access paths for the same sky-source concept.
+
+`--output-dir` is exact. Supplying `--output-dir smoke_mightee_wsclean` writes
+to `smoke_mightee_wsclean/`; it does not append the telescope name.
+
+## Review Notes
+
+The development markdown is intentionally layered:
+
+- Use this README as the collaborator summary.
+- Use the PRD to understand the original rationale.
+- Use the issue files to map implementation slices to acceptance criteria.
+- Use the assessment and resolution files to understand why the strict
+  post-assessment cleanup happened.
+- Use `git log --oneline` and `git diff --name-only` for exact commit and file
+  state in the working tree.

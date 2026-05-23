@@ -8,27 +8,34 @@ Generate three point sources and create the default OSKAR dirty image::
 
     skasim --flux-density 1.0 5.0 10.0 \
       --telescope SKA1MID \
-      --seconds 600 \
-      --freq 1300 \
+      --observation-time 600 \
+      --frequency-mhz 1300 \
       --pixels 1024
 
-The equivalent Stokes-I spelling is::
+Generated source polarization is optional. When supplied, the Stokes Q/U/V
+lists must match the number of flux-density values::
 
-    skasim --stokes-i 1.0 5.0 10.0 --seconds 600
+    skasim --flux-density 1.0 5.0 \
+      --stokes-q 0.1 0.2 \
+      --stokes-u 0.0 0.1 \
+      --stokes-v 0.0 -0.1 \
+      --observation-time 600
 
-Named-Catalogue WSClean Smoke Check
+Named-Catalog WSClean Smoke Check
 -----------------------------------
 
 This smoke-check command shape uses the MeerKAT telescope, the named MIGHTEE
-catalogue, the WSClean imager, and an explicit WSClean command::
+catalog, the WSClean imager, and an explicit WSClean command::
 
     skasim --telescope MeerKAT \
-      --catalogue MIGHTEE \
+      --catalog MIGHTEE \
       --imager wsclean \
       --wsclean-command "singularity exec /mnt/software/containers/wsclean-3.10-dysco.sif wsclean" \
-      --seconds 60 \
-      --freq 1300 \
-      --pixels 512
+      --observation-time 60 \
+      --frequency-mhz 1300 \
+      --pixels 512 \
+      --clean-iterations 100 \
+      --output-dir smoke_mightee_wsclean
 
 File-Backed FITS Smoke Check
 ----------------------------
@@ -39,6 +46,6 @@ OSKAR dirty imager::
     skasim --model path/to/sources.fits \
       --telescope SKA1MID \
       --imager oskar-dirty \
-      --seconds 60 \
-      --freq 1300 \
+      --observation-time 60 \
+      --frequency-mhz 1300 \
       --pixels 512

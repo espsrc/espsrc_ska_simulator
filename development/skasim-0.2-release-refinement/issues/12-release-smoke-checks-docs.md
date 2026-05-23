@@ -8,10 +8,10 @@ Finalize the 0.2 release refinement by updating examples, validating the support
 
 ## Acceptance Criteria
 
-- [ ] README examples use named catalogue values and explicit imager values.
+- [ ] README examples use named catalog values and explicit imager values.
 - [ ] User guide examples use source intensity language instead of unclear `--I` language.
 - [ ] WSClean Singularity usage is documented through `--wsclean-command`.
-- [ ] Smoke-check documentation includes a MeerKAT named-catalogue run and a file-backed FITS run shape.
+- [ ] Smoke-check documentation includes a MeerKAT named-catalog run and a file-backed FITS run shape.
 - [ ] The local issue list and PRD remain consistent with implemented behavior.
 - [ ] Tests and checks that can run in the available environment are documented.
 

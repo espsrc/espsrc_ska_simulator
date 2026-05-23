@@ -25,13 +25,27 @@ the conda environment below.
 Conda full-runtime install
 --------------------------
 
-Use the checked-in environment file for simulation runs::
+Use this procedure for simulation runs on the current development system. The
+environment is named ``skasim`` and uses Python 3.9, Karabo, OSKAR, and WSClean
+from conda packages::
 
-    conda env create -f environment.yml
-    conda activate skasim
+    conda create -y -n skasim python=3.9
+    conda install -y -n skasim --no-channel-priority \
+      -c nvidia/label/cuda-11.7.0 \
+      -c i4ds \
+      -c conda-forge \
+      karabo-pipeline "cuda-version=11.7"
+    conda run -n skasim pip install -e .
 
-The environment is named ``skasim`` and installs ``karabo-pipeline`` from the
-supported conda channels. It also installs this repository in editable mode.
+The ``--no-channel-priority`` option is needed because strict channel priority
+can block MPI/FFTW dependencies required by the Karabo runtime stack. The
+``cuda-version=11.7`` pin is also needed: the OSKAR build installed with Karabo
+expects CUDA 11 runtime libraries such as ``libcudart.so.11.0`` and
+``libcufft.so.10``.
+
+The checked-in ``environment.yml`` remains useful as a declaration of the
+intended runtime dependencies, but the command sequence above is the verified
+installation path on this machine.
 
 WSClean
 -------
@@ -53,4 +67,33 @@ For the pip-only path, confirm that the CLI can be inspected::
 
     skasim --help
 
-For the conda full-runtime path, activate ``skasim`` before running simulations.
+For the conda full-runtime path, verify the installed runtime before running
+simulations::
+
+    conda run -n skasim python -c "import karabo, oskar; print('karabo', karabo.__version__); print('oskar ok')"
+    conda run -n skasim which oskar_sim_interferometer
+    conda run -n skasim which wsclean
+    conda run -n skasim skasim --help
+
+``oskarpy`` is not required for the supported execution path; the successful
+``import oskar`` check and a completed visibility simulation verify the OSKAR
+backend used by Karabo.
+
+A small WSClean smoke run with the named MIGHTEE catalog is::
+
+    conda run -n skasim skasim \
+      --output-dir smoke_mightee_wsclean_quick \
+      --telescope MeerKAT \
+      --observation-time 30 \
+      --frequency-mhz 1300 \
+      --bandwidth-mhz 25 \
+      --n-channels 2 \
+      --pixels 256 \
+      --catalog MIGHTEE \
+      --imager wsclean \
+      --clean-iterations 20 \
+      --overwrite
+
+The verified smoke run completed with exit code 0 and wrote
+``visibilities.MS``, WSClean FITS products, PNG previews, ``run_manifest.json``,
+and ``weblog.html`` under ``smoke_mightee_wsclean_quick/``.

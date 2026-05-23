@@ -8,7 +8,9 @@ import subprocess
 from pathlib import Path
 
 import astropy.units as u
+import numpy as np
 from astropy.coordinates import SkyCoord
+from astropy.io import fits
 from loguru import logger
 
 from .config import SimConfig
@@ -45,13 +47,19 @@ def run_dirty_imaging(
 
     dirty_png = work_dir / f"{work_dir.name}_dirty.png"
     dirty_fits = work_dir / f"{work_dir.name}_dirty.fits"
-    dirty_image.plot(
-        title="Dirty image OSKAR",
-        filename=str(dirty_png),
-        wcs_enabled=True,
-        xlabel="RA",
-        ylabel="DEC",
-    )
+    try:
+        dirty_image.plot(
+            title="Dirty image OSKAR",
+            filename=str(dirty_png),
+            wcs_enabled=True,
+            xlabel="RA",
+            ylabel="DEC",
+            block=False,
+        )
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close("all")
     dirty_image.write_to_file(str(dirty_fits), overwrite=True)
     logger.debug(f"Dirty PNG: {dirty_png}")
     logger.debug(f"Dirty FITS: {dirty_fits}")
@@ -86,6 +94,7 @@ def build_wsclean_argv(
 ) -> list[str]:
     """Build a shell-free WSClean argv list from the resolved imaging config."""
     imaging_cellsize = fov / config.imaging.pixels
+    channels_out = min(config.observation.n_channels or 1, 8)
     return shlex.split(config.imaging.wsclean_command) + [
         "-weight",
         "briggs",
@@ -97,15 +106,15 @@ def build_wsclean_argv(
         "-scale",
         f"{imaging_cellsize.to(u.arcsec).value:.6f}asec",
         "-niter",
-        str(config.niter),
+        str(config.clean_iterations),
         "-mgain",
         "0.8",
-        "--auto-threshold",
+        "-auto-threshold",
         "0.3",
         "-auto-mask",
         "3",
         "-channels-out",
-        "8",
+        str(channels_out),
         "-join-channels",
         "-local-rms",
         "-name",
@@ -139,13 +148,48 @@ def wsclean_output_prefix(ctx: RunContext) -> str:
     return f"{ctx.work_dir.name}_wsclean"
 
 
+def write_fits_preview(img_path: Path, png_path: Path, title: str) -> None:
+    """Write a non-interactive PNG preview for a WSClean FITS image."""
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import PowerNorm
+
+    data = fits.getdata(img_path)
+    data = data.squeeze()
+    while data.ndim > 2:
+        data = data[0]
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    finite = data[np.isfinite(data)]
+    if finite.size:
+        vmin, vmax = np.nanpercentile(finite, [1, 99])
+        if vmin == vmax:
+            vmin, vmax = None, None
+    else:
+        vmin, vmax = None, None
+    image = ax.imshow(
+        data,
+        origin="lower",
+        cmap="viridis",
+        norm=PowerNorm(0.3, vmin=vmin, vmax=vmax),
+    )
+    ax.set_title(title)
+    ax.set_xlabel("RA")
+    ax.set_ylabel("DEC")
+    fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    fig.savefig(png_path, dpi=130)
+    plt.close(fig)
+
+
 def run_wsclean_imaging(
     ctx: RunContext,
     visibility_path: Path,
     fov: u.Quantity,
 ) -> None:
     """produce cleaned image via external WSClean binary."""
-    image_module = require_karabo_module("karabo.imaging.image")
     wsclean_module = require_karabo_module("karabo.imaging.imager_wsclean")
     file_handler_module = require_karabo_module("karabo.util.file_handler")
     config = ctx.config
@@ -164,6 +208,8 @@ def run_wsclean_imaging(
 
     # remove the temporary files created by WSClean
     for tmp in work_dir.glob("wsclean-00*.fits"):
+        if tmp.name.startswith(output_prefix):
+            continue
         try:
             tmp.unlink()
         except Exception as exc:
@@ -173,11 +219,7 @@ def run_wsclean_imaging(
     mfs_files = [p.name for p in wsclean_outputs if "-MFS-" in p.name]
     logger.info(f"MFS files: {mfs_files}")
 
-    from matplotlib.colors import PowerNorm
-
-    gamma = 0.3
     for img_path in wsclean_outputs:
-        img = image_module.Image(path=str(img_path))
         png_name = img_path.with_suffix(".png").name
         png_path = work_dir / png_name
 
@@ -194,14 +236,7 @@ def run_wsclean_imaging(
         elif "MFS-psf" in img_path.name:
             title = "Point spread function (WSClean)"
 
-        img.plot(
-            title=title,
-            filename=str(png_path),
-            wcs_enabled=True,
-            xlabel="RA",
-            ylabel="DEC",
-            norm=PowerNorm(gamma),
-        )
+        write_fits_preview(img_path, png_path, title)
         role = "image"
         lower_name = img_path.name.lower()
         if "model" in lower_name:

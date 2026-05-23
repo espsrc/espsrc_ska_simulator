@@ -1,6 +1,5 @@
-# SKA Simulator tool (WIP)
-# IAA-CSIC
+"""Public Python API for skasim configuration."""
 
-from .manifest import Milestone, OutputRecord, RunContext, RunManifest
+from .config import ImgConfig, ObsConfig, SimConfig
 
-__all__ = ["RunContext", "RunManifest", "Milestone", "OutputRecord"]
+__all__ = ["ImgConfig", "ObsConfig", "SimConfig"]
