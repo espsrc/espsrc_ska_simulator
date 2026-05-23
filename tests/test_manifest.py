@@ -46,6 +46,24 @@ def test_create_run_context_records_log_and_manifest_outputs(tmp_path):
     assert outputs["manifest"] == "run_manifest.json"
 
 
+def test_create_run_context_overwrite_cleans_existing_output_dir(tmp_path):
+    """--overwrite starts from a clean exact output directory."""
+    work_dir = tmp_path / "example"
+    stale_ms_field = work_dir / "visibilities.MS" / "FIELD"
+    stale_ms_field.mkdir(parents=True)
+    (stale_ms_field / "table.lock").write_text("stale lock", encoding="utf-8")
+    (work_dir / "old-image.fits").write_text("stale image", encoding="utf-8")
+
+    config = SimConfig(output_dir=str(work_dir), overwrite=True)
+
+    ctx = create_run_context(config)
+
+    assert ctx.work_dir == work_dir
+    assert not (work_dir / "old-image.fits").exists()
+    assert not (work_dir / "visibilities.MS").exists()
+    assert ctx.manifest_path.exists()
+
+
 def test_default_run_id_uses_second_precision(tmp_path, monkeypatch):
     """Default run IDs use YYYYMMDD_HHMMSS_<telescope> without random suffixes."""
     monkeypatch.chdir(tmp_path)

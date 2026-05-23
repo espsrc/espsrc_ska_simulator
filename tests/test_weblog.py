@@ -75,7 +75,7 @@ def test_weblog_groups_wsclean_mfs_products_and_stats(tmp_path):
         config=SimConfig(),
     )
     prefix = "science-products_wsclean"
-    for role in ("model", "image", "residual", "psf"):
+    for role in ("dirty", "model", "image", "residual", "psf"):
         stem = f"{prefix}-MFS-{role if role != 'image' else 'image'}"
         fits_path = tmp_path / f"{stem}.fits"
         png_path = tmp_path / f"{stem}.png"
@@ -110,7 +110,43 @@ def test_weblog_groups_wsclean_mfs_products_and_stats(tmp_path):
     assert "Model" in html
     assert "Clean" in html
     assert "Residual" in html
+    assert "Dirty Image" not in html
     assert "View PSF" in html
     assert "Peak:" in html
     assert "4.000 mJy/beam" in html
     assert "RMS:" in html
+
+
+def test_weblog_uses_dirty_image_only_when_clean_products_are_absent(tmp_path):
+    """OSKAR dirty products render as the fallback science product."""
+    manifest = RunManifest(
+        run_id="dirty-only",
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
+        config=SimConfig(),
+    )
+    fits_path = tmp_path / "dirty-only_dirty.fits"
+    png_path = tmp_path / "dirty-only_dirty.png"
+    fits.writeto(fits_path, np.ones((2, 2)), overwrite=True)
+    png_path.write_bytes(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+        b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    manifest.add_output(
+        "image_product",
+        png_path.name,
+        image_product_id="dirty-only",
+        imager="oskar-dirty",
+        role="preview",
+    )
+    manifest.add_output(
+        "image_product",
+        fits_path.name,
+        image_product_id="dirty-only",
+        imager="oskar-dirty",
+        role="dirty",
+    )
+
+    html = render_weblog(manifest, tmp_path)
+
+    assert "Dirty Image" in html

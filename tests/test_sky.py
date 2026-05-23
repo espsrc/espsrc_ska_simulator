@@ -300,6 +300,16 @@ def test_source_to_sky_model_reduced():
     assert tup == (10.0, 20.0, 2.0)
 
 
+def test_source_from_reduced_sky_model():
+    """reduced sky-model rows can still be serialized for previews."""
+    s = Source.from_sky_model((10.0, 20.0, 2.0))
+
+    assert s.ra.value == pytest.approx(10.0)
+    assert s.dec.value == pytest.approx(20.0)
+    assert s.I.value == pytest.approx(2.0)
+    assert s.major_axis.value == pytest.approx(0.0)
+
+
 def test_source_to_sky_model_full():
     """same with many parameters."""
     s = Source(ra=10.0, dec=20.0, I=2.0, Q=0.1, spec_index=-0.5, true_redshift=0.1)

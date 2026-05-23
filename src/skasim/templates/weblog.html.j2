@@ -172,16 +172,7 @@
       </div>
       {% endif %}
       <div class="science-grid">
-        {% if product.dirty %}
-        <figure>
-          {% if product.dirty.preview and product.dirty.data %}
-            <a href="{{ product.dirty.preview }}" target="_blank" rel="noopener"><img src="{{ product.dirty.data }}" alt="Dirty"></a>
-            <figcaption>Dirty Image</figcaption>
-          {% else %}
-            <figcaption style="padding: 3rem 0;">Dirty Image — not available</figcaption>
-          {% endif %}
-        </figure>
-        {% else %}
+        {% if product.model or product.clean or product.residual %}
         {% for item, caption in [(product.model, "Model"), (product.clean, "Clean"), (product.residual, "Residual")] %}
         <figure>
           {% if item and item.preview and item.data %}
@@ -192,6 +183,15 @@
           {% endif %}
         </figure>
         {% endfor %}
+        {% elif product.dirty %}
+        <figure>
+          {% if product.dirty.preview and product.dirty.data %}
+            <a href="{{ product.dirty.preview }}" target="_blank" rel="noopener"><img src="{{ product.dirty.data }}" alt="Dirty"></a>
+            <figcaption>Dirty Image</figcaption>
+          {% else %}
+            <figcaption style="padding: 3rem 0;">Dirty Image — not available</figcaption>
+          {% endif %}
+        </figure>
         {% endif %}
       </div>
     </div>

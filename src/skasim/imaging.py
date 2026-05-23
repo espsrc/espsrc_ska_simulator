@@ -19,6 +19,8 @@ from .manifest import RunContext
 from .runtime import require_karabo_module
 from .utils import show_exc
 
+SKY_MODEL_CMAP = "viridis_r"
+
 # --------------------------------------------------------------------------- #
 # dirty imaging (OSKAR)
 # --------------------------------------------------------------------------- #
@@ -222,6 +224,237 @@ def _make_2d_preview_hdu(
     if bunit is not None:
         preview_header["BUNIT"] = bunit
     return fits.PrimaryHDU(data=data, header=preview_header)
+
+
+def write_sky_model_previews(
+    sky_model,
+    center: SkyCoord,
+    fov: u.Quantity,
+    work_dir: Path,
+    run_id: str,
+) -> list[tuple[str, str]]:
+    """Write full and FoV sky-model source previews."""
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm
+
+    sources = sky_model.to_json()
+    if not sources:
+        return []
+
+    ra = np.asarray([src["ra"] for src in sources], dtype=float)
+    dec = np.asarray([src["dec"] for src in sources], dtype=float)
+    flux = np.asarray([src["I"] for src in sources], dtype=float)
+    major_axis = np.asarray(
+        [src.get("major_axis", 0.0) or 0.0 for src in sources],
+        dtype=float,
+    )
+    minor_axis = np.asarray(
+        [src.get("minor_axis", 0.0) or 0.0 for src in sources],
+        dtype=float,
+    )
+    position_angle = np.asarray([src.get("pa", 0.0) or 0.0 for src in sources], dtype=float)
+    positive_flux = flux[flux > 0]
+    norm = None
+    if positive_flux.size:
+        norm = LogNorm(vmin=float(np.nanmin(positive_flux)), vmax=float(np.nanmax(positive_flux)))
+
+    full_name = f"{run_id}_sky_model.png"
+    fov_name = f"{run_id}_sky_model_fov.png"
+    _plot_sky_model_sources(
+        work_dir / full_name,
+        ra,
+        dec,
+        flux,
+        major_axis,
+        minor_axis,
+        position_angle,
+        norm,
+        title=f"Sky model ({len(sources)} sources)",
+    )
+    half_fov = fov.to(u.deg).value / 2.0
+    _plot_sky_model_sources(
+        work_dir / fov_name,
+        ra,
+        dec,
+        flux,
+        major_axis,
+        minor_axis,
+        position_angle,
+        norm,
+        title=f"Sky model FoV ({fov.to(u.deg).value:.2f} deg)",
+        xlim=(center.ra.deg + half_fov, center.ra.deg - half_fov),
+        ylim=(center.dec.deg - half_fov, center.dec.deg + half_fov),
+        fov_circle=(center.ra.deg, center.dec.deg, half_fov),
+    )
+    return [(full_name, "sky_model"), (fov_name, "sky_model_fov")]
+
+
+def _plot_sky_model_sources(
+    png_path: Path,
+    ra: np.ndarray,
+    dec: np.ndarray,
+    flux: np.ndarray,
+    major_axis: np.ndarray,
+    minor_axis: np.ndarray,
+    position_angle: np.ndarray,
+    norm,
+    title: str,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    fov_circle: tuple[float, float, float] | None = None,
+) -> None:
+    """Plot source positions as ellipses with astronomical RA orientation."""
+    import matplotlib.pyplot as plt
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.collections import PatchCollection
+
+    fig, ax = plt.subplots(figsize=(7, 6), facecolor="white")
+    ax.set_title(title)
+    ax.set_xlabel("RA (deg)")
+    ax.set_ylabel("Dec (deg)")
+    ax.grid(True, color="0.85", linestyle=":", linewidth=0.8)
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+        plot_width_deg = abs(xlim[1] - xlim[0])
+    else:
+        ra_min, ra_max = _padded_limits(ra)
+        ax.set_xlim(ra_max, ra_min)
+        plot_width_deg = ra_max - ra_min
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    else:
+        ax.set_ylim(*_padded_limits(dec))
+
+    compact = _compact_source_mask(major_axis, plot_width_deg)
+    resolved = ~compact
+    if np.any(resolved):
+        ellipses = _sky_model_ellipses(
+            ra[resolved],
+            dec[resolved],
+            major_axis[resolved],
+            minor_axis[resolved],
+            position_angle[resolved],
+        )
+        ellipse_collection = PatchCollection(
+            ellipses,
+            cmap=SKY_MODEL_CMAP,
+            norm=norm,
+            alpha=0.82,
+            edgecolor="black",
+            linewidth=0.35,
+        )
+        ellipse_collection.set_array(flux[resolved])
+        ax.add_collection(ellipse_collection)
+    if np.any(compact):
+        ax.scatter(
+            ra[compact],
+            dec[compact],
+            s=_flux_marker_sizes(flux[compact]),
+            c=flux[compact],
+            cmap=SKY_MODEL_CMAP,
+            norm=norm,
+            marker="+",
+            linewidths=1.2,
+            alpha=0.9,
+        )
+    if fov_circle is not None:
+        from matplotlib.patches import Circle
+
+        ax.add_patch(
+            Circle(
+                (fov_circle[0], fov_circle[1]),
+                fov_circle[2],
+                fill=False,
+                color="tab:red",
+                linestyle="--",
+                linewidth=1.2,
+            )
+        )
+    scalar = ScalarMappable(norm=norm, cmap=SKY_MODEL_CMAP)
+    scalar.set_array(flux)
+    cbar = fig.colorbar(scalar, ax=ax)
+    cbar.set_label("Stokes I (Jy)")
+    fig.tight_layout()
+    fig.savefig(png_path, dpi=140)
+    plt.close(fig)
+
+
+def _padded_limits(values: np.ndarray, pad_fraction: float = 0.05) -> tuple[float, float]:
+    """Return finite min/max limits with a small visual padding."""
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return (0.0, 1.0)
+    lower = float(np.nanmin(finite))
+    upper = float(np.nanmax(finite))
+    span = upper - lower
+    if span <= 0:
+        span = max(abs(lower) * 0.01, 1.0 / 3600.0)
+    pad = span * pad_fraction
+    return (lower - pad, upper + pad)
+
+
+def _compact_source_mask(
+    major_axis_arcsec: np.ndarray,
+    plot_width_deg: float,
+) -> np.ndarray:
+    """Return sources too small to read as ellipses at the plotted FoV."""
+    threshold_arcsec = max(3.0, abs(plot_width_deg) * 3600.0 * 0.01)
+    return major_axis_arcsec < threshold_arcsec
+
+
+def _flux_marker_sizes(flux: np.ndarray) -> np.ndarray:
+    """Map source flux densities to visible cross marker areas."""
+    positive = flux[np.isfinite(flux) & (flux > 0)]
+    if positive.size == 0:
+        return np.full(flux.shape, 45.0)
+    lo = float(np.nanmin(positive))
+    hi = float(np.nanmax(positive))
+    safe_flux = np.clip(flux, lo, hi)
+    if hi <= lo:
+        scaled = np.ones_like(safe_flux)
+    else:
+        scaled = (np.log10(safe_flux) - np.log10(lo)) / (np.log10(hi) - np.log10(lo))
+    return 35.0 + scaled * 140.0
+
+
+def _sky_model_position_angle(pa_deg: float) -> float:
+    """Convert astronomical PA east of north to Matplotlib angle from +x."""
+    return 90.0 - pa_deg
+
+
+def _sky_model_ellipses(
+    ra: np.ndarray,
+    dec: np.ndarray,
+    major_axis_arcsec: np.ndarray,
+    minor_axis_arcsec: np.ndarray,
+    position_angle_deg: np.ndarray,
+) -> list:
+    """Convert source shape metadata to Matplotlib ellipses in degree units."""
+    from matplotlib.patches import Ellipse
+
+    ellipses = []
+    fallback_arcsec = 8.0
+    for ra_deg, dec_deg, major, minor, pa in zip(
+        ra,
+        dec,
+        major_axis_arcsec,
+        minor_axis_arcsec,
+        position_angle_deg,
+    ):
+        major = float(major) if np.isfinite(major) and major > 0 else fallback_arcsec
+        minor = float(minor) if np.isfinite(minor) and minor > 0 else major
+        ellipses.append(
+            Ellipse(
+                (float(ra_deg), float(dec_deg)),
+                width=major / 3600.0,
+                height=minor / 3600.0,
+                angle=_sky_model_position_angle(float(pa)) if np.isfinite(pa) else 90.0,
+            )
+        )
+    return ellipses
 
 
 def run_wsclean_imaging(

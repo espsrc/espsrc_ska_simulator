@@ -1,9 +1,11 @@
 """cli.py — command-line entry point (adapted from synthsim.py)"""
 
 # suppress xarray accessor collision between rascil and ska-sdp-datamodels
+import os
 import warnings
 
 warnings.filterwarnings("ignore", message="registration of accessor")
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 import argparse
 import sys

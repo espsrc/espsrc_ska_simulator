@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
@@ -143,6 +144,8 @@ def create_run_context(config: SimConfig) -> RunContext:
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_id = f"{run_id}_{config.telescope.replace('-', '_')}"
         work_dir = Path(run_id).resolve()
+    if config.overwrite and work_dir.exists():
+        shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = str(work_dir / f"{work_dir.name}.log")

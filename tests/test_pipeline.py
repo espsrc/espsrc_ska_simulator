@@ -2,6 +2,7 @@
 
 import json
 import os
+from enum import Enum
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -19,6 +20,7 @@ from skasim.pipeline import (
     build_sky_model,
     compute_fov,
     parse_center,
+    resolve_telescope_version,
     run_simulation,
     source_ref_get_best_observation_time,
 )
@@ -27,6 +29,61 @@ from skasim.pipeline import (
 class _FakeTelescope:
     def plot_telescope(self, file):
         Path(file).write_text("plot", encoding="utf-8")
+
+
+class _FakeVersions(Enum):
+    SKA_OST_ARRAY_CONFIG_2_3_1 = "ska-ost-array-config-2.3.1"
+
+# --------------------------------------------------------------------------- #
+# telescope
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_telescope_version_accepts_enum_name():
+    """CLI telescope version names are converted to Karabo enum members."""
+    module = type(
+        "Module",
+        (),
+        {"OSKAR_TELESCOPE_TO_VERSIONS": {"SKA-LOW-AAstar": _FakeVersions}},
+    )
+
+    version = resolve_telescope_version(
+        module,
+        "SKA-LOW-AAstar",
+        "SKA_OST_ARRAY_CONFIG_2_3_1",
+    )
+
+    assert version is _FakeVersions.SKA_OST_ARRAY_CONFIG_2_3_1
+
+
+def test_resolve_telescope_version_accepts_enum_value():
+    """Karabo enum values are also accepted for telescope versions."""
+    module = type(
+        "Module",
+        (),
+        {"OSKAR_TELESCOPE_TO_VERSIONS": {"SKA-LOW-AAstar": _FakeVersions}},
+    )
+
+    version = resolve_telescope_version(
+        module,
+        "SKA-LOW-AAstar",
+        "ska-ost-array-config-2.3.1",
+    )
+
+    assert version is _FakeVersions.SKA_OST_ARRAY_CONFIG_2_3_1
+
+
+def test_resolve_telescope_version_rejects_unknown_version():
+    """Bad telescope versions fail before Karabo raises opaque enum errors."""
+    module = type(
+        "Module",
+        (),
+        {"OSKAR_TELESCOPE_TO_VERSIONS": {"SKA-LOW-AAstar": _FakeVersions}},
+    )
+
+    with pytest.raises(ValueError, match="Accepted versions"):
+        resolve_telescope_version(module, "SKA-LOW-AAstar", "bad-version")
+
 
 # --------------------------------------------------------------------------- #
 # parse_center
@@ -194,6 +251,25 @@ def test_load_sky_from_json_file():
     assert len(sky.sources) == 1
 
 
+def test_load_sky_from_json_preserves_shape_metadata():
+    """JSON sky models retain source ellipse metadata for previews."""
+    src = _single_source_json()
+    src["major_axis"] = 120.0
+    src["minor_axis"] = 30.0
+    src["pa"] = 42.0
+    src["spec_index"] = -0.63
+    mopen = mock_open(read_data=json.dumps([src]))
+
+    with patch("builtins.open", mopen):
+        sky = _load_sky_from_file("catalog.json")
+
+    rendered = sky.to_json()[0]
+    assert rendered["major_axis"] == pytest.approx(120.0)
+    assert rendered["minor_axis"] == pytest.approx(30.0)
+    assert rendered["pa"] == pytest.approx(42.0)
+    assert rendered["spec_index"] == pytest.approx(-0.63)
+
+
 def test_load_sky_from_json_scales_intensity():
     """flux_scale != 1 multiplies source intensities."""
     data = [_single_source_json()]
@@ -216,9 +292,8 @@ def test_load_sky_from_json_assigns_ref_freq_when_zero():
     with patch("builtins.open", mopen):
         sky = _load_sky_from_file("catalog.json", frequency=1420 * u.MHz)
     assert sky.sources is not None
-    # reduced_form only exports (ra, dec, I) so ref_freq is not inspectable
-    # through sources array; smoke test that the path completes without crash
     assert len(sky.sources) == 3
+    assert sky.to_json()[0]["ref_freq"] == pytest.approx(1420e6)
 
 
 def test_load_sky_from_file_unknown_extension():

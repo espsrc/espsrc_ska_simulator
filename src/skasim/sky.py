@@ -418,6 +418,8 @@ class Source:
     @staticmethod
     def from_sky_model(data):
         """Reconstruct Source from 14-element tuple (inverse of to_sky_model)."""
+        if len(data) == 3:
+            return Source(ra=data[0], dec=data[1], I=data[2])
         return Source(
             ra=data[0], dec=data[1], I=data[2],
             Q=data[3], U=data[4], V=data[5],

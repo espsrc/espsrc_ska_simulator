@@ -1,5 +1,6 @@
 """Image production behavior."""
 
+import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,11 +11,18 @@ from astropy.io import fits
 
 from skasim.config import ImgConfig, ObsConfig, SimConfig
 from skasim.imaging import (
+    SKY_MODEL_CMAP,
+    _compact_source_mask,
+    _flux_marker_sizes,
+    _padded_limits,
+    _sky_model_ellipses,
+    _sky_model_position_angle,
     build_wsclean_argv,
     collect_wsclean_outputs,
     run_wsclean_command,
     wsclean_output_prefix,
     write_fits_preview,
+    write_sky_model_previews,
 )
 from skasim.manifest import create_run_context
 
@@ -161,6 +169,165 @@ def test_write_fits_preview_uses_aplpy_cmasher_renderer(tmp_path):
     write_fits_preview(fits_path, png_path, "Ignored title")
 
     assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_write_sky_model_previews_writes_full_and_fov_pngs(tmp_path):
+    """Sky model previews include full-catalog and FoV-matched views."""
+    from astropy.coordinates import SkyCoord
+
+    from skasim.sky import SkyModel
+
+    sky_model = SkyModel(
+        np.array(
+            [
+                [150.0, 2.0, 1.0, 0.0, 0.0, 0.0, 700e6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [150.1, 2.1, 0.5, 0.0, 0.0, 0.0, 700e6, 0.0, 0.0, 4.0, 2.0, 0.0, 0.0, 0.0],
+            ]
+        )
+    )
+
+    outputs = write_sky_model_previews(
+        sky_model,
+        SkyCoord(150.0 * u.deg, 2.0 * u.deg),
+        1.0 * u.deg,
+        tmp_path,
+        "example",
+    )
+
+    assert outputs == [
+        ("example_sky_model.png", "sky_model"),
+        ("example_sky_model_fov.png", "sky_model_fov"),
+    ]
+    for path, _ in outputs:
+        assert (tmp_path / path).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_sky_model_ellipses_preserve_source_shape_metadata():
+    """Sky model source previews use major/minor axes and position angle."""
+    ellipses = _sky_model_ellipses(
+        np.array([150.0]),
+        np.array([2.0]),
+        np.array([18.0]),
+        np.array([6.0]),
+        np.array([35.0]),
+    )
+
+    assert len(ellipses) == 1
+    ellipse = ellipses[0]
+    assert ellipse.width == pytest.approx(18.0 / 3600.0)
+    assert ellipse.height == pytest.approx(6.0 / 3600.0)
+    assert ellipse.angle == pytest.approx(55.0)
+
+
+def test_sky_model_position_angle_uses_astronomical_convention():
+    """PA 0 is north-south and PA 90 is east-west in Matplotlib coordinates."""
+    assert _sky_model_position_angle(0.0) == pytest.approx(90.0)
+    assert _sky_model_position_angle(90.0) == pytest.approx(0.0)
+
+
+def test_compact_source_mask_depends_on_plot_width():
+    """Small sources become crosses when they are unresolved in the plotted FoV."""
+    mask = _compact_source_mask(
+        np.array([3.0, 100.0]),
+        plot_width_deg=1.0,
+    )
+
+    assert mask.tolist() == [True, False]
+
+
+def test_flux_marker_sizes_scale_with_flux_density():
+    """Compact-source cross size encodes flux density."""
+    sizes = _flux_marker_sizes(np.array([0.01, 1.0]))
+
+    assert sizes[1] > sizes[0]
+
+
+def test_reference_catalog_generator_writes_ds9_regions(tmp_path):
+    """Reference JSON catalog generation has a matching DS9 region writer."""
+    script = Path(__file__).resolve().parents[1] / "scripts" / "generate_gaussian_catalog.py"
+    spec = importlib.util.spec_from_file_location("generate_gaussian_catalog", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    region_path = tmp_path / "catalog.reg"
+    module.write_ds9_regions(
+        [
+            {
+                "ra": 150.0,
+                "dec": 2.0,
+                "I": 1.2,
+                "spec_index": -0.5,
+                "major_axis": 10.0,
+                "minor_axis": 4.0,
+                "pa": 35.0,
+            }
+        ],
+        region_path,
+    )
+
+    text = region_path.read_text(encoding="utf-8")
+    assert "fk5" in text
+    assert 'ellipse(150.0000000000,2.0000000000,10.000000",4.000000",55.000000)' in text
+    assert "point(150.0000000000,2.0000000000) # point=cross 8" in text
+
+
+def test_reference_catalog_generator_uses_broad_demo_distributions(tmp_path, monkeypatch):
+    """Reference catalog fluxes and sizes exercise compact, faint, and extended sources."""
+    script = Path(__file__).resolve().parents[1] / "scripts" / "generate_gaussian_catalog.py"
+    spec = importlib.util.spec_from_file_location("generate_gaussian_catalog", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.chdir(tmp_path)
+
+    module.generate_catalog(seed=42, n_sources=100)
+
+    import json
+
+    sources = json.loads((tmp_path / "demo_output" / "reference_gaussian_catalog.json").read_text())
+    fluxes = np.array([source["I"] for source in sources])
+    major_axes = np.array([source["major_axis"] for source in sources])
+    axis_ratios = np.array([source["minor_axis"] / source["major_axis"] for source in sources])
+    position_angles = np.array([source["pa"] for source in sources])
+    spectral_indices = np.array([source["spec_index"] for source in sources])
+
+    assert len(sources) == 100
+    assert np.count_nonzero(fluxes >= 0.06) == 2
+    assert np.count_nonzero((fluxes >= 1.0e-5) & (fluxes <= 2.0e-5)) >= 10
+    assert np.median(fluxes) == pytest.approx(1.0e-3, abs=5.0e-4)
+    assert np.count_nonzero(major_axes < 1.0) >= 5
+    assert np.count_nonzero((major_axes >= 1.0) & (major_axes < 15.0)) >= 40
+    assert np.count_nonzero((major_axes >= 15.0) & (major_axes < 60.0)) >= 15
+    assert np.count_nonzero(major_axes >= 60.0) >= 5
+    assert axis_ratios.min() < 0.35
+    assert axis_ratios.max() > 0.9
+    assert position_angles.min() < 10.0
+    assert position_angles.max() > 170.0
+    assert spectral_indices.mean() == pytest.approx(-0.5, abs=0.1)
+    assert (tmp_path / "demo_output" / "reference_gaussian_catalog.reg").exists()
+
+
+def test_sky_model_previews_use_reversed_colormap():
+    """Sky model previews render brighter sources darker than faint sources."""
+    from matplotlib.collections import PatchCollection
+
+    ellipses = _sky_model_ellipses(
+        np.array([150.0]),
+        np.array([2.0]),
+        np.array([18.0]),
+        np.array([6.0]),
+        np.array([35.0]),
+    )
+    collection = PatchCollection(ellipses, cmap=SKY_MODEL_CMAP)
+
+    assert collection.cmap.name == "viridis_r"
+
+
+def test_padded_limits_use_source_coordinates():
+    """Full sky-model previews set axes from source coordinates, not 0..1 defaults."""
+    lower, upper = _padded_limits(np.array([149.5, 150.5]))
+
+    assert lower < 149.5
+    assert upper > 150.5
 
 
 def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(

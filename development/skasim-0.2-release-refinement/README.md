@@ -101,7 +101,29 @@ Post-assessment changes are currently uncommitted. They address
   contours, and beam overlays when FITS beam metadata is available.
 - The weblog groups WSClean MFS model, clean, and residual products as the
   primary science products. The PSF is linked from the product header rather
-  than shown as a fourth image.
+  than shown as a fourth image. Dirty images are shown only as a fallback when
+  model/clean/residual products are not available, such as `oskar-dirty` runs.
+- Each run writes two sky-model preview plots after sky-model loading: the full
+  source model and a FoV-matched zoom. The weblog shows these in the Sky Model
+  section. Source shapes are rendered as ellipses from major axis, minor axis,
+  and position angle metadata. The sky-model colormap is reversed so brighter
+  sources render darker and faint sources render lighter. Source position
+  angles are converted from astronomical PA, measured east of north, to the
+  Matplotlib convention. Sources smaller than the plotted FoV-dependent
+  resolution threshold are drawn as flux-scaled crosses so compact components
+  remain visible in full-field plots.
+- JSON sky-model loading preserves full source metadata, not only reduced
+  `(ra, dec, I)` rows, so preview plots and downstream records retain source
+  sizes, position angles, spectral metadata, and polarization fields.
+- The reference Gaussian JSON catalog generator assigns per-source spectral
+  indices from a normal distribution centered on `-0.5` with standard deviation
+  `0.2`; JSON ingestion preserves these values in the resulting sky model. It
+  now produces a broader demonstration population: most sources are centered
+  around the 1 mJy scale, two deterministic bright sources are near 60-100 mJy,
+  several faint sources are in the 10-20 microJy range, and source sizes span
+  sub-arcsec compact components through several-arcmin extended Gaussians. The
+  generator also writes a matching DS9 FK5 region file with one ellipse and one
+  compact cross marker per source.
 - The weblog places the telescope layout next to the compact
   observation/telescope configuration, keeps run timing small in the header,
   and moves the detailed milestone timeline after the science images.
@@ -109,8 +131,13 @@ Post-assessment changes are currently uncommitted. They address
   model source, and weblog outputs by structured kind where applicable.
 - Every run writes `weblog.html`, including failed runs.
 - Default run IDs use second precision: `YYYYMMDD_HHMMSS_<telescope>`.
-- Existing visibility output directories require `--overwrite`; there is no
-  interactive prompt.
+- Existing output directories require `--overwrite`; there is no interactive
+  prompt. With `--overwrite`, the exact output directory is removed and
+  recreated before the run starts so stale MeasurementSet locks, WSClean
+  products, logs, and manifests cannot mix with the new run.
+- CLI and pipeline execution force a non-interactive Matplotlib backend and
+  close telescope-layout figures after saving. This avoids X11/ICE shutdown
+  errors on headless hosts after otherwise successful OSKAR/WSClean runs.
 
 ## Removed Or Rejected
 
@@ -134,9 +161,6 @@ Post-assessment changes are currently uncommitted. They address
 - The proposed full Python f-string weblog rewrite was rejected. The weblog
   remains Jinja2-based so HTML structure stays separated from Python data
   preparation.
-- The proposed pipeline-level sky-model preview generator was rejected for this
-  pass because it added a second plotting subsystem beyond the requested
-  weblog/image-product presentation changes.
 
 ## Modified Files By Area
 
@@ -172,6 +196,7 @@ Latest result:
 
 ```text
 109 passed in the focused CLI/config/pipeline/manifest/imaging/runtime/docs/weblog subset
+Reference MeerKAT JSON-catalog WSClean command from run_all.sh completed with exit code 0 after clean overwrite/backend fixes.
 ```
 
 The temporary dependency path is only for this development session. The verified

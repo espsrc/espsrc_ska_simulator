@@ -44,7 +44,11 @@ def build_telescope(ctx: RunContext):
     telescope_module = require_karabo_module("karabo.simulation.telescope")
     kwargs: dict = {"backend": simulator_backend.SimulatorBackend.OSKAR}
     if config.telescope_version is not None:
-        kwargs["version"] = config.telescope_version
+        kwargs["version"] = resolve_telescope_version(
+            telescope_module,
+            config.telescope,
+            config.telescope_version,
+        )
         logger.info(f"Telescope {config.telescope}  version={config.telescope_version}")
     else:
         logger.info(f"Telescope {config.telescope}  (no version)")
@@ -65,6 +69,25 @@ def build_telescope(ctx: RunContext):
         details=details,
     )
     return telescope
+
+
+def resolve_telescope_version(telescope_module, telescope: str, version: str):
+    """Resolve a CLI/config telescope version string to Karabo's enum member."""
+    version_enum = getattr(telescope_module, "OSKAR_TELESCOPE_TO_VERSIONS", {}).get(
+        telescope
+    )
+    if version_enum is None:
+        return version
+    if not isinstance(version, str):
+        return version
+    for candidate in version_enum:
+        if version in (candidate.name, candidate.value):
+            return candidate
+    accepted = ", ".join(candidate.name for candidate in version_enum)
+    raise ValueError(
+        f"Unsupported version {version!r} for telescope {telescope!r}. "
+        f"Accepted versions: {accepted}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -135,7 +158,7 @@ def _load_sky_from_file(
         if not sources:
             raise ValueError(f"No sources found in JSON {fpath}")
         sky_model = SkyModel()
-        arr = np.array([s.to_sky_model(reduced_form=True) for s in sources])
+        arr = np.array([s.to_sky_model(reduced_form=False) for s in sources])
         sky_model.add_point_sources(arr)
         sky_model.get_center()
         logger.info(f"Loaded {len(sources)} sources from JSON {fpath}")
@@ -406,6 +429,10 @@ def run(config: SimConfig) -> None:
     """Execute the full simulation pipeline from a SimConfig."""
     from .weblog import render_weblog
 
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+
     t0 = time.time()
     ctx = create_run_context(config)
 
@@ -420,7 +447,12 @@ def run(config: SimConfig) -> None:
 
         telescope = build_telescope(ctx)
         telescope_png = ctx.work_dir / f"{ctx.work_dir.name}_{config.telescope}_{config.telescope_version or ''}_telescope.png"
-        telescope.plot_telescope(file=str(telescope_png))
+        try:
+            telescope.plot_telescope(file=str(telescope_png))
+        finally:
+            import matplotlib.pyplot as plt
+
+            plt.close("all")
         ctx.manifest.add_output(
             "plot",
             str(telescope_png.relative_to(ctx.work_dir)),
@@ -434,6 +466,19 @@ def run(config: SimConfig) -> None:
         sky_model, center = build_sky_model(ctx, fov)
         center = parse_center(config.center, center)
         logger.info(f"Centre    : {center.to_string('hmsdms')}")
+        try:
+            from .imaging import write_sky_model_previews
+
+            for path, role in write_sky_model_previews(
+                sky_model,
+                center,
+                fov,
+                ctx.work_dir,
+                ctx.work_dir.name,
+            ):
+                ctx.manifest.add_output("plot", path, role=role)
+        except Exception as exc:
+            logger.warning(f"Sky model previews failed: {show_exc(exc)}")
 
         observation, _, bandwidth, n_channels, delta_freq, start_freq = build_observation(ctx, center, telescope)
         logger.info(f"StartFreq : {start_freq.to(u.MHz).value:.3f} MHz")

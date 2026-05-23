@@ -62,13 +62,37 @@ This note records the implementation decisions made after reviewing
   maintain while adding heavier plotting dependencies anyway.
 - The weblog now prioritizes science products: WSClean MFS Model, Clean, and
   Residual images are shown together, with the PSF exposed as a direct link.
+  Dirty images are shown only when model/clean/residual products are absent.
 - The telescope layout plot is displayed in the compact
   Observation/Telescope section instead of the supporting-plot gallery.
+- Sky-model rendering now produces two explicit plot outputs, a full source
+  model and a FoV-matched zoom, and the weblog displays both in the Sky Model
+  section. These plots render source shapes as ellipses from major axis, minor
+  axis, and position angle metadata, with a reversed colormap so bright sources
+  are darker than faint sources. Compact sources below a FoV-dependent angular
+  size threshold are rendered as flux-scaled crosses so the full-field plot
+  remains complete, and source PA is converted from astronomical east-of-north
+  convention to Matplotlib's x-axis convention.
+- JSON sky-model loading now stores full source rows instead of reduced
+  `(ra, dec, I)` rows so source sizes and position angles survive through
+  `SkyModel.to_json()` and the sky-model preview renderer.
+- The reference Gaussian catalog generator writes both JSON and DS9 FK5 region
+  files. It now produces a broader demonstration population: most sources are
+  centered around the 1 mJy scale, two deterministic bright sources are near
+  60-100 mJy, several faint sources are in the 10-20 microJy range, and source
+  sizes span sub-arcsec compact components through several-arcmin extended
+  Gaussians. DS9 regions use ellipse definitions with the same source
+  coordinates, major/minor axes, converted display PA, flux density, and
+  spectral index metadata, plus cross markers so compact sources remain visible.
 - Runtime timing is summarized in the small header metadata, and the detailed
   milestone timeline is placed after the science images.
-- The broader pipeline-level sky-model preview generator proposed during
-  weblog polishing was rejected for now; sky-model preview generation needs a
-  separate design and tests before it becomes pipeline behavior.
+- `--overwrite` now removes and recreates the exact output directory before
+  logger/manifest setup. This prevents stale MeasurementSet lock files and
+  WSClean products from previous runs from corrupting repeated smoke runs such
+  as `demo_output/reference_meerkat`.
+- CLI/pipeline execution forces Matplotlib's `Agg` backend and closes telescope
+  plot figures after saving to prevent X11/ICE shutdown failures on headless
+  systems.
 
 ## Verification
 
@@ -76,3 +100,6 @@ This note records the implementation decisions made after reviewing
 - `PYTHONPATH=/tmp/skasim-pydeps:src python -m pytest -q`
 - Latest focused result:
   `109 passed in tests/test_config.py tests/test_cli.py tests/test_pipeline.py tests/test_manifest.py tests/test_imaging.py tests/test_runtime_imports.py tests/test_release_docs.py tests/test_weblog.py`.
+- Runtime smoke result: the reference MeerKAT JSON-catalog WSClean command from
+  `run_all.sh` completed with exit code 0 after the clean overwrite and
+  non-interactive plotting fixes.
