@@ -327,6 +327,7 @@ def build_observation(
     seconds = config.observation.observation_time_s
 
     start_freq = freq - n_channels * delta_freq / 2
+    end_freq = start_freq + n_channels * delta_freq
 
     # best observation time (culmination)
     obs_time = source_ref_get_best_observation_time(center, telescope)
@@ -348,9 +349,15 @@ def build_observation(
         "completed",
         details={
             "frequency_mhz": obs.frequency_mhz,
+            "min_frequency_mhz": start_freq.to(u.MHz).value,
+            "max_frequency_mhz": end_freq.to(u.MHz).value,
             "bandwidth_mhz": bw_mhz,
             "n_channels": n_channels,
+            "channel_width_mhz": df_mhz,
             "observation_time_s": seconds,
+            "n_timesteps": n_timesteps,
+            "phase_center_ra_deg": center.ra.to(u.deg).value,
+            "phase_center_dec_deg": center.dec.to(u.deg).value,
         },
     )
     return observation, freq, bandwidth, n_channels, delta_freq, start_freq

@@ -50,13 +50,26 @@ installation path on this machine.
 WSClean
 -------
 
+The conda full-runtime install above installs WSClean through the
+``karabo-pipeline`` dependency set. On the verified ``skasim`` environment,
+``karabo-pipeline`` depends on ``wsclean`` and Conda installs
+``wsclean 3.5.0`` from the ``i4ds`` channel.
+
+WSClean checks whether OpenBLAS multi-threading is enabled and aborts if
+``OPENBLAS_NUM_THREADS`` is not set to ``1``. The ``skasim`` pipeline sets this
+environment variable automatically before launching WSClean, so pipeline runs
+can succeed even when a direct shell command such as ``wsclean --version``
+fails. To inspect WSClean directly, use::
+
+    conda run -n skasim env OPENBLAS_NUM_THREADS=1 wsclean --version
+
 The WSClean command defaults to ``wsclean``. If WSClean is available through a
-wrapper or container, pass it explicitly with ``--wsclean-command``.
+wrapper or container instead, pass it explicitly with ``--wsclean-command``.
 
 On this machine, the Singularity container can be used as an example::
 
     skasim --imager wsclean \
-      --wsclean-command "singularity exec /mnt/software/containers/wsclean-3.10-dysco.sif wsclean"
+      --wsclean-command "singularity exec /mnt/software/containers/wsclean_3.4_idg_dysco_everybeam.sif wsclean"
 
 This command is an environment-specific example, not the default.
 

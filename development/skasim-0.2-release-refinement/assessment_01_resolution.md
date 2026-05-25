@@ -65,6 +65,17 @@ This note records the implementation decisions made after reviewing
   Dirty images are shown only when model/clean/residual products are absent.
 - The telescope layout plot is displayed in the compact
   Observation/Telescope section instead of the supporting-plot gallery.
+- The weblog now keeps telescope and observation metadata together, including
+  resolved frequency min/max, central frequency, channel width, total bandwidth,
+  channel count, observation time, and timestep-derived integration time when
+  available. Imaging setup is compact: image size, total FoV, pixel size, and
+  representative beam metadata. Cleaning and imager setup exposes effective
+  WSClean defaults plus output prefix and visibility input, or OSKAR dirty
+  imager defaults. Science products show representative beam metadata once per
+  product instead of repeating it under every preview image.
+- The weblog now ends with a concise software-version table for reproducibility:
+  `skasim`, Karabo, OSKAR, WSClean, and Python. It reads Python package metadata
+  where possible and Conda metadata for Conda-provided runtime tools.
 - Sky-model rendering now produces two explicit plot outputs, a full source
   model and a FoV-matched zoom, and the weblog displays both in the Sky Model
   section. These plots render source shapes as ellipses from major axis, minor

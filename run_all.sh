@@ -124,6 +124,37 @@ conda run -n skasim skasim \
   --output-dir demo_output/test6_reference_lofar \
   --overwrite
 
+echo "Running Reference Catalog with VLA (C Configuration)..."
+conda run -n skasim skasim \
+  --model demo_output/reference_gaussian_catalog.json \
+  --telescope VLA \
+  --telescope-version C \
+  --imager wsclean \
+  --fov "${FOV}" \
+  --pixels "${PIXELS}" \
+  --clean-iterations "${CLEAN_ITERATIONS}" \
+  --observation-time "${OBSERVATION_TIME}" \
+  --bandwidth-mhz "${BANDWIDTH_MHZ}" \
+  --n-channels "${N_CHANNELS}" \
+  --wsclean-command "${WSCLEAN_CMD}" \
+  --output-dir demo_output/test7_reference_vla_c \
+  --overwrite
+
+echo "Running MeerKAT using MIGHTEE catalog..."
+conda run -n skasim skasim \
+  --catalog MIGHTEE \
+  --telescope MeerKAT \
+  --imager wsclean \
+  --fov "${FOV}" \
+  --pixels "${PIXELS}" \
+  --clean-iterations "${CLEAN_ITERATIONS}" \
+  --observation-time "${OBSERVATION_TIME}" \
+  --bandwidth-mhz "${BANDWIDTH_MHZ}" \
+  --n-channels "${N_CHANNELS}" \
+  --wsclean-command "${WSCLEAN_CMD}" \
+  --output-dir demo_output/test8_mightee_meerkat \
+  --overwrite
+
 echo -e "\n=== All tests defined in run_all.sh finished successfully! ==="
 
 

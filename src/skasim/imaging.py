@@ -178,7 +178,7 @@ def write_fits_preview(
 
         hdu = _make_2d_preview_hdu(display_data, source_hdu.header, bunit="mJy/beam")
         hdul = fits.HDUList([hdu])
-        fig = plt.figure(figsize=(7, 6))
+        fig = plt.figure(figsize=(8, 7))
         ffig = aplpy.FITSFigure(hdul, figure=fig)
         
         if recenter:
@@ -205,7 +205,7 @@ def write_fits_preview(
         ffig.axis_labels.set_ytext("Dec")
         ffig.add_colorbar()
         ffig.colorbar.set_axis_label_text("mJy/beam")
-        ffig.savefig(str(png_path), dpi=130)
+        ffig.savefig(str(png_path), dpi=150)
         plt.close(fig)
 
 def _make_2d_preview_hdu(

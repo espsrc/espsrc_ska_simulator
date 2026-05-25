@@ -15,7 +15,7 @@
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, sans-serif; color: var(--fg); line-height: 1.5; }
-    .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+    .container { max-width: 1300px; margin: 0 auto; padding: 2rem 1.5rem; }
     h1 { font-size: 1.5rem; font-weight: 600; }
     h2 { font-size: 1.1rem; font-weight: 600; margin: 2.2rem 0 0.75rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
     a { color: var(--accent); text-decoration: none; }
@@ -36,14 +36,19 @@
     /* config table */
     .config-row { display: flex; gap: 2rem; align-items: flex-start; flex-wrap: wrap; }
     .config-row table { border-collapse: collapse; font-size: 0.85rem; flex: 1; min-width: 320px; }
-    .config-row th { text-align: left; color: var(--muted); font-weight: 500; padding: 0.25rem 1rem 0.25rem 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; width: 140px; }
+    .config-row th { text-align: left; color: var(--muted); font-weight: 500; padding: 0.25rem 1rem 0.25rem 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; width: 190px; }
     .config-row td { padding: 0.25rem 1rem 0.25rem 0; font-variant-numeric: tabular-nums; }
     .config-row .plot-container { flex-shrink: 0; text-align: center; }
     .config-row .plot-container img { height: 260px; width: auto; display: block; }
     .config-row .plot-title { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 0.5rem; text-align: left; }
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem 2rem; }
+    .info-grid table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .info-grid th { text-align: left; color: var(--muted); font-weight: 500; padding: 0.25rem 1rem 0.25rem 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; width: 190px; }
+    .info-grid td { padding: 0.25rem 1rem 0.25rem 0; font-variant-numeric: tabular-nums; }
+    .section-label { font-size: 0.78rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 0.35rem; }
 
     /* science images */
-    .science-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin-top: 0.75rem; }
+    .science-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; margin-top: 0.75rem; }
     .science-grid figure { margin: 0; text-align: center; }
     .science-grid img { width: 100%; height: auto; display: block; }
     .science-grid figcaption { font-size: 0.8rem; color: var(--muted); margin-top: 0.3rem; }
@@ -102,16 +107,22 @@
         <tr><th>Dish Diameter</th><td>{{ dish_diameter }}</td></tr>
         {% endif %}
         {% if n_stations %}
-        <tr><th>Stations Count</th><td>{{ n_stations }}</td></tr>
+        <tr><th>Antennas</th><td>{{ n_stations }}</td></tr>
         {% endif %}
         {% if derived_fov %}
         <tr><th>Beam FoV (FWHM)</th><td>{{ derived_fov }} <span style="color:var(--muted); font-size:0.75rem; font-style:italic;">(diffraction limit: 1.25 &lambda;/D)</span></td></tr>
         {% endif %}
-        <tr><th>Frequency</th><td>{{ manifest.config.observation.frequency_mhz }} MHz</td></tr>
-        <tr><th>Bandwidth</th><td>{{ manifest.config.observation.bandwidth_mhz }} MHz</td></tr>
-        <tr><th>Channels</th><td>{{ manifest.config.observation.n_channels }}</td></tr>
-        <tr><th>Duration</th><td>{{ manifest.config.observation.observation_time_s }} s</td></tr>
-        <tr><th>Imaging Pixels</th><td>{{ manifest.config.imaging.pixels }}</td></tr>
+        <tr><th>Frequency Range</th><td>{{ observation_summary.frequency_min_mhz }}-{{ observation_summary.frequency_max_mhz }} MHz</td></tr>
+        <tr><th>Central Frequency</th><td>{{ observation_summary.central_frequency_mhz }} MHz</td></tr>
+        <tr><th>Channels</th><td>{{ observation_summary.n_channels }} x {{ observation_summary.channel_bandwidth_mhz }} MHz</td></tr>
+        <tr><th>Total Bandwidth</th><td>{{ observation_summary.total_bandwidth_mhz }} MHz</td></tr>
+        <tr><th>Obs Time</th><td>{{ observation_summary.observation_time_s }} s</td></tr>
+        {% if observation_summary.n_timesteps %}
+        <tr><th>Timesteps</th><td>{{ observation_summary.n_timesteps }}</td></tr>
+        {% endif %}
+        {% if observation_summary.integration_time_s %}
+        <tr><th>Integration</th><td>{{ observation_summary.integration_time_s }} s</td></tr>
+        {% endif %}
       </table>
       {% if telescope_plot %}
       <div class="plot-container">
@@ -121,6 +132,31 @@
         </a>
       </div>
       {% endif %}
+    </div>
+
+    <h2>Imaging Setup</h2>
+    <div class="info-grid">
+      <table>
+        <tr><th>Image Size</th><td>{{ imaging_summary.image_size }}</td></tr>
+        {% if imaging_summary.fov_deg %}
+        <tr><th>Total FoV</th><td>{{ imaging_summary.fov_deg }} deg</td></tr>
+        {% endif %}
+        {% if imaging_summary.pixel_size_arcsec %}
+        <tr><th>Pixel Size</th><td>{{ imaging_summary.pixel_size_arcsec }} arcsec</td></tr>
+        {% endif %}
+        {% if imaging_summary.beam %}
+        <tr><th>Beam</th><td>{{ imaging_summary.beam }}</td></tr>
+        {% endif %}
+      </table>
+    </div>
+
+    <h2>Cleaning & Imager Parameters</h2>
+    <div class="info-grid">
+      <table>
+        {% for label, value in imager_parameter_rows %}
+        <tr><th>{{ label }}</th><td>{{ value }}</td></tr>
+        {% endfor %}
+      </table>
     </div>
 
     <!-- Sky Model configuration -->
@@ -169,6 +205,11 @@
       {% if product.stats %}
       <div class="stats-line">
         Peak: {{ product.stats.peak }} · RMS: {{ product.stats.rms }}{% if product.stats.snr %} · SNR: {{ product.stats.snr }}{% endif %}
+        {% if product.beam %} · Beam: {{ product.beam.bmaj or "?" }} x {{ product.beam.bmin or "?" }}{% if product.beam.bpa %} · BPA {{ product.beam.bpa }}{% endif %}{% endif %}
+      </div>
+      {% elif product.beam %}
+      <div class="stats-line">
+        Beam: {{ product.beam.bmaj or "?" }} x {{ product.beam.bmin or "?" }}{% if product.beam.bpa %} · BPA {{ product.beam.bpa }}{% endif %}
       </div>
       {% endif %}
       <div class="science-grid">
@@ -253,6 +294,18 @@
       </table>
     </details>
     {% endif %}
+
+    <h2>Software Versions</h2>
+    <table class="timeline">
+      <tbody>
+        {% for name, value in software_versions %}
+        <tr>
+          <th style="text-align:left; color:var(--muted); font-weight:500; padding:0.3rem 0.5rem; width:140px;">{{ name }}</th>
+          <td style="padding:0.3rem 0.5rem; font-variant-numeric:tabular-nums;">{{ value }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
 
     <details>
       <summary>Resolved Configuration</summary>

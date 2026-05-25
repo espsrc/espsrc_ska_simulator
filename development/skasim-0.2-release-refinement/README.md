@@ -103,6 +103,20 @@ Post-assessment changes are currently uncommitted. They address
   primary science products. The PSF is linked from the product header rather
   than shown as a fourth image. Dirty images are shown only as a fallback when
   model/clean/residual products are not available, such as `oskar-dirty` runs.
+- The weblog keeps telescope and observation metadata together, including the
+  resolved frequency range, central frequency, channel width, total bandwidth,
+  channel count, observation time, and timestep-derived integration time when
+  available. Imaging setup is intentionally compact: image size, total FoV,
+  pixel size, and representative FITS beam metadata when present. Cleaning and
+  imager setup lists the effective WSClean or OSKAR parameters, including
+  WSClean weighting, multiscale, mgain, auto-threshold, auto-mask, channels-out,
+  join-channels, local-rms, output prefix, and visibility input. Science
+  products display representative beam metadata once per product instead of
+  repeating it under every preview image.
+- The weblog ends with a compact software-version table for reproducibility:
+  `skasim`, Karabo, OSKAR, WSClean, and Python. Python package metadata is used
+  when available, and Conda metadata is used for runtime tools such as WSClean
+  and OSKAR that are installed as Conda packages.
 - Each run writes two sky-model preview plots after sky-model loading: the full
   source model and a FoV-matched zoom. The weblog shows these in the Sky Model
   section. Source shapes are rendered as ellipses from major axis, minor axis,

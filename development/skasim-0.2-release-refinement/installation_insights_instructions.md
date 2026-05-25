@@ -84,10 +84,14 @@ are present in the environment:
 conda run -n skasim python -c "import karabo, oskar; print('karabo', karabo.__version__); print('oskar ok')"
 conda run -n skasim which oskar_sim_interferometer
 conda run -n skasim which wsclean
+conda run -n skasim env OPENBLAS_NUM_THREADS=1 wsclean --version
 ```
 *Expected output: `import oskar` succeeds, `oskar_sim_interferometer` resolves
 inside the `skasim` environment, and `wsclean` resolves inside the same
-environment. `oskarpy` is not required for this execution path.*
+environment. Direct WSClean commands need `OPENBLAS_NUM_THREADS=1`; the
+`skasim` pipeline sets that automatically before launching WSClean, which is
+why pipeline runs can work even if a bare `wsclean --version` aborts. `oskarpy`
+is not required for this execution path.*
 
 ### C. List Simulated Telescopes
 Test the integration with the `ska-sdp` and `karabo` backend libraries by listing simulated telescope configurations:
