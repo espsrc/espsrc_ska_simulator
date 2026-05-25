@@ -111,6 +111,6 @@ This note records the implementation decisions made after reviewing
 - `PYTHONPATH=/tmp/skasim-pydeps:src python -m pytest -q`
 - Latest focused result:
   `109 passed in tests/test_config.py tests/test_cli.py tests/test_pipeline.py tests/test_manifest.py tests/test_imaging.py tests/test_runtime_imports.py tests/test_release_docs.py tests/test_weblog.py`.
-- Runtime smoke result: the reference MeerKAT JSON-catalog WSClean command from
-  `run_all.sh` completed with exit code 0 after the clean overwrite and
-  non-interactive plotting fixes.
+- Runtime smoke result: the reference MeerKAT JSON-catalog WSClean command
+  completed with exit code 0 after the clean overwrite and non-interactive
+  plotting fixes. The local `run_all.sh` helper is intentionally not tracked.

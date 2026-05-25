@@ -210,7 +210,7 @@ Latest result:
 
 ```text
 109 passed in the focused CLI/config/pipeline/manifest/imaging/runtime/docs/weblog subset
-Reference MeerKAT JSON-catalog WSClean command from run_all.sh completed with exit code 0 after clean overwrite/backend fixes.
+Reference MeerKAT JSON-catalog WSClean command completed with exit code 0 after clean overwrite/backend fixes.
 ```
 
 The temporary dependency path is only for this development session. The verified
