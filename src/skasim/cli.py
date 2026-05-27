@@ -50,6 +50,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="Sky model file: FITS, JSON, pickle, or Karabo model",
     )
     sky.add_argument(
+        "--fits-image",
+        dest="fits_image",
+        type=str,
+        default=None,
+        help="FITS image file (2D continuum image)",
+    )
+    sky.add_argument(
         "--catalog",
         dest="catalog",
         type=str,
@@ -235,7 +242,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         print("=== Telescopes (No version required) ===")
         for t in sorted(get_args(OSKARTelescopesWithoutVersionType)):
             print(f"  {t}")
-        
+
         print("\n=== Telescopes requiring a version (Supply via --telescope-version) ===")
         for t in sorted(get_args(OSKARTelescopesWithVersionType)):
             versions = [v.name for v in OSKAR_TELESCOPE_TO_VERSIONS.get(t, [])]
@@ -274,6 +281,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         "sky_file": args.model,
         "sky_format": "auto",
         "catalog": args.catalog,
+        "fits_image": args.fits_image,
         "column_mapping": args.column_mapping,
         "flux_scale": args.flux_scale,
         "center": args.center,

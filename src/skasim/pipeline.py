@@ -19,7 +19,7 @@ from loguru import logger
 from .config import SimConfig
 from .imaging import run_dirty_imaging, run_wsclean_imaging
 from .manifest import RunContext, create_run_context
-from .fits_helper import FitsCatalogLoader
+from .loaders import FitsCatalogLoader
 from .runtime import require_karabo_module
 from .sky import SkyModel, Source
 from .utils import get_diameter, mapping_unit
@@ -263,7 +263,37 @@ def build_sky_model(
         )
         return sky_model, center
 
-    # 3) random sources around a reference position
+    # 3) FITS image ingestion
+    if config.fits_image is not None:
+        from .loaders import FitsImageLoader
+
+        fpath = Path(config.fits_image)
+        if not fpath.is_absolute():
+            fpath = Path(os.getcwd()) / fpath
+        loader = FitsImageLoader(
+            fpath,
+            fallback_freq_mhz=config.observation.frequency_mhz,
+        )
+        sky_model = loader.load()
+        center = sky_model.get_center()
+        n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
+        ctx.add_milestone(
+            "sky_model_loaded",
+            "completed",
+            details={
+                "path": str(fpath),
+                "format": "fits_image",
+                "n_sources": n_srcs,
+            },
+        )
+        ctx.manifest.add_output(
+            "sky_model",
+            str(fpath),
+            metadata={"format": "fits_image", "n_sources": n_srcs},
+        )
+        return sky_model, center
+
+    # 4) random sources around a reference position
     logger.info("Generating random sources")
     source_ref = Source.from_name("HCG16")
     intensities = [i * u.Jy for i in config.source_flux_jy]

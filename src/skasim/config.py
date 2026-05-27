@@ -105,6 +105,7 @@ class SimConfig(BaseModel):
     sky_file: Optional[str] = None
     sky_format: Literal["auto", "fits", "json", "pickle", "random"] = "auto"
     catalog: Optional[CatalogName] = None
+    fits_image: Optional[str] = None
     column_mapping: Optional[str] = "0,1,2,3,4,5,6,7,8,9,10,11,12"
     flux_scale: float = 1.0
 
@@ -147,7 +148,11 @@ class SimConfig(BaseModel):
                     "stokes_v_jy",
                 )
             )
-            and (data.get("sky_file") is not None or data.get("catalog") is not None)
+            and (
+                data.get("sky_file") is not None
+                or data.get("catalog") is not None
+                or data.get("fits_image") is not None
+            )
         ):
             raise ValueError(
                 "Generated source flux and polarization flags are only valid in "
@@ -172,13 +177,13 @@ class SimConfig(BaseModel):
     def _validate_one_sky_model_source(self):
         explicit_sources = [
             source
-            for source in (self.sky_file, self.catalog)
+            for source in (self.sky_file, self.catalog, self.fits_image)
             if source is not None
         ]
         if len(explicit_sources) > 1:
             raise ValueError(
                 "Provide one sky model source per run; choose a file-backed "
-                "sky model or a named catalog."
+                "sky model, named catalog, or FITS image."
             )
         if explicit_sources:
             self.source_flux_jy = []
