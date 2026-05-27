@@ -1,7 +1,7 @@
 # skasim — Spanish SRC SKA Simulator
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Package](https://img.shields.io/badge/pkg-0.1.0-orange)](https://github.com/espsrc/espsrc_ska_simulator)
+[![Package](https://img.shields.io/badge/pkg-0.2.0-orange)](https://github.com/espsrc/espsrc_ska_simulator)
 
 **skasim** is a Python package for creating synthetic radio-interferometric observations of the SKA (Square Kilometre Array). It bridges user-supplied sky models and simulated imaging data products, supporting feasibility studies, definition of science cases and pipeline validation for the SKA community.
 
@@ -15,9 +15,10 @@ Sky Model ──> OSKAR simulation ──> visibilities.MS ──> Image (OSKAR 
 
 ## Key Features
 
-- **Pydantic-validated configuration** — `SimConfig`, `ObsConfig`, `ImgConfig` catch parameter errors at construction time
-- **Flexible sky-model inputs** — FITS catalogues, JSON source lists, Pickle/Karabo models, or built-in catalogues (MIGHTEE, GLEAM)
+- **Pydantic-validated configuration** — `SimConfig`, `ObsConfig`, `ImgConfig` catch parameter errors and reject deprecated 0.1 fields
+- **Flexible sky-model inputs** — generated source intensities, FITS catalogs, JSON source lists, Pickle/Karabo models, or built-in catalogs (MIGHTEE, GLEAM, SKAMid)
 - **Two imaging pathways** — fast dirty imaging via OSKAR, or cleaned imaging via the external WSClean binary
+- **Run records** — every run writes a structured manifest and an always-on weblog, including failed runs
 ---
 
 ## Quick Start
@@ -31,8 +32,15 @@ cd espsrc_ska_simulator
 # Install (into a Karabo environment)
 pip install -e .
 
-# Run a simple simulation with 3 random point sources, SKA1-MID, clean imaging
-skasim --I 1.0 5.0 10.0 --telescope SKA1MID --seconds 600 --freq 1300 --pixels 1024 --cleaning
+# Run a small named-catalog simulation with WSClean imaging
+skasim --output-dir smoke_mightee_wsclean \
+  --telescope MeerKAT \
+  --observation-time 60 \
+  --frequency-mhz 1300 \
+  --pixels 512 \
+  --catalog MIGHTEE \
+  --imager wsclean \
+  --clean-iterations 100
 ```
 
 See [full installation](https://github.com/espsrc/espsrc_ska_simulator/blob/main/docs/installation.rst) for environment setup.
@@ -55,14 +63,32 @@ See [full installation](https://github.com/espsrc/espsrc_ska_simulator/blob/main
 skasim --model <sky_model> --telescope <telescope> [options]
 
 Key options:
-  --freq MHz              Centre frequency
-  --bandwidth MHz         Bandwidth
-  --n-channels N          Number of channels
-  --seconds N             Observation duration
-  --cleaning              Use WSClean instead of OSKAR dirty
+  --model PATH                Sky model file: FITS, JSON, pickle, or Karabo model
+  --catalog NAME            Built-in catalog: MIGHTEE, GLEAM, or SKAMid
+  --flux-density Jy...        Generated source Stokes I flux densities
+  --stokes-q Jy...            Generated source Stokes Q values
+  --stokes-u Jy...            Generated source Stokes U values
+  --stokes-v Jy...            Generated source Stokes V values
+  --frequency-mhz MHz         Central observing frequency
+  --bandwidth-mhz MHz         Bandwidth
+  --n-channels N              Number of channels
+  --channel-width-mhz MHz     Channel width
+  --observation-time SECONDS  Observation duration
+  --output-dir PATH           Exact output directory name
+  --imager NAME               oskar-dirty (default) or wsclean
+  --clean-iterations N        WSClean CLEAN iterations
+  --wsclean-command CMD       WSClean command or container invocation
+  --overwrite                 Replace an existing visibility output directory
 ```
 
 Run `skasim --help` for the complete reference, or check the full API documentation.
+
+Removed or renamed 0.1 options such as `--I`, `--stokes-i`,
+`--fits`, `--json`, `--json-fg`, `--freq`, `--seconds`, `--prefix`, `--niter`,
+`--scale-I`, `--cleaning`, numeric catalog IDs, and the Python config fields
+`I`, `Q`, `U`, `V`, `cleaning`, `source_names`, `ref_freq_hz`, `json_fg`,
+`output_prefix`, `niter`, `scale_I`, and `ImgConfig.algorithm` fail
+intentionally in 0.2.
 
 ---
 
@@ -74,7 +100,7 @@ src/skasim/
 ├── cli.py              # argparse CLI
 ├── config.py           # Pydantic models: SimConfig, ObsConfig, ImgConfig
 ├── pipeline.py         # Orchestrator: sky → simulation → imaging
-├── sky.py              # Source, SkyModel, catalogue loaders
+├── sky.py              # Source, SkyModel, catalog loaders
 ├── imaging.py          # Dirty (OSKAR) / cleaned (WSClean) imaging
 └── utils.py            # Constants, helpers, logger init
 ```

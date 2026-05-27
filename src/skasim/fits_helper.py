@@ -1,12 +1,10 @@
-"""fits_helper.py — fuzzy column-name resolver for FITS catalogues.
+"""fits_helper.py — FITS catalogue loading helpers.
 
-Provides auto-detection of relevant hcolumns (RA, Dec, flux, etc.) from arbitrary
-FITS table names by exact-, substring- and fuzzy-matching against known aliases.
+Loads FITS table sky models using an explicit column mapping.
 """
 
 from __future__ import annotations
 
-import difflib
 from typing import Dict, List, Optional
 
 import astropy.units as u
@@ -14,222 +12,13 @@ import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 from astropy.units import UnitBase
-from karabo.simulation.sky_model import SkyPrefixMapping, SkySourcesUnits
 from .sky import SkyModel, Source
 
 from loguru import logger
 
+from .runtime import require_karabo_module
 from .utils import mapping_unit
 
-''' TODO: Review & simplify.
-# known aliases for each FITS field
-COLUMN_ALIASES: Dict[str, List[str]] = {
-    "id": [
-        "id", "source_id", "objid", "name", "sourceid", "catalog_id",
-    ],
-    "ra": [
-        "ra", "raj2000", "ra_deg", "right_ascension", "ra_equ", "ra_decimal",
-        "alphaj2000", "alpha", "ra2000",
-    ],
-    "dec": [
-        "dec", "dej2000", "dec_deg", "declination", "dec_equ", "dec_decimal",
-        "deltaj2000", "delta", "dec2000",
-    ],
-    "stokes_i": [
-        "i", "stokes_i", "flux", "peak_flux", "total_flux", "int_flux",
-        "flux_peak", "flux_total", "integrated_flux", "stokesi", "si",
-        "f", "f_int", "f_peak", "s",
-    ],
-    "stokes_q": [
-        "q", "stokes_q", "stokesq", "sq",
-    ],
-    "stokes_u": [
-        "u", "stokes_u", "stokesu", "su",
-    ],
-    "stokes_v": [
-        "v", "stokes_v", "stokesv", "sv",
-    ],
-    "spectral_index": [
-        "alpha", "spectral_index", "si", "spidx", "spindex", "spi",
-        "spectralindex", "spec_index",
-    ],
-    "ref_freq": [
-        "ref_freq", "frequency", "freq", "ref_frequency", "eff_freq",
-        "effective_freq", "freq_peak", "centre_freq", "center_freq",
-        "frequency_hz", "frequency_mhz", "freq_hz", "freq_mhz",
-    ],
-    "rm": [
-        "rm", "rotation_measure", "rot_meas", "rotationmeasure",
-    ],
-    "major": [
-        "major", "major_axis", "maj", "dc_maj", "deconvolved_major",
-        "maj_axis", "majaxis",
-    ],
-    "minor": [
-        "minor", "minor_axis", "min", "dc_min", "deconvolved_minor",
-        "min_axis", "minaxis",
-    ],
-    "pa": [
-        "pa", "position_angle", "pos_angle", "dc_pa", "deconvolved_pa",
-        "positionangle",
-    ],
-}
-
-
-# unit defaults when the FITS header does not provide them
-DEFAULT_UNIT_BY_NAME: Dict[str, UnitBase] = {
-    "ra": u.deg,
-    "dec": u.deg,
-    "stokes_i": u.Jy,
-    "stokes_q": u.Jy,
-    "stokes_u": u.Jy,
-    "stokes_v": u.Jy,
-    "spectral_index": u.dimensionless_unscaled,
-    "ref_freq": u.MHz,
-    "rm": u.rad / u.m**2,
-    "major": u.arcsec,
-    "minor": u.arcsec,
-    "pa": u.deg,
-}
-
-
-def _normalise(name: str) -> str:
-    """lower-case, strip whitespace, remove underscores and hyphens."""
-    return name.lower().strip().replace("_", "").replace("-", "").replace(" ", "")
-
-
-def _best_match(
-    candidates: List[str],
-    aliases: List[str],
-    cutoff: float = 0.6,
-) -> Optional[str]:
-    """Return the candidate that best matches any alias.
-
-    Scoring:
-        1. exact normalised match (highest priority)
-        2. substring containment (alias in candidate or vice versa)
-        3. difflib fuzzy match with cutoff
-    """
-    norm_candidates = {_normalise(c): c for c in candidates}
-    norm_aliases = [_normalise(a) for a in aliases]
-
-    # 1. exact match
-    for na, alias in zip(norm_aliases, aliases):
-        if na in norm_candidates:
-            return norm_candidates[na]
-
-    # 2. substring
-    scores: Dict[str, float] = {}
-    for nc, orig in norm_candidates.items():
-        for na in norm_aliases:
-            if na in nc or nc in na:
-                # prefer shorter candidate (less chance of confusion with E_* variants)
-                scores[orig] = max(scores.get(orig, 0.0), 1.0 - len(orig) * 0.001)
-        if orig not in scores:
-            # 3. fuzzy
-            matches = difflib.get_close_matches(nc, norm_aliases, n=1, cutoff=cutoff)
-            if matches:
-                scores[orig] = difflib.SequenceMatcher(None, nc, matches[0]).ratio()
-
-    if not scores:
-        return None
-
-    # pick highest score; tie-break by shorter original name
-    best = sorted(scores.items(), key=lambda x: (-x[1], len(x[0])))[0][0]
-    return best
-
-
-class FitsColumnResolver:
-    """Resolve FITS table column names to semantic roles used by Karabo SkyModel."""
-
-    def __init__(self, column_names: List[str], cutoff: float = 0.6) -> None:
-        self.column_names = list(column_names)
-        self.cutoff = cutoff
-        self.resolved: Dict[str, Optional[str]] = {}
-        self._resolve_all()
-
-    # ------------------------------------------------------------------
-    # internal
-    # ------------------------------------------------------------------
-
-    def _resolve_all(self) -> None:
-        matched: set[str] = set()
-        for field, aliases in COLUMN_ALIASES.items():
-            best = _best_match(self.column_names, aliases, self.cutoff)
-            if best is not None:
-                matched.add(best)
-            self.resolved[field] = best
-
-    # ------------------------------------------------------------------
-    # public API
-    # ------------------------------------------------------------------
-
-    def get(self, field: str) -> Optional[str]:
-        return self.resolved.get(field)
-
-    def get_unit(self, column_name: str) -> UnitBase:
-        """Return a sensible astropy Unit for *column_name* based on its role."""
-        # reverse lookup: which field maps to this column?
-        for field, matched in self.resolved.items():
-            if matched == column_name:
-                return DEFAULT_UNIT_BY_NAME.get(field, u.dimensionless_unscaled)
-        return u.dimensionless_unscaled
-
-    @property
-    def prefix_mapping(self) -> SkyPrefixMapping:
-        return SkyPrefixMapping(
-            id=self.get("id"),
-            ra=self.resolved["ra"],            # required — raises downstream if None
-            dec=self.resolved["dec"],          # required
-            stokes_i=self.resolved["stokes_i"],# required
-            stokes_q=self.get("stokes_q"),
-            stokes_u=self.get("stokes_u"),
-            stokes_v=self.get("stokes_v"),
-            spectral_index=self.get("spectral_index"),
-            ref_freq=self.get("ref_freq"),
-            rm=self.get("rm"),
-            major=self.get("major"),
-            minor=self.get("minor"),
-            pa=self.get("pa"),
-        )
-
-    @property
-    def unit_mapping(self) -> Dict[str, UnitBase]:
-        """Mapping of *column name* -> astropy Unit, for every column in the table."""
-        mapping: Dict[str, UnitBase] = {}
-        for name in self.column_names:
-            mapping[name] = self.get_unit(name)
-        return mapping
-
-    @property
-    def units_sources(self) -> SkySourcesUnits:
-        """SkySourcesUnits for the Karabo loader."""
-        # try with /beam first; caller retries without /beam on UnitConversionError
-        return SkySourcesUnits(
-            stokes_i=u.Jy / u.beam,
-            stokes_q=u.Jy / u.beam,
-            stokes_u=u.Jy / u.beam,
-            stokes_v=u.Jy / u.beam,
-            ref_freq=u.MHz,
-            major=u.arcsec,
-            minor=u.arcsec,
-            pa=u.deg,
-            rm=u.rad / u.m**2,
-        )
-
-
-def build_prefix_and_unit_mapping(
-    column_names: List[str],
-    cutoff: float = 0.6,
-) -> tuple[SkyPrefixMapping, Dict[str, UnitBase], SkySourcesUnits]:
-    """Convenience factory — returns (prefix_mapping, unit_mapping, units_sources)."""
-    resolver = FitsColumnResolver(column_names, cutoff=cutoff)
-    return resolver.prefix_mapping, resolver.unit_mapping, resolver.units_sources
-'''
-
-# ---------------------------------------------------------------------------
-# FitsCatalogLoader — load SkyModel from a FITS table with explicit column mapping.
-# ---------------------------------------------------------------------------
 
 class FitsCatalogLoader:
     """Load a `SkyModel` from a FITS table using a `column_mapping` string.
@@ -345,6 +134,7 @@ class FitsCatalogLoader:
 
     # Karabo loader (all columns have unit)
     def _load_karabo(self) -> "SkyModel":
+        sky_model_module = require_karabo_module("karabo.simulation.sky_model")
         with fits.open(self.fpath) as hdul:
             hdu1 = hdul[1]
             unit_mapping: Dict[str, UnitBase] = {}
@@ -356,7 +146,7 @@ class FitsCatalogLoader:
                     mapped = mapping_unit(col.unit)
                     unit_mapping[col.unit] = u.Unit(mapped) if mapped else u.dimensionless_unscaled
 
-            prefix_mapping = SkyPrefixMapping(
+            prefix_mapping = sky_model_module.SkyPrefixMapping(
                 ra=hdu1.columns.names[self.cols_mapping[1]],
                 dec=hdu1.columns.names[self.cols_mapping[2]],
                 stokes_i=hdu1.columns.names[self.cols_mapping[3]],
@@ -382,7 +172,7 @@ class FitsCatalogLoader:
                 if self.cols_mapping[0] > -1 else None,
             )
 
-        units_sources = SkySourcesUnits(
+        units_sources = sky_model_module.SkySourcesUnits(
             stokes_i=u.Jy / u.beam,
             stokes_q=u.Jy / u.beam,
             stokes_u=u.Jy / u.beam,
@@ -410,7 +200,7 @@ class FitsCatalogLoader:
         except u.core.UnitConversionError as exc:
             logger.error(f"Beam-unit conversion failed ({exc}); retrying without beam.")
 
-        units_sources = SkySourcesUnits(
+        units_sources = sky_model_module.SkySourcesUnits(
             stokes_i=u.Jy,
             stokes_q=u.Jy,
             stokes_u=u.Jy,

@@ -2,34 +2,25 @@
 
 from __future__ import annotations
 
-import glob
 import json
 import os
 import pickle
 import shutil
-import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
-from astropy.io import fits
-from astropy.table import Table
-from astropy.units import UnitBase
-from karabo.simulation.interferometer import InterferometerSimulation
-from karabo.simulation.observation import Observation
-from karabo.simulation.sky_model import SkyPrefixMapping, SkySourcesUnits
-from karabo.simulation.telescope import Telescope
-from karabo.simulator_backend import SimulatorBackend
 from loguru import logger
 
 from .config import SimConfig
 from .imaging import run_dirty_imaging, run_wsclean_imaging
 from .manifest import RunContext, create_run_context
 from .fits_helper import FitsCatalogLoader
+from .runtime import require_karabo_module
 from .sky import SkyModel, Source
 from .utils import get_diameter, mapping_unit
 
@@ -49,19 +40,54 @@ from .utils import get_diameter, mapping_unit
 def build_telescope(ctx: RunContext):
     """return a Karabo Telescope instance."""
     config = ctx.config
-    kwargs: dict = {"backend": SimulatorBackend.OSKAR}
+    simulator_backend = require_karabo_module("karabo.simulator_backend")
+    telescope_module = require_karabo_module("karabo.simulation.telescope")
+    kwargs: dict = {"backend": simulator_backend.SimulatorBackend.OSKAR}
     if config.telescope_version is not None:
-        kwargs["version"] = config.telescope_version
+        kwargs["version"] = resolve_telescope_version(
+            telescope_module,
+            config.telescope,
+            config.telescope_version,
+        )
         logger.info(f"Telescope {config.telescope}  version={config.telescope_version}")
     else:
         logger.info(f"Telescope {config.telescope}  (no version)")
-    telescope = Telescope.constructor(config.telescope, **kwargs)
+    telescope = telescope_module.Telescope.constructor(config.telescope, **kwargs)
+    details = {"name": config.telescope, "version": config.telescope_version}
+    try:
+        if hasattr(telescope, "antennas") and telescope.antennas is not None:
+            details["n_stations"] = len(telescope.antennas)
+        elif hasattr(telescope, "num_antennas"):
+            details["n_stations"] = telescope.num_antennas
+        elif hasattr(telescope, "num_stations"):
+            details["n_stations"] = telescope.num_stations
+    except Exception:
+        pass
     ctx.add_milestone(
         "telescope_built",
         "completed",
-        details={"name": config.telescope, "version": config.telescope_version},
+        details=details,
     )
     return telescope
+
+
+def resolve_telescope_version(telescope_module, telescope: str, version: str):
+    """Resolve a CLI/config telescope version string to Karabo's enum member."""
+    version_enum = getattr(telescope_module, "OSKAR_TELESCOPE_TO_VERSIONS", {}).get(
+        telescope
+    )
+    if version_enum is None:
+        return version
+    if not isinstance(version, str):
+        return version
+    for candidate in version_enum:
+        if version in (candidate.name, candidate.value):
+            return candidate
+    accepted = ", ".join(candidate.name for candidate in version_enum)
+    raise ValueError(
+        f"Unsupported version {version!r} for telescope {telescope!r}. "
+        f"Accepted versions: {accepted}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -103,8 +129,7 @@ def parse_center(center_str: Optional[str], fallback: SkyCoord) -> SkyCoord:
 def _load_sky_from_file(
     fpath: str,
     column_mapping: str = "0,1,2,3,4,5,6,7,8,9,10,11,12",
-    scale_I: float = 1.0,
-    ref_freq_hz: Optional[float] = None,
+    flux_scale: float = 1.0,
     frequency: Optional[u.Quantity] = None,
 ) -> SkyModel:
     """Load SkyModel from pickle, fits, json, or karabo.mod."""
@@ -117,27 +142,23 @@ def _load_sky_from_file(
         logger.info(f"Loaded pickle model from {fpath}")
         return sky_model
 
-    # json catalogue
+    # json catalog
     if ext == ".json":
         with open(fpath, "r") as fh:
             data = json.load(fh)
         sources: List[Source] = []
         for item in data:
             src = Source.from_json(item)
-            if scale_I != 1.0:
-                src.I *= scale_I
+            if flux_scale != 1.0:
+                src.I *= flux_scale
             if src.ref_freq == 0:
-                hz = (
-                    ref_freq_hz
-                    if ref_freq_hz is not None
-                    else (frequency.to(u.Hz).value if frequency is not None else 0)
-                )
+                hz = frequency.to(u.Hz).value if frequency is not None else 0
                 src.ref_freq = hz * u.Hz
             sources.append(src)
         if not sources:
             raise ValueError(f"No sources found in JSON {fpath}")
         sky_model = SkyModel()
-        arr = np.array([s.to_sky_model(reduced_form=True) for s in sources])
+        arr = np.array([s.to_sky_model(reduced_form=False) for s in sources])
         sky_model.add_point_sources(arr)
         sky_model.get_center()
         logger.info(f"Loaded {len(sources)} sources from JSON {fpath}")
@@ -146,7 +167,7 @@ def _load_sky_from_file(
     # fits table or image
     if ext in (".fits", ".fit"):
         return _load_sky_from_fits(
-            fpath, column_mapping, scale_I, ref_freq_hz, frequency
+            fpath, column_mapping, flux_scale, frequency
         )
 
     raise ValueError(f"Unsupported sky-file extension: {ext}")
@@ -156,16 +177,15 @@ def _load_sky_from_file(
 def _load_sky_from_fits(
     fpath: str,
     column_mapping: str,
-    scale_I: float,
-    ref_freq_hz: Optional[float],
+    flux_scale: float,
     frequency: Optional[u.Quantity],
 ) -> SkyModel:
     """try Karabo's get_sky_model_from_fits; fallback to our own loader when columns lack TUNIT."""
     loader = FitsCatalogLoader(
         fpath=fpath,
         column_mapping=column_mapping,
-        scale_I=scale_I,
-        ref_freq_hz=ref_freq_hz,
+        scale_I=flux_scale,
+        ref_freq_hz=None,
         frequency=frequency,
     )
     return loader.load()
@@ -188,9 +208,8 @@ def build_sky_model(
         sky_model = _load_sky_from_file(
             str(ctx.sky_file_resolved),
             column_mapping=config.column_mapping or "0,1,2,3,4,5,6,7,8,9,10,11,12",
-            scale_I=config.scale_I,
-            ref_freq_hz=(config.ref_freq_hz[0] if config.ref_freq_hz else None),
-            frequency=config.observation.freq_mhz * u.MHz,
+            flux_scale=config.flux_scale,
+            frequency=config.observation.frequency_mhz * u.MHz,
         )
         center = sky_model.get_center()
         n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
@@ -203,31 +222,38 @@ def build_sky_model(
                 "n_sources": n_srcs,
             },
         )
+        ctx.manifest.add_output(
+            "sky_model",
+            str(ctx.sky_file_resolved),
+            metadata={"format": config.sky_format, "n_sources": n_srcs},
+        )
         return sky_model, center
 
-    # 2) built-in catalogue
-    if config.catalogue > 0:
-        if config.catalogue == 1:
-            logger.info("Loading MIGHTEE catalogue")
+    # 2) built-in catalog
+    if config.catalog is not None:
+        if config.catalog == "MIGHTEE":
+            logger.info("Loading MIGHTEE catalog")
+            if not hasattr(SkyModel, "get_MIGHTEE_Sky"):
+                require_karabo_module("karabo.simulation.sky_model")
             sky_model = SkyModel.get_MIGHTEE_Sky()
             fmt = "MIGHTEE"
-        elif config.catalogue == 2:
-            logger.info("Loading GLEAM catalogue")
+        elif config.catalog == "GLEAM":
+            logger.info("Loading GLEAM catalog")
+            if not hasattr(SkyModel, "get_GLEAM_Sky"):
+                require_karabo_module("karabo.simulation.sky_model")
             sky_model = SkyModel.get_GLEAM_Sky()
             fmt = "GLEAM"
-        elif config.catalogue == 3:
+        elif config.catalog == "SKAMid":
             skamid_path = Path("SKAMid_B1_8h_v3.fits").resolve()
             if skamid_path.exists():
-                logger.info(f"Loading SKAMid catalogue {skamid_path}")
+                logger.info(f"Loading SKAMid catalog {skamid_path}")
                 sky_model = SkyModel.get_sky_model_from_fits(fits_file=str(skamid_path))
                 fmt = "SKAMid"
             else:
-                logger.info(f"SKAMid catalogue not found at {skamid_path}")
+                logger.info(f"SKAMid catalog not found at {skamid_path}")
                 raise FileNotFoundError(str(skamid_path))
         else:
-            raise ValueError(
-                f"Catalogue {config.catalogue} not available (1=MIGHTEE, 2=GLEAM, 3=SKAMid)"
-            )
+            raise ValueError(f"Catalog {config.catalog} not available")
         center = sky_model.get_center()
         n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
         ctx.add_milestone(
@@ -240,23 +266,39 @@ def build_sky_model(
     # 3) random sources around a reference position
     logger.info("Generating random sources")
     source_ref = Source.from_name("HCG16")
-    intensities = [i * u.Jy for i in config.I]
+    intensities = [i * u.Jy for i in config.source_flux_jy]
+    stokes_q = config.stokes_q_jy or [0.0] * len(intensities)
+    stokes_u = config.stokes_u_jy or [0.0] * len(intensities)
+    stokes_v = config.stokes_v_jy or [0.0] * len(intensities)
     n_sources = len(intensities)
     sources: List[Source] = []
     for idx in range(n_sources):
         if idx == 0:
             src = source_ref
             src.I = intensities[idx]
+            src.Q = stokes_q[idx] * u.Jy
+            src.U = stokes_u[idx] * u.Jy
+            src.V = stokes_v[idx] * u.Jy
         else:
             x_coord = np.random.uniform(-fov.value / 2, fov.value / 2) * 0.8 * u.rad
             y_coord = np.random.uniform(-fov.value / 2, fov.value / 2) * 0.8 * u.rad
             src = Source(
-                source_ref.ra + x_coord, source_ref.dec + y_coord, intensities[idx]
+                source_ref.ra + x_coord,
+                source_ref.dec + y_coord,
+                intensities[idx],
+                Q=stokes_q[idx] * u.Jy,
+                U=stokes_u[idx] * u.Jy,
+                V=stokes_v[idx] * u.Jy,
             )
         sources.append(src)
 
     sky_model = SkyModel()
-    arr = np.array([s.to_sky_model(reduced_form=True) for s in sources])
+    has_polarization = any(
+        value != 0.0 for values in (stokes_q, stokes_u, stokes_v) for value in values
+    )
+    arr = np.array(
+        [s.to_sky_model(reduced_form=not has_polarization) for s in sources]
+    )
     sky_model.add_point_sources(arr)
     center = sky_model.get_center()
     ctx.add_milestone(
@@ -267,34 +309,31 @@ def build_sky_model(
     return sky_model, center
 
 
-# --------------------------------------------------------------------------- #
-# observation
-# --------------------------------------------------------------------------- #
-
-
 def build_observation(
     ctx: RunContext,
     center: SkyCoord,
     telescope,
 ) -> tuple:
     """Return (observation, frequency, bandwidth, n_channels, delta_freq, start_freq)."""
+    observation_module = require_karabo_module("karabo.simulation.observation")
     config = ctx.config
     obs = config.observation
-    freq = obs.freq_mhz * u.MHz
+    freq = obs.frequency_mhz * u.MHz
     bw_mhz = obs.bandwidth_mhz
     n_channels = obs.n_channels
-    df_mhz = obs.delta_freq_mhz
+    df_mhz = obs.channel_width_mhz
     bandwidth = bw_mhz * u.MHz
     delta_freq = df_mhz * u.MHz
-    seconds = config.observation.seconds
+    seconds = config.observation.observation_time_s
 
     start_freq = freq - n_channels * delta_freq / 2
+    end_freq = start_freq + n_channels * delta_freq
 
     # best observation time (culmination)
     obs_time = source_ref_get_best_observation_time(center, telescope)
     n_timesteps = max(1, int(seconds / 7.997))
 
-    observation = Observation(
+    observation = observation_module.Observation(
         start_frequency_hz=start_freq.to(u.Hz).value,
         start_date_and_time=obs_time,
         frequency_increment_hz=delta_freq.to(u.Hz).value,
@@ -309,10 +348,16 @@ def build_observation(
         "observation_configured",
         "completed",
         details={
-            "freq_mhz": obs.freq_mhz,
+            "frequency_mhz": obs.frequency_mhz,
+            "min_frequency_mhz": start_freq.to(u.MHz).value,
+            "max_frequency_mhz": end_freq.to(u.MHz).value,
             "bandwidth_mhz": bw_mhz,
             "n_channels": n_channels,
-            "seconds": seconds,
+            "channel_width_mhz": df_mhz,
+            "observation_time_s": seconds,
+            "n_timesteps": n_timesteps,
+            "phase_center_ra_deg": center.ra.to(u.deg).value,
+            "phase_center_dec_deg": center.dec.to(u.deg).value,
         },
     )
     return observation, freq, bandwidth, n_channels, delta_freq, start_freq
@@ -336,6 +381,8 @@ def run_simulation(
     sky_model: SkyModel,
 ) -> Path:
     """Run InterferometerSimulation and return visibility path."""
+    interferometer_module = require_karabo_module("karabo.simulation.interferometer")
+    simulator_backend = require_karabo_module("karabo.simulator_backend")
     config = ctx.config
     visibility_path = ctx.visibility_path
 
@@ -344,17 +391,13 @@ def run_simulation(
             logger.info(f"Overwriting existing {visibility_path}")
             shutil.rmtree(visibility_path)
         else:
-            ans = input(f"{visibility_path} exists. Overwrite? (y/n): ")
-            if ans.lower() != "y":
-                logger.info("User declined overwrite — exiting")
-                sys.exit(0)
-            shutil.rmtree(visibility_path)
+            raise FileExistsError(
+                f"{visibility_path} already exists. Use --overwrite to replace it."
+            )
 
-    freq = config.observation.freq_mhz * u.MHz
+    freq = config.observation.frequency_mhz * u.MHz
     fov = compute_fov(config, freq)
-    _, _, _, n_channels, delta_freq, _ = build_observation(
-        ctx, sky_model.get_center(), telescope
-    )
+    delta_freq = config.observation.channel_width_mhz * u.MHz
 
     params = {
         "channel_bandwidth_hz": delta_freq.to(u.Hz).value,
@@ -368,16 +411,19 @@ def run_simulation(
         params["noise_freq"] = "Telescope model"
         params["noise_rms"] = "Telescope model"
 
-    simulation = InterferometerSimulation(**params)
+    simulation = interferometer_module.InterferometerSimulation(**params)
     simulation.run_simulation(
         telescope=telescope,
         observation=observation,
         sky=sky_model,
         visibility_path=str(visibility_path),
-        backend=SimulatorBackend.OSKAR,
+        backend=simulator_backend.SimulatorBackend.OSKAR,
     )
     logger.info(f"Visibilities saved in {visibility_path}")
-    ctx.manifest.outputs.append(str(visibility_path.relative_to(ctx.work_dir)))
+    ctx.manifest.add_output(
+        "visibility",
+        str(visibility_path.relative_to(ctx.work_dir)),
+    )
     return visibility_path
 
 
@@ -390,30 +436,56 @@ def run(config: SimConfig) -> None:
     """Execute the full simulation pipeline from a SimConfig."""
     from .weblog import render_weblog
 
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+
     t0 = time.time()
     ctx = create_run_context(config)
 
     try:
         logger.info(f"Telescope : {config.telescope}")
-        logger.info(f"Freq      : {config.observation.freq_mhz} MHz")
+        logger.info(f"Frequency : {config.observation.frequency_mhz} MHz")
         logger.info(f"Bandwidth : {config.observation.bandwidth_mhz} MHz")
         logger.info(f"Channels  : {config.observation.n_channels}")
-        logger.info(f"Time      : {config.observation.seconds} s")
+        logger.info(f"Obs time  : {config.observation.observation_time_s} s")
         logger.info(f"Pixels    : {config.imaging.pixels}")
-        logger.info(f"Cleaning  : {config.cleaning}")
+        logger.info(f"Imager    : {config.imaging.imager}")
 
         telescope = build_telescope(ctx)
         telescope_png = ctx.work_dir / f"{ctx.work_dir.name}_{config.telescope}_{config.telescope_version or ''}_telescope.png"
-        telescope.plot_telescope(file=str(telescope_png))
-        ctx.manifest.outputs.append(str(telescope_png.relative_to(ctx.work_dir)))
+        try:
+            telescope.plot_telescope(file=str(telescope_png))
+        finally:
+            import matplotlib.pyplot as plt
 
-        freq = config.observation.freq_mhz * u.MHz
+            plt.close("all")
+        ctx.manifest.add_output(
+            "plot",
+            str(telescope_png.relative_to(ctx.work_dir)),
+            role="telescope",
+        )
+
+        freq = config.observation.frequency_mhz * u.MHz
         fov = compute_fov(config, freq)
         logger.info(f"FoV       : {fov.to(u.deg).value:.4f} deg")
 
         sky_model, center = build_sky_model(ctx, fov)
         center = parse_center(config.center, center)
         logger.info(f"Centre    : {center.to_string('hmsdms')}")
+        try:
+            from .imaging import write_sky_model_previews
+
+            for path, role in write_sky_model_previews(
+                sky_model,
+                center,
+                fov,
+                ctx.work_dir,
+                ctx.work_dir.name,
+            ):
+                ctx.manifest.add_output("plot", path, role=role)
+        except Exception as exc:
+            logger.warning(f"Sky model previews failed: {show_exc(exc)}")
 
         observation, _, bandwidth, n_channels, delta_freq, start_freq = build_observation(ctx, center, telescope)
         logger.info(f"StartFreq : {start_freq.to(u.MHz).value:.3f} MHz")
@@ -427,23 +499,29 @@ def run(config: SimConfig) -> None:
             visibility_path = run_simulation(ctx, telescope, observation, sky_model)
             ctx.add_milestone("simulation_completed", "completed", elapsed_s=time.time() - t_phase_a)
         except Exception as exc:
-            ctx.add_milestone("simulation_failed", "failed", elapsed_s=time.time() - t_phase_a, details=str(exc))
+            ctx.add_milestone("simulation_failed", "failed", elapsed_s=time.time() - t_phase_a, details={"error": str(exc)})
             raise
 
         # phase 2: imaging
         ctx.add_milestone("imaging_started", "started")
         t_phase_b = time.time()
         try:
-            if not config.cleaning:
+            if config.imaging.imager == "oskar-dirty":
                 run_dirty_imaging(ctx, visibility_path, fov, center)
             else:
                 run_wsclean_imaging(ctx, visibility_path, fov)
-            ctx.add_milestone("imaging_completed", "completed", elapsed_s=time.time() - t_phase_b, details={"Imager": "dirty" if not config.cleaning else "wsclean"})
+            ctx.add_milestone(
+                "imaging_completed",
+                "completed",
+                elapsed_s=time.time() - t_phase_b,
+                details={"Imager": config.imaging.imager},
+            )
         except Exception as exc:
-            ctx.add_milestone("imaging_failed", "failed", elapsed_s=time.time() - t_phase_b, details=str(exc))
+            ctx.add_milestone("imaging_failed", "failed", elapsed_s=time.time() - t_phase_b, details={"error": str(exc)})
             raise
 
         ctx.manifest.mark_completed()
+        ctx.manifest.add_output("weblog", ctx.weblog_path.name)
         ctx.save_manifest()
 
         render_weblog(ctx.manifest, ctx.work_dir)
@@ -451,7 +529,10 @@ def run(config: SimConfig) -> None:
 
     except Exception as exc:
         ctx.manifest.mark_failed(str(exc))
+        ctx.manifest.add_output("weblog", ctx.weblog_path.name)
         ctx.save_manifest()
+        render_weblog(ctx.manifest, ctx.work_dir)
+        logger.info(f"Failure weblog written to {ctx.weblog_path}")
         raise
 
     elapsed = time.time() - t0

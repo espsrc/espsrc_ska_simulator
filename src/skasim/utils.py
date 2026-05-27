@@ -29,11 +29,13 @@ def init_logger(log_file: Optional[str] = None) -> None:
 
 
 def define_extra_units() -> None:
-    u.def_unit("JY", 1 * u.Jy)
-    u.def_unit("DEG", 1 * u.deg)
-    u.def_unit("JY/BEAM", 1 * u.Jy / u.sr)
-    u.def_unit("HZ", 1 * u.Hz)
-    u.add_enabled_units(["JY", "DEG", "JY/BEAM", "HZ"])
+    extra_units = [
+        u.def_unit("JY", 1 * u.Jy),
+        u.def_unit("DEG", 1 * u.deg),
+        u.def_unit("JY/BEAM", 1 * u.Jy / u.sr),
+        u.def_unit("HZ", 1 * u.Hz),
+    ]
+    u.add_enabled_units(extra_units)
 
 
 def mapping_unit(unit_str: Optional[str]) -> Optional[str]:
