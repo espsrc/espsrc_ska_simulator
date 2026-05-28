@@ -1,10 +1,86 @@
 """CLI configuration behavior."""
 
+import json
+import tempfile
+
 from skasim import cli
 import skasim.pipeline
+from skasim.config import SimConfig, ObsConfig, ImgConfig
 from pydantic import ValidationError
 import pytest
 
+
+def _make_config_json(tmp_path, flux=None):
+    """Write a minimal SimConfig JSON to a temp file."""
+    config = SimConfig(
+        source_flux_jy=[1.0],
+        observation=ObsConfig(frequency_mhz=800.0),
+        imaging=ImgConfig(imager="oskar-dirty"),
+    )
+    if flux is not None:
+        config.source_flux_jy = flux
+    path = tmp_path / "run.json"
+    path.write_text(config.model_dump_json(), encoding="utf-8")
+    return str(path)
+
+
+def test_config_file_loads_simconfig(monkeypatch, tmp_path):
+    """--config <json> deserialises the SimConfig and runs the pipeline."""
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    config_path = _make_config_json(tmp_path, flux=[2.5, 5.0])
+    cli.main(["--config", config_path])
+
+    assert captured[0].source_flux_jy == [2.5, 5.0]
+    assert captured[0].observation.frequency_mhz == 800.0
+    assert captured[0].imaging.imager == "oskar-dirty"
+
+
+def test_config_file_overrides_output_dir_and_overwrite(monkeypatch, tmp_path):
+    """--output-dir and --overwrite are permitted alongside --config."""
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    config_path = _make_config_json(tmp_path)
+    cli.main(["--config", config_path, "--output-dir", str(tmp_path / "custom"), "--overwrite"])
+
+    assert captured[0].output_dir == str(tmp_path / "custom")
+    assert captured[0].overwrite is True
+
+
+def test_config_file_blocks_content_flags(monkeypatch, tmp_path, capsys):
+    """--config rejects content arguments such as --frequency-mhz."""
+    config_path = _make_config_json(tmp_path)
+    with pytest.raises(SystemExit):
+        cli.main(["--config", config_path, "--frequency-mhz", "900"])
+
+    captured = capsys.readouterr()
+    assert "--config is exclusive with content arguments" in captured.err
+
+
+def test_config_file_blocks_content_flags_equals_syntax(monkeypatch, tmp_path, capsys):
+    """--config catches content arguments even with --flag=value syntax."""
+    config_path = _make_config_json(tmp_path)
+    with pytest.raises(SystemExit):
+        cli.main(["--config", config_path, "--frequency-mhz=900"])
+
+    captured = capsys.readouterr()
+    assert "--config is exclusive with content arguments" in captured.err
+
+
+def test_config_file_missing_file(monkeypatch, tmp_path, capsys):
+    """--config with a nonexistent path errors cleanly."""
+    with pytest.raises(SystemExit):
+        cli.main(["--config", str(tmp_path / "nonexistent.json")])
+
+    captured = capsys.readouterr()
+    assert "Config file not found" in captured.err
+
+
+# --------------------------------------------------------------------------- #
+# existing tests below
+# --------------------------------------------------------------------------- #
 
 def test_catalog_sets_named_catalog(monkeypatch):
     """--catalog is the canonical CLI spelling for built-in catalogs."""

@@ -96,6 +96,12 @@
         {% if simulation_duration %} · simulation {{ simulation_duration }}{% endif %}
         {% if imaging_duration %} · imaging {{ imaging_duration }}{% endif %}
       </div>
+      {% if manifest.config.title %}
+      <div style="font-size: 1.05rem; font-weight: 500; margin-top: 0.5rem;">{{ manifest.config.title }}</div>
+      {% endif %}
+      {% if manifest.config.description %}
+      <div style="color: var(--muted); font-size: 0.9rem; margin-top: 0.2rem; line-height: 1.4;">{{ manifest.config.description }}</div>
+      {% endif %}
     </div>
 
     <!-- Observation configuration -->

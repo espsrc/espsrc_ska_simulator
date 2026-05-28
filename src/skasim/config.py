@@ -133,6 +133,10 @@ class SimConfig(BaseModel):
     output_dir: Optional[str] = None
     overwrite: bool = False
 
+    # optional run metadata (config-file only; not a CLI argument)
+    title: Optional[str] = None
+    description: Optional[str] = None
+
     @model_validator(mode="before")
     @classmethod
     def _reject_generated_intensities_with_explicit_source(cls, data):
