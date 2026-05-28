@@ -17,7 +17,7 @@ from loguru import logger
 from .config import SimConfig
 from .manifest import RunContext
 from .runtime import require_karabo_module
-from .utils import show_exc
+from .utils import mapping_unit
 
 SKY_MODEL_CMAP = "viridis_r"
 
@@ -180,7 +180,7 @@ def write_fits_preview(
         hdul = fits.HDUList([hdu])
         fig = plt.figure(figsize=(8, 7))
         ffig = aplpy.FITSFigure(hdul, figure=fig)
-        
+
         if recenter:
             ra_deg, dec_deg, fov_deg = recenter
             ffig.recenter(ra_deg, dec_deg, width=fov_deg, height=fov_deg)
@@ -486,7 +486,7 @@ def run_wsclean_imaging(
         try:
             tmp.unlink()
         except Exception as exc:
-            logger.error(show_exc(exc))
+            logger.exception("Failed to clean up temp file %s", tmp)
 
     wsclean_outputs = collect_wsclean_outputs(work_dir, output_prefix)
     mfs_files = [p.name for p in wsclean_outputs if "-MFS-" in p.name]

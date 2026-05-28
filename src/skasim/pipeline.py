@@ -22,7 +22,7 @@ from .manifest import RunContext, create_run_context
 from .loaders import FitsCatalogLoader
 from .runtime import require_karabo_module
 from .sky import SkyModel, Source
-from .utils import get_diameter, mapping_unit
+from .utils import get_diameter
 
 # --------------------------------------------------------------------------- #
 # workdir + logging
@@ -515,7 +515,8 @@ def run(config: SimConfig) -> None:
             ):
                 ctx.manifest.add_output("plot", path, role=role)
         except Exception as exc:
-            logger.warning(f"Sky model previews failed: {show_exc(exc)}")
+            logger.warning(f"Sky model previews failed: {exc}")
+            logger.exception("Sky model preview traceback")
 
         observation, _, bandwidth, n_channels, delta_freq, start_freq = build_observation(ctx, center, telescope)
         logger.info(f"StartFreq : {start_freq.to(u.MHz).value:.3f} MHz")

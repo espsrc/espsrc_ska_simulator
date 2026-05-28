@@ -62,17 +62,7 @@ class NpEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, obj)
 
 
-def show_exc(exception: Exception) -> str:
-    exc_type, exc_obj, tb = sys.exc_info()
-    f = tb.tb_frame
-    lineno = tb.tb_lineno
-    filename = f.f_code.co_filename
-    filename_rel = os.path.relpath(filename, os.path.dirname(__file__))
-    app_folder = os.path.basename(os.path.dirname(__file__))
-    return (
-        f"EXCEPTION IN ({filename_rel}:{lineno}): {exc_type} {exception} "
-        f"(APP: {app_folder})"
-    )
+
 
 
 # TODO: define elsewhere or check if karabo provides

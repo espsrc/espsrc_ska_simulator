@@ -16,7 +16,7 @@ from skasim.utils import (
     get_diameter,
     mapping_unit,
     # printlog,
-    show_exc,
+    # show_exc,
 )
 
 # -----------------------------------------------------------------------------

@@ -13,7 +13,7 @@ from astropy.time import Time
 from astropy.utils.iers import conf as iers_conf
 from loguru import logger
 
-from .utils import show_exc
+from .utils import get_diameter
 from radio_beam import Beam
 
 
@@ -308,7 +308,7 @@ class Source:
                 sources.append(src)
 
             except Exception as e:
-                logger.error(show_exc(e))
+                logger.exception("Failed to create source from row")
                 continue
 
         return sources
