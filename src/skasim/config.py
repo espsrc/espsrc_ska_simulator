@@ -87,7 +87,7 @@ class ImgConfig(BaseModel):
 
     @field_validator("pixels")
     @classmethod
-    def _power_of_two(cls, v: int) -> int:
+    def _min_pixels(cls, v: int) -> int:
         if v < 64:
             raise ValueError("pixels must be >= 64")
         return v

@@ -14,7 +14,7 @@ def test_weblog_renders_structured_outputs(tmp_path):
     """The weblog displays structured output kinds and paths."""
     manifest = RunManifest(
         run_id="example",
-        started_at=datetime(2026, 5, 22, 17, 30, 0),
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
         config=SimConfig(),
     )
     manifest.add_output("visibility", "visibilities.MS")
@@ -32,7 +32,7 @@ def test_weblog_skips_missing_image_outputs(tmp_path):
     """Failed runs can render even if an image output record points to a missing file."""
     manifest = RunManifest(
         run_id="missing-image",
-        started_at=datetime(2026, 5, 22, 17, 30, 0),
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
         config=SimConfig(),
     )
     manifest.add_output("image_product", "missing.png", imager="wsclean", role="image")

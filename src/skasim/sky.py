@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 
 import astropy.coordinates as acoord
 import numpy as np
-import xarray as xr
 from astropy import units as u
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord
 from astropy.coordinates.name_resolve import NameResolveError
@@ -14,7 +13,6 @@ from astropy.utils.iers import conf as iers_conf
 from loguru import logger
 
 from .utils import get_diameter
-from radio_beam import Beam
 
 
 class Source:
@@ -139,6 +137,7 @@ class Source:
             "isl_rms": self.isl_rms.to(u.Jy).value,
         }
 
+    @staticmethod
     def from_array(
         array,
         colnames=[
@@ -319,7 +318,7 @@ class Source:
         coord = SkyCoord(ra=self.ra, dec=self.dec, unit=(u.deg, u.deg), frame="icrs")
         # print RA/DEC in hms/dms format
 
-        str2print = f"Source({coord.to_string('hmsdms')}, I={self.I:.6f})"
+        str2print = f"Source({coord.to_string('hmsdms')}, I={self.I:.6f}"
 
         json_values = self.to_json()
         for key, value in json_values.items():
@@ -429,6 +428,7 @@ class Source:
             true_redshift=data[12], obs_redshift=data[13],
         )
 
+    @staticmethod
     def from_json(json_data):
         # create a Source object from a JSON dictionary
         return Source(
