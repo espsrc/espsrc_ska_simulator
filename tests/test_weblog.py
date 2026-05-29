@@ -256,6 +256,31 @@ def test_weblog_renders_antenna_count_in_telescope_section(tmp_path):
     assert "64" in html
 
 
+def test_weblog_renders_uv_coverage_next_to_telescope_layout(tmp_path):
+    """UV coverage is rendered in the telescope section, not duplicated in the gallery."""
+    manifest = RunManifest(
+        run_id="uv-layout",
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
+        config=SimConfig(),
+    )
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+        b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    (tmp_path / "telescope.png").write_bytes(png_bytes)
+    (tmp_path / "uvcoverage.png").write_bytes(png_bytes)
+    manifest.add_output("plot", "telescope.png", role="telescope")
+    manifest.add_output("plot", "uvcoverage.png", role="uv_coverage")
+
+    html = render_weblog(manifest, tmp_path)
+
+    assert "Telescope Layout" in html
+    assert "UV Coverage" in html
+    assert html.index("Telescope Layout") < html.index("UV Coverage")
+    assert "<h2>Supporting Plots</h2>" not in html
+
+
 def test_weblog_uses_known_antenna_count_for_older_meerkat_manifests(tmp_path):
     """Older manifests without telescope-built counts still show known MeerKAT antennas."""
     manifest = RunManifest(

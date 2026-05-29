@@ -15,11 +15,15 @@ from skasim.imaging import (
     _compact_source_mask,
     _flux_marker_sizes,
     _padded_limits,
+    _plot_sky_model_sources,
     _sky_model_ellipses,
     _sky_model_position_angle,
+    build_shadems_uv_coverage_argv,
     build_wsclean_argv,
     collect_wsclean_outputs,
+    shadems_uv_coverage_env,
     run_wsclean_command,
+    write_uv_coverage_plot,
     wsclean_output_prefix,
     write_fits_preview,
     write_sky_model_previews,
@@ -107,6 +111,72 @@ def test_run_wsclean_command_uses_argv_and_working_directory(tmp_path, monkeypat
     assert calls[0][1]["cwd"] == str(tmp_path)
     assert calls[0][1]["shell"] is False
     assert calls[0][1]["check"] is True
+
+
+def test_build_shadems_uv_coverage_argv_uses_verified_configuration(tmp_path):
+    """shadeMS UV coverage uses U/V axes and a square canvas."""
+    config = SimConfig(
+        imaging=ImgConfig(
+            shadems_command="python -m shade_ms",
+            uv_coverage_canvas_size=600,
+        )
+    )
+
+    argv = build_shadems_uv_coverage_argv(
+        config=config,
+        visibility_path=tmp_path / "visibilities.MS",
+        output_dir=tmp_path,
+        png_name="run_uvcoverage.png",
+        title="run uv coverage",
+    )
+
+    assert argv[:3] == ["python", "-m", "shade_ms"]
+    assert "--xaxis" in argv
+    assert argv[argv.index("--xaxis") + 1] == "u"
+    assert "--yaxis" in argv
+    assert argv[argv.index("--yaxis") + 1] == "v"
+    assert argv[argv.index("--xcanvas") + 1] == "600"
+    assert argv[argv.index("--ycanvas") + 1] == "600"
+    assert argv[argv.index("--spread-pix") + 1] == "2"
+    assert "--no-lim-save" in argv
+
+
+def test_shadems_uv_coverage_env_uses_writable_cache_dirs(tmp_path):
+    """shadeMS receives writable Matplotlib and Numba cache directories."""
+    env = shadems_uv_coverage_env(tmp_path)
+
+    assert Path(env["MPLCONFIGDIR"]).is_dir()
+    assert Path(env["NUMBA_CACHE_DIR"]).is_dir()
+    assert Path(env["MPLCONFIGDIR"]).parent.parent == tmp_path
+    assert Path(env["NUMBA_CACHE_DIR"]).parent.parent == tmp_path
+
+
+def test_write_uv_coverage_plot_records_manifest_outputs(tmp_path, monkeypatch):
+    """shadeMS plot generation records both PNG and command log outputs."""
+    config = SimConfig(output_dir=str(tmp_path / "run"))
+    ctx = create_run_context(config)
+    visibility_path = ctx.work_dir / "visibilities.MS"
+    visibility_path.mkdir()
+
+    def fake_run(argv, work_dir):
+        (work_dir / "run_uvcoverage.png").write_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+            b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+            b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+
+        return SimpleNamespace(stdout="shadeMS ok\n", stderr="")
+
+    monkeypatch.setattr("skasim.imaging.run_shadems_command", fake_run)
+
+    png_path = write_uv_coverage_plot(ctx, visibility_path)
+
+    assert png_path == ctx.work_dir / "run_uvcoverage.png"
+    uv_outputs = [output for output in ctx.manifest.outputs if output.role == "uv_coverage"]
+    assert [output.kind for output in uv_outputs] == ["plot", "log"]
+    assert uv_outputs[0].path == "run_uvcoverage.png"
+    assert uv_outputs[0].metadata["tool"] == "shadems"
+    assert (ctx.work_dir / "run_uvcoverage_shadems.log").read_text(encoding="utf-8") == "shadeMS ok\n"
 
 
 def test_collect_wsclean_outputs_matches_only_configured_prefix(tmp_path):
@@ -200,6 +270,45 @@ def test_write_sky_model_previews_writes_full_and_fov_pngs(tmp_path):
     ]
     for path, _ in outputs:
         assert (tmp_path / path).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_sky_model_previews_use_equal_axis_scale(tmp_path, monkeypatch):
+    """Sky-model FoV circles stay circular by using equal RA/Dec data scaling."""
+    from matplotlib.axes import Axes
+
+    aspect_calls = []
+    box_calls = []
+    original_set_aspect = Axes.set_aspect
+    original_set_box_aspect = Axes.set_box_aspect
+
+    def record_set_aspect(self, aspect, *args, **kwargs):
+        aspect_calls.append((aspect, kwargs.get("adjustable")))
+        return original_set_aspect(self, aspect, *args, **kwargs)
+
+    def record_set_box_aspect(self, aspect, *args, **kwargs):
+        box_calls.append(aspect)
+        return original_set_box_aspect(self, aspect, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "set_aspect", record_set_aspect)
+    monkeypatch.setattr(Axes, "set_box_aspect", record_set_box_aspect)
+
+    _plot_sky_model_sources(
+        tmp_path / "sky.png",
+        np.array([150.0]),
+        np.array([2.0]),
+        np.array([1.0]),
+        np.array([0.0]),
+        np.array([0.0]),
+        np.array([0.0]),
+        norm=None,
+        title="sky",
+        xlim=(150.5, 149.5),
+        ylim=(1.5, 2.5),
+        fov_circle=(150.0, 2.0, 0.5),
+    )
+
+    assert ("equal", "datalim") in aspect_calls
+    assert 1 in box_calls
 
 
 def test_sky_model_ellipses_preserve_source_shape_metadata():

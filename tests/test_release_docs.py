@@ -22,7 +22,7 @@ def test_installation_docs_describe_pip_and_conda_paths():
     text = (REPO_ROOT / "docs/installation.rst").read_text(encoding="utf-8")
 
     assert "pip-only" in text
-    assert "conda create -y -n skasim python=3.9" in text
+    assert "conda create -y -n skasim python=3.10" in text
     assert "karabo-pipeline \"cuda-version=11.7\"" in text
     assert "conda run -n skasim pip install -e ." in text
     assert "import karabo, oskar" in text

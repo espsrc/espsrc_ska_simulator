@@ -474,6 +474,11 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
             "run_wsclean_imaging",
             lambda *args, **kwargs: called.append("wsclean"),
         )
+        monkeypatch.setattr(
+            pipeline,
+            "write_uv_coverage_plot",
+            lambda ctx, visibility_path: called.append("uv") or (ctx.work_dir / "uv.png"),
+        )
 
         config = SimConfig(
             output_dir="imager_run",
@@ -490,10 +495,11 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
     finally:
         os.chdir(old_cwd)
 
-    assert called == ["wsclean"]
+    assert called == ["uv", "wsclean"]
     assert manifest["config"]["imaging"]["imager"] == "wsclean"
     assert (tmp_path / "imager_run" / "weblog.html").exists()
     assert any(output["kind"] == "weblog" for output in manifest["outputs"])
+    assert any(item["name"] == "uv_coverage_completed" for item in manifest["milestones"])
     imaging_done = [
         item for item in manifest["milestones"] if item["name"] == "imaging_completed"
     ][0]

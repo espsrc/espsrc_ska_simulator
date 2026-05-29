@@ -17,7 +17,7 @@ from astropy.coordinates import SkyCoord
 from loguru import logger
 
 from .config import SimConfig
-from .imaging import run_dirty_imaging, run_wsclean_imaging
+from .imaging import run_dirty_imaging, run_wsclean_imaging, write_uv_coverage_plot
 from .manifest import RunContext, create_run_context
 from .fits_helper import FitsCatalogLoader
 from .runtime import require_karabo_module
@@ -501,6 +501,26 @@ def run(config: SimConfig) -> None:
         except Exception as exc:
             ctx.add_milestone("simulation_failed", "failed", elapsed_s=time.time() - t_phase_a, details={"error": str(exc)})
             raise
+
+        if config.imaging.uv_coverage:
+            ctx.add_milestone("uv_coverage_started", "started")
+            t_phase_uv = time.time()
+            try:
+                uv_coverage_path = write_uv_coverage_plot(ctx, visibility_path)
+                ctx.add_milestone(
+                    "uv_coverage_completed",
+                    "completed",
+                    elapsed_s=time.time() - t_phase_uv,
+                    details={"path": str(uv_coverage_path.relative_to(ctx.work_dir))},
+                )
+            except Exception as exc:
+                ctx.add_milestone(
+                    "uv_coverage_failed",
+                    "failed",
+                    elapsed_s=time.time() - t_phase_uv,
+                    details={"error": str(exc)},
+                )
+                raise
 
         # phase 2: imaging
         ctx.add_milestone("imaging_started", "started")

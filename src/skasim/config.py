@@ -84,12 +84,22 @@ class ImgConfig(BaseModel):
     robust: float = 0.0
     imager: Literal["oskar-dirty", "wsclean"] = "oskar-dirty"
     wsclean_command: str = "wsclean"
+    uv_coverage: bool = True
+    shadems_command: str = "shadems"
+    uv_coverage_canvas_size: int = 600
 
     @field_validator("pixels")
     @classmethod
     def _power_of_two(cls, v: int) -> int:
         if v < 64:
             raise ValueError("pixels must be >= 64")
+        return v
+
+    @field_validator("uv_coverage_canvas_size")
+    @classmethod
+    def _positive_uv_coverage_canvas_size(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("uv_coverage_canvas_size must be >= 1")
         return v
 
 

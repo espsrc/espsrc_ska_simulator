@@ -4,8 +4,11 @@ channels:
   - i4ds
   - conda-forge
 dependencies:
-  - python=3.9
+  - python=3.10
   - pip
+  - setuptools<81
   - karabo-pipeline
+  - cuda-version=11.7
   - pip:
+      - shadems>=0.5.4
       - -e .

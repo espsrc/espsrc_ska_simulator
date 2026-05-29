@@ -133,6 +133,119 @@ def run_wsclean_command(argv: list[str], work_dir: Path):
     )
 
 
+def build_shadems_uv_coverage_argv(
+    config: SimConfig,
+    visibility_path: Path,
+    output_dir: Path,
+    png_name: str,
+    title: str,
+) -> list[str]:
+    """Build a shell-free shadeMS argv list for a U/V coverage plot."""
+    canvas_size = str(config.imaging.uv_coverage_canvas_size)
+    return shlex.split(config.imaging.shadems_command) + [
+        str(visibility_path),
+        "--xaxis",
+        "u",
+        "--yaxis",
+        "v",
+        "--dir",
+        str(output_dir),
+        "--png",
+        png_name,
+        "--title",
+        title,
+        "--xlabel",
+        "u",
+        "--ylabel",
+        "v",
+        "--xcanvas",
+        canvas_size,
+        "--ycanvas",
+        canvas_size,
+        "--spread-pix",
+        "2",
+        "--no-lim-save",
+    ]
+
+
+def shadems_uv_coverage_env(work_dir: Path) -> dict[str, str]:
+    """Return an environment with writable cache directories for shadeMS imports."""
+    env = os.environ.copy()
+    cache_dir = work_dir / ".cache"
+    mpl_dir = cache_dir / "matplotlib"
+    numba_dir = cache_dir / "numba"
+    mpl_dir.mkdir(parents=True, exist_ok=True)
+    numba_dir.mkdir(parents=True, exist_ok=True)
+    env["MPLCONFIGDIR"] = str(mpl_dir)
+    env["NUMBA_CACHE_DIR"] = str(numba_dir)
+    return env
+
+
+def run_shadems_command(argv: list[str], work_dir: Path):
+    """Run shadeMS with argv, an explicit cwd, and writable cache directories."""
+    return subprocess.run(
+        argv,
+        shell=False,
+        cwd=str(work_dir),
+        env=shadems_uv_coverage_env(work_dir),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def write_uv_coverage_plot(ctx: RunContext, visibility_path: Path) -> Path:
+    """Generate a shadeMS UV-coverage plot and record it in the run manifest."""
+    run_id = ctx.work_dir.name
+    png_name = f"{run_id}_uvcoverage.png"
+    log_name = f"{run_id}_uvcoverage_shadems.log"
+    png_path = ctx.work_dir / png_name
+    log_path = ctx.work_dir / log_name
+    argv = build_shadems_uv_coverage_argv(
+        config=ctx.config,
+        visibility_path=visibility_path,
+        output_dir=ctx.work_dir,
+        png_name=png_name,
+        title=f"{run_id} uv coverage",
+    )
+
+    try:
+        result = run_shadems_command(argv, ctx.work_dir)
+    except subprocess.CalledProcessError as exc:
+        output = (exc.stdout or "") + (exc.stderr or "")
+        log_path.write_text(output, encoding="utf-8")
+        ctx.manifest.add_output(
+            "log",
+            log_name,
+            role="uv_coverage",
+            metadata={"tool": "shadems", "returncode": exc.returncode},
+        )
+        raise
+
+    log_path.write_text((result.stdout or "") + (result.stderr or ""), encoding="utf-8")
+    if not png_path.exists():
+        raise FileNotFoundError(f"shadeMS did not produce {png_path}")
+
+    ctx.manifest.add_output(
+        "plot",
+        png_name,
+        role="uv_coverage",
+        metadata={
+            "tool": "shadems",
+            "xaxis": "u",
+            "yaxis": "v",
+            "canvas_size": ctx.config.imaging.uv_coverage_canvas_size,
+        },
+    )
+    ctx.manifest.add_output(
+        "log",
+        log_name,
+        role="uv_coverage",
+        metadata={"tool": "shadems"},
+    )
+    return png_path
+
+
 def collect_wsclean_outputs(work_dir: Path, output_prefix: str) -> list[Path]:
     """Collect WSClean FITS outputs for one configured output prefix."""
     return sorted(work_dir.glob(f"{output_prefix}*.fits"))
@@ -327,6 +440,8 @@ def _plot_sky_model_sources(
         ax.set_ylim(*ylim)
     else:
         ax.set_ylim(*_padded_limits(dec))
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_box_aspect(1)
 
     compact = _compact_source_mask(major_axis, plot_width_deg)
     resolved = ~compact

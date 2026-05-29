@@ -39,6 +39,8 @@ def _find_image_outputs(manifest: RunManifest, work_dir: Path) -> list[dict]:
         output_path = o.path if hasattr(o, "path") else o
         if "telescope" in output_path.lower() or o.role == "telescope":
             continue
+        if o.role == "uv_coverage":
+            continue
         if "sky_model" in output_path.lower() or o.role in ("sky_model", "sky_model_fov"):
             continue
         if not output_path.endswith((".png", ".jpg", ".jpeg")):
@@ -501,6 +503,7 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
 
     # Resolve telescope plot if present
     telescope_plot = None
+    uv_coverage_plot = None
     for o in manifest.outputs:
         output_path = o.path if hasattr(o, "path") else o
         if "telescope" in output_path.lower() or o.role == "telescope":
@@ -511,6 +514,19 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
                     "data": _file_to_base64_data_uri(fpath)
                 }
             break
+
+    # Resolve UV coverage plot if present
+    for o in manifest.outputs:
+        output_path = o.path if hasattr(o, "path") else o
+        role = getattr(o, "role", None)
+        if role == "uv_coverage" or "uvcoverage" in output_path.lower():
+            fpath = work_dir / output_path
+            if fpath.exists() and output_path.endswith((".png", ".jpg", ".jpeg")):
+                uv_coverage_plot = {
+                    "path": output_path,
+                    "data": _file_to_base64_data_uri(fpath),
+                }
+                break
 
     # Resolve sky model plot if present
     sky_model_plot = None
@@ -570,6 +586,7 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
         images=_find_image_outputs(manifest, work_dir),
         science_products=science_products,
         telescope_plot=telescope_plot,
+        uv_coverage_plot=uv_coverage_plot,
         sky_model_plot=sky_model_plot,
         sky_model_fov_plot=sky_model_fov_plot,
         observation_summary=_observation_summary(manifest),

@@ -145,6 +145,24 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=5000,
         help="WSClean CLEAN iterations",
     )
+    imaging.add_argument(
+        "--no-uv-coverage",
+        dest="uv_coverage",
+        action="store_false",
+        default=True,
+        help="Skip shadeMS UV-coverage plot generation",
+    )
+    imaging.add_argument(
+        "--shadems-command",
+        default="shadems",
+        help="Command used for shadeMS UV-coverage plotting",
+    )
+    imaging.add_argument(
+        "--uv-coverage-canvas-size",
+        type=int,
+        default=600,
+        help="Square shadeMS UV-coverage canvas size in pixels",
+    )
 
     outputs = p.add_argument_group("outputs")
     outputs.add_argument(
@@ -266,6 +284,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         robust=args.robust,
         imager=args.imager,
         wsclean_command=args.wsclean_command,
+        uv_coverage=args.uv_coverage,
+        shadems_command=args.shadems_command,
+        uv_coverage_canvas_size=args.uv_coverage_canvas_size,
     )
 
     config_kwargs = {
