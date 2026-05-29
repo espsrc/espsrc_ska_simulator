@@ -62,10 +62,12 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
             continue
 
         product_id = output.image_product_id or "imaging"
+        tag = (output.metadata or {}).get("tag", "default")
         product = products.setdefault(
             product_id,
             {
                 "product_id": product_id,
+                "tag": tag,
                 "imager": output.imager,
                 "model": None,
                 "clean": None,
@@ -192,20 +194,19 @@ def _observation_summary(manifest: RunManifest) -> dict:
     }
 
 
-def _imaging_summary(
-    manifest: RunManifest,
+def _imaging_summary_for_block(
+    img_config,
     fov_deg: float | None,
     beam: dict | None,
 ) -> dict:
-    """Build display rows for imaging geometry and pixelization."""
-    imaging = manifest.config.imaging
+    """Build display rows for imaging geometry and pixelization for a single ImgConfig block."""
     pixel_size_arcsec = None
     if fov_deg is not None:
-        pixel_size_arcsec = fov_deg * 3600.0 / imaging.pixels
+        pixel_size_arcsec = fov_deg * 3600.0 / img_config.pixels
     return {
-        "imager": imaging.imager,
-        "pixels": imaging.pixels,
-        "image_size": f"{imaging.pixels} x {imaging.pixels}",
+        "imager": img_config.imager,
+        "pixels": img_config.pixels,
+        "image_size": f"{img_config.pixels} x {img_config.pixels}",
         "fov_deg": _format_float(fov_deg, 4) if fov_deg is not None else None,
         "pixel_size_arcsec": (
             _format_float(pixel_size_arcsec, 4) if pixel_size_arcsec is not None else None
@@ -228,36 +229,36 @@ def _format_beam(beam: dict | None) -> str | None:
     return " · ".join(parts) if parts else None
 
 
-def _imager_parameter_rows(
+def _imager_parameter_rows_for_block(
+    img_config,
     manifest: RunManifest,
     fov_deg: float | None,
     center: tuple[float, float] | None,
 ) -> list[tuple[str, str]]:
-    """Return the effective OSKAR or WSClean parameters shown in the weblog."""
+    """Return the effective OSKAR or WSClean parameters for a single ImgConfig block."""
     config = manifest.config
-    imaging = config.imaging
     n_channels = int(config.observation.n_channels or 1)
     channels_out = min(n_channels, 8)
-    output_prefix = _first_image_product_id(manifest, imaging.imager)
+    output_prefix = _first_image_product_id(manifest, img_config.imager)
     visibility_input = _first_output_path(manifest, "visibility")
     pixel_size_arcsec = None
     if fov_deg is not None:
-        pixel_size_arcsec = fov_deg * 3600.0 / imaging.pixels
+        pixel_size_arcsec = fov_deg * 3600.0 / img_config.pixels
 
-    if imaging.imager == "wsclean":
+    if img_config.imager == "wsclean":
         rows = [
             ("Imager", "WSClean"),
-            ("Command", imaging.wsclean_command),
-            ("Weighting", f"Briggs robust {_format_float(imaging.robust)}"),
+            ("Command", img_config.wsclean_command),
+            ("Weighting", f"Briggs robust {_format_float(img_config.robust)}"),
             ("Multiscale", "enabled"),
-            ("Image size", f"{imaging.pixels} x {imaging.pixels} pixels"),
+            ("Image size", f"{img_config.pixels} x {img_config.pixels} pixels"),
             (
                 "Pixel scale",
                 f"{_format_float(pixel_size_arcsec, 4)} arcsec"
                 if pixel_size_arcsec is not None
                 else "unknown",
             ),
-            ("Clean iterations", str(config.clean_iterations)),
+            ("Clean iterations", str(img_config.clean_iterations)),
             ("Major-cycle gain", "0.8"),
             ("Auto threshold", "0.3"),
             ("Auto mask", "3"),
@@ -273,7 +274,7 @@ def _imager_parameter_rows(
 
     rows = [
         ("Imager", "OSKAR dirty"),
-        ("Image size", f"{imaging.pixels} x {imaging.pixels} pixels"),
+        ("Image size", f"{img_config.pixels} x {img_config.pixels} pixels"),
         (
             "Pixel scale",
             f"{_format_float(pixel_size_arcsec, 4)} arcsec"
@@ -293,6 +294,47 @@ def _imager_parameter_rows(
     if visibility_input is not None:
         rows.append(("Visibility input", visibility_input))
     return rows
+
+
+def _build_imaging_tabs(
+    manifest: RunManifest,
+    science_products: list[dict],
+    fov_deg_default: float | None,
+    center: tuple[float, float] | None,
+) -> list[dict]:
+    """Build one tab dict per imaging block with config summary, parameters, and products."""
+    config = manifest.config
+    if not config.imaging:
+        return []
+
+    tabs: list[dict] = []
+
+    for img_config in config.imaging:
+        tag = img_config.tag
+
+        # Compute FoV for this block
+        fov_deg = img_config.fov_deg
+        if fov_deg is None:
+            fov_deg = fov_deg_default
+
+        # Find beam from this tag's products
+        tag_products = [p for p in science_products if p.get("tag") == tag]
+        beam = None
+        for p in tag_products:
+            if p.get("beam"):
+                beam = p["beam"]
+                break
+
+        tabs.append({
+            "tag": tag,
+            "imaging_summary": _imaging_summary_for_block(img_config, fov_deg, beam),
+            "imager_parameter_rows": _imager_parameter_rows_for_block(
+                img_config, manifest, fov_deg, center,
+            ),
+            "products": tag_products,
+        })
+
+    return tabs
 
 
 def _first_image_product_id(manifest: RunManifest, imager: str) -> str | None:
@@ -466,24 +508,25 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             - milestone_lookup["simulation_started"].timestamp_utc
         ).total_seconds()
 
+    # aggregate imaging duration across all tags
+    imaging_starts = [
+        m.timestamp_utc for m in manifest.milestones if m.name.endswith("_started") and m.name.startswith("imaging_")
+    ]
+    imaging_ends = [
+        m.timestamp_utc for m in manifest.milestones if m.name.endswith("_completed") and m.name.startswith("imaging_")
+    ]
     imaging_duration = None
-    if (
-        "imaging_started" in milestone_lookup
-        and "imaging_completed" in milestone_lookup
-    ):
-        imaging_duration = (
-            milestone_lookup["imaging_completed"].timestamp_utc
-            - milestone_lookup["imaging_started"].timestamp_utc
-        ).total_seconds()
+    if imaging_starts and imaging_ends:
+        imaging_duration = (max(imaging_ends) - min(imaging_starts)).total_seconds()
 
     # Derived telescope properties
     from .utils import get_diameter
     dish_diameter = None
     derived_fov = None
-    fov_deg_value = manifest.config.imaging.fov_deg
+    fov_deg_value = manifest.config.imaging[0].fov_deg if manifest.config.imaging else None
     telescope_name = manifest.config.telescope
     freq_mhz = manifest.config.observation.frequency_mhz
-    
+
     try:
         diam = get_diameter(telescope_name)
         dish_diameter = f"{diam.value:.1f} {diam.unit}"
@@ -496,7 +539,7 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             derived_fov = f"{fov_deg_val:.2f}°"
     except Exception:
         pass
-        
+
     n_stations = _antenna_count(manifest)
 
     # Resolve telescope plot if present
@@ -552,11 +595,9 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
         )
 
     science_products = _find_science_products(manifest, work_dir)
-    representative_beam = None
-    for product in science_products:
-        if product.get("beam"):
-            representative_beam = product["beam"]
-            break
+    imaging_tabs = _build_imaging_tabs(
+        manifest, science_products, fov_deg_value, center,
+    )
 
     html = template.render(
         manifest=manifest,
@@ -568,13 +609,11 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             _humanize_seconds(imaging_duration) if imaging_duration else None
         ),
         images=_find_image_outputs(manifest, work_dir),
-        science_products=science_products,
+        imaging_tabs=imaging_tabs,
         telescope_plot=telescope_plot,
         sky_model_plot=sky_model_plot,
         sky_model_fov_plot=sky_model_fov_plot,
         observation_summary=_observation_summary(manifest),
-        imaging_summary=_imaging_summary(manifest, fov_deg_value, representative_beam),
-        imager_parameter_rows=_imager_parameter_rows(manifest, fov_deg_value, center),
         software_versions=_software_versions(),
         dish_diameter=dish_diameter,
         derived_fov=derived_fov,

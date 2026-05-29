@@ -407,11 +407,13 @@ def main(argv: Optional[List[str]] = None) -> None:
             fov_deg = float(args.fov)
 
     img = ImgConfig(
+        tag="default",
         pixels=args.pixels,
         fov_deg=fov_deg,
         robust=args.robust,
         imager=args.imager,
         wsclean_command=args.wsclean_command,
+        clean_iterations=args.clean_iterations,
     )
 
     config_kwargs = {
@@ -427,9 +429,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         "rms": args.rms,
         "rms_value": args.rms_value,
         "rms_sigma": args.rms_sigma,
-        "clean_iterations": args.clean_iterations,
         "observation": obs,
-        "imaging": img,
+        "imaging": [img],
         "output_dir": args.output_dir,
         "overwrite": args.overwrite,
     }

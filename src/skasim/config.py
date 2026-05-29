@@ -79,17 +79,29 @@ class ImgConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    tag: str = "default"
     pixels: int = 512
     fov_deg: Optional[float] = None
     robust: float = 0.0
     imager: Literal["oskar-dirty", "wsclean"] = "oskar-dirty"
     wsclean_command: str = "wsclean"
+    clean_iterations: int = 5000
 
     @field_validator("pixels")
     @classmethod
     def _min_pixels(cls, v: int) -> int:
         if v < 64:
             raise ValueError("pixels must be >= 64")
+        return v
+
+    @field_validator("tag")
+    @classmethod
+    def _valid_tag(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("tag must not be empty")
+        if any(c in v for c in [' ', '/', '\\', ':', '*', '?', '"', '<', '>', '|']):
+            raise ValueError("tag must not contain whitespace or path-special chars")
         return v
 
 
@@ -124,11 +136,11 @@ class SimConfig(BaseModel):
     rms_sigma: float = 3.0
 
     # wsclean iterations
-    clean_iterations: int = 5000
+    # clean_iterations moved to ImgConfig
 
     # nested configs
     observation: ObsConfig = ObsConfig()
-    imaging: ImgConfig = ImgConfig()
+    imaging: List[ImgConfig] = Field(default_factory=lambda: [ImgConfig()])
 
     output_dir: Optional[str] = None
     overwrite: bool = False
@@ -136,6 +148,18 @@ class SimConfig(BaseModel):
     # optional run metadata (config-file only; not a CLI argument)
     title: Optional[str] = None
     description: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _wrap_single_imaging(cls, data):
+        """Backward compat: wrap a single imaging dict into a list."""
+        if isinstance(data, dict) and "imaging" in data:
+            img = data["imaging"]
+            if isinstance(img, dict):
+                if "tag" not in img:
+                    img["tag"] = "default"
+                data["imaging"] = [img]
+        return data
 
     @model_validator(mode="before")
     @classmethod
@@ -205,4 +229,17 @@ class SimConfig(BaseModel):
                         f"{field_name} must contain {n_sources} values to match "
                         "source_flux_jy."
                     )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_duplicate_tags(self):
+        tags = [img.tag for img in self.imaging]
+        if len(tags) != len(set(tags)):
+            raise ValueError("duplicate imaging tags are not allowed")
+        return self
+
+    @model_validator(mode="after")
+    def _require_at_least_one_imaging(self):
+        if not self.imaging:
+            raise ValueError("at least one imaging block is required")
         return self

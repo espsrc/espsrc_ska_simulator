@@ -30,16 +30,16 @@ from skasim.manifest import create_run_context
 def test_build_wsclean_argv_uses_default_command():
     """The default WSClean command builds an argv list starting with wsclean."""
     config = SimConfig(
-        imaging=ImgConfig(imager="wsclean", wsclean_command="wsclean", pixels=256)
+        imaging=[ImgConfig(imager="wsclean", wsclean_command="wsclean", pixels=256)]
     )
 
     argv = build_wsclean_argv(
-        config=config,
+        img_config=config.imaging[0],
         visibility_path=Path("visibilities.MS"),
         fov=0.2 * u.deg,
         output_prefix="run-clean",
+        n_channels=1,
     )
-
     assert argv[0] == "wsclean"
     assert "-name" in argv
     assert argv[argv.index("-name") + 1] == "run-clean"
@@ -50,11 +50,11 @@ def test_build_wsclean_argv_parses_singularity_command():
     """Containerized WSClean commands are parsed into argv without shell text."""
     command = "singularity exec /mnt/software/containers/wsclean-3.10-dysco.sif wsclean"
     config = SimConfig(
-        imaging=ImgConfig(imager="wsclean", wsclean_command=command, pixels=256)
+        imaging=[ImgConfig(imager="wsclean", wsclean_command=command, pixels=256)]
     )
 
     argv = build_wsclean_argv(
-        config=config,
+        img_config=config.imaging[0],
         visibility_path=Path("visibilities.MS"),
         fov=0.2 * u.deg,
         output_prefix="run-clean",
@@ -73,14 +73,15 @@ def test_build_wsclean_argv_caps_channels_out_to_available_channels():
     """Small smoke runs should not request more WSClean outputs than channels."""
     config = SimConfig(
         observation=ObsConfig(bandwidth_mhz=25.0, n_channels=2),
-        imaging=ImgConfig(imager="wsclean", pixels=256),
+        imaging=[ImgConfig(imager="wsclean", pixels=256)],
     )
 
     argv = build_wsclean_argv(
-        config=config,
+        img_config=config.imaging[0],
         visibility_path=Path("visibilities.MS"),
         fov=0.2 * u.deg,
         output_prefix="run-clean",
+        n_channels=config.observation.n_channels,
     )
 
     assert argv[argv.index("-channels-out") + 1] == "2"
@@ -378,11 +379,15 @@ def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
 
     config = SimConfig(
         output_dir=str(tmp_path / "example"),
-        imaging=ImgConfig(imager="wsclean"),
+        imaging=[ImgConfig(imager="wsclean")],
     )
     ctx = create_run_context(config)
 
-    run_wsclean_imaging(ctx, ctx.visibility_path, 0.2 * u.deg)
+    run_wsclean_imaging(
+        ctx, ctx.visibility_path, 0.2 * u.deg,
+        img_config=config.imaging[0],
+        sub_dir=ctx.work_dir / config.imaging[0].tag,
+    )
 
     prefix = wsclean_output_prefix(ctx)
     output_paths = [output.path for output in ctx.manifest.outputs]
@@ -436,11 +441,15 @@ def test_run_wsclean_imaging_cleanup_keeps_run_scoped_outputs(tmp_path, monkeypa
 
     config = SimConfig(
         output_dir=str(tmp_path / "wsclean-00case"),
-        imaging=ImgConfig(imager="wsclean"),
+        imaging=[ImgConfig(imager="wsclean")],
     )
     ctx = create_run_context(config)
 
-    run_wsclean_imaging(ctx, ctx.visibility_path, 0.2 * u.deg)
+    run_wsclean_imaging(
+        ctx, ctx.visibility_path, 0.2 * u.deg,
+        img_config=config.imaging[0],
+        sub_dir=ctx.work_dir / config.imaging[0].tag,
+    )
 
     prefix = wsclean_output_prefix(ctx)
     output_paths = [output.path for output in ctx.manifest.outputs]

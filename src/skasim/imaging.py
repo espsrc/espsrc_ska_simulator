@@ -14,7 +14,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from loguru import logger
 
-from .config import SimConfig
+from .config import ImgConfig, SimConfig
 from .manifest import RunContext
 from .runtime import require_karabo_module
 from .utils import mapping_unit
@@ -31,16 +31,17 @@ def run_dirty_imaging(
     visibility_path: Path,
     fov: u.Quantity,
     center: SkyCoord,
+    img_config: ImgConfig,       # << NEW
+    sub_dir: Path,               # << NEW — work_dir/{tag}
 ) -> None:
     """produce dirty image via OSKAR."""
     imager_module = require_karabo_module("karabo.imaging.imager_oskar")
     visibility_module = require_karabo_module("karabo.simulation.visibility")
-    config = ctx.config
-    work_dir = ctx.work_dir
+    work_dir = sub_dir
     vis = visibility_module.Visibility(str(visibility_path))
-    imaging_cellsize = fov / config.imaging.pixels
+    imaging_cellsize = fov / img_config.pixels
     cfg = imager_module.OskarDirtyImagerConfig(
-        imaging_npixel=config.imaging.pixels,
+        imaging_npixel=img_config.pixels,
         imaging_cellsize=imaging_cellsize.to(u.rad).value,
         combine_across_frequencies=True,
         imaging_phase_centre=center,
@@ -48,8 +49,8 @@ def run_dirty_imaging(
     imager = imager_module.OskarDirtyImager(config=cfg)
     dirty_image = imager.create_dirty_image(vis)
 
-    dirty_png = work_dir / f"{work_dir.name}_dirty.png"
-    dirty_fits = work_dir / f"{work_dir.name}_dirty.fits"
+    dirty_png = work_dir / f"{img_config.tag}_dirty.png"
+    dirty_fits = work_dir / f"{img_config.tag}_dirty.fits"
     dirty_image.write_to_file(str(dirty_fits), overwrite=True)
     try:
         write_fits_preview(dirty_fits, dirty_png, "OSKAR Dirty Image")
@@ -59,20 +60,22 @@ def run_dirty_imaging(
     logger.debug(f"Dirty PNG: {dirty_png}")
     logger.debug(f"Dirty FITS: {dirty_fits}")
 
-    image_product_id = f"{work_dir.name}_dirty"
+    image_product_id = f"{img_config.tag}_dirty"
     ctx.manifest.add_output(
         "image_product",
-        str(dirty_png.relative_to(work_dir)),
+        str(dirty_png.relative_to(ctx.work_dir)),
         image_product_id=image_product_id,
         imager="oskar-dirty",
         role="preview",
+        metadata={"tag": img_config.tag},
     )
     ctx.manifest.add_output(
         "image_product",
-        str(dirty_fits.relative_to(work_dir)),
+        str(dirty_fits.relative_to(ctx.work_dir)),
         image_product_id=image_product_id,
         imager="oskar-dirty",
         role="dirty",
+        metadata={"tag": img_config.tag},
     )
 
 
@@ -82,26 +85,27 @@ def run_dirty_imaging(
 
 
 def build_wsclean_argv(
-    config: SimConfig,
+    img_config: ImgConfig,
     visibility_path: Path,
     fov: u.Quantity,
     output_prefix: str,
+    n_channels: int = 1,
 ) -> list[str]:
     """Build a shell-free WSClean argv list from the resolved imaging config."""
-    imaging_cellsize = fov / config.imaging.pixels
-    channels_out = min(config.observation.n_channels or 1, 8)
-    return shlex.split(config.imaging.wsclean_command) + [
+    imaging_cellsize = fov / img_config.pixels
+    channels_out = min(n_channels or 1, 8)
+    return shlex.split(img_config.wsclean_command) + [
         "-weight",
         "briggs",
-        str(config.imaging.robust),
+        str(img_config.robust),
         "-multiscale",
         "-size",
-        str(config.imaging.pixels),
-        str(config.imaging.pixels),
+        str(img_config.pixels),
+        str(img_config.pixels),
         "-scale",
         f"{imaging_cellsize.to(u.arcsec).value:.6f}asec",
         "-niter",
-        str(config.clean_iterations),
+        str(img_config.clean_iterations),
         "-mgain",
         "0.8",
         "-auto-threshold",
@@ -461,15 +465,19 @@ def run_wsclean_imaging(
     ctx: RunContext,
     visibility_path: Path,
     fov: u.Quantity,
+    img_config: ImgConfig,       # << NEW
+    sub_dir: Path,               # << NEW — work_dir/{tag}
+    n_channels: int = 1,
 ) -> None:
     """produce cleaned image via external WSClean binary."""
     wsclean_module = require_karabo_module("karabo.imaging.imager_wsclean")
     file_handler_module = require_karabo_module("karabo.util.file_handler")
-    config = ctx.config
-    work_dir = ctx.work_dir
+    work_dir = sub_dir
 
-    output_prefix = wsclean_output_prefix(ctx)
-    argv = build_wsclean_argv(config, visibility_path, fov, output_prefix=output_prefix)
+    output_prefix = f"{img_config.tag}_wsclean"
+    argv = build_wsclean_argv(
+        img_config, visibility_path, fov, output_prefix=output_prefix, n_channels=n_channels
+    )
     logger.info(f"WSClean command: {argv}")
 
     file_handler_module.FileHandler().get_tmp_dir(
@@ -522,15 +530,17 @@ def run_wsclean_imaging(
             role = "psf"
         ctx.manifest.add_output(
             "image_product",
-            png_path.name,
+            str(png_path.relative_to(ctx.work_dir)),
             image_product_id=output_prefix,
             imager="wsclean",
             role=f"{role}_preview",
+            metadata={"tag": img_config.tag},
         )
         ctx.manifest.add_output(
             "image_product",
-            img_path.name,
+            str(img_path.relative_to(ctx.work_dir)),
             image_product_id=output_prefix,
             imager="wsclean",
             role=role,
+            metadata={"tag": img_config.tag},
         )

@@ -95,12 +95,16 @@ def resolve_telescope_version(telescope_module, telescope: str, version: str):
 # --------------------------------------------------------------------------- #
 
 
-def compute_fov(config: SimConfig, frequency: u.Quantity) -> u.Quantity:
+def compute_fov(
+    telescope: str,
+    fov_deg: Optional[float],
+    frequency: u.Quantity,
+) -> u.Quantity:
     """return FoV in radians.  If fov_deg is set, use it; else diffraction limit."""
-    if config.imaging.fov_deg is not None:
-        return (config.imaging.fov_deg * u.deg).to(u.rad)
+    if fov_deg is not None:
+        return (fov_deg * u.deg).to(u.rad)
     wavelength = frequency.to(u.m, equivalencies=u.spectral())
-    diameter = get_diameter(config.telescope.upper())
+    diameter = get_diameter(telescope.upper())
     fov = (1.25 * wavelength / diameter) * u.rad
     logger.debug(f"Computed FOV is: {fov} radians")
     return fov
@@ -426,13 +430,13 @@ def run_simulation(
             )
 
     freq = config.observation.frequency_mhz * u.MHz
-    fov = compute_fov(config, freq)
+    fov_sim = compute_fov(config.telescope, config.imaging[0].fov_deg, freq)
     delta_freq = config.observation.channel_width_mhz * u.MHz
 
     params = {
         "channel_bandwidth_hz": delta_freq.to(u.Hz).value,
         "station_type": "Gaussian beam",
-        "gauss_beam_fwhm_deg": fov.to(u.deg).value,
+        "gauss_beam_fwhm_deg": fov_sim.to(u.deg).value,
         "gauss_ref_freq_hz": freq.to(u.Hz).value,
         "use_gpus": False,
     }
@@ -479,8 +483,8 @@ def run(config: SimConfig) -> None:
         logger.info(f"Bandwidth : {config.observation.bandwidth_mhz} MHz")
         logger.info(f"Channels  : {config.observation.n_channels}")
         logger.info(f"Obs time  : {config.observation.observation_time_s} s")
-        logger.info(f"Pixels    : {config.imaging.pixels}")
-        logger.info(f"Imager    : {config.imaging.imager}")
+        logger.info(f"Pixels    : {config.imaging[0].pixels}")
+        logger.info(f"Imager(s) : {', '.join(img.imager for img in config.imaging)}")
 
         telescope = build_telescope(ctx)
         telescope_png = ctx.work_dir / f"{ctx.work_dir.name}_{config.telescope}_{config.telescope_version or ''}_telescope.png"
@@ -497,10 +501,10 @@ def run(config: SimConfig) -> None:
         )
 
         freq = config.observation.frequency_mhz * u.MHz
-        fov = compute_fov(config, freq)
-        logger.info(f"FoV       : {fov.to(u.deg).value:.4f} deg")
+        fov0 = compute_fov(config.telescope, config.imaging[0].fov_deg, freq)
+        logger.info(f"FoV       : {fov0.to(u.deg).value:.4f} deg")
 
-        sky_model, center = build_sky_model(ctx, fov)
+        sky_model, center = build_sky_model(ctx, fov0)
         center = parse_center(config.center, center)
         logger.info(f"Centre    : {center.to_string('hmsdms')}")
         try:
@@ -509,7 +513,7 @@ def run(config: SimConfig) -> None:
             for path, role in write_sky_model_previews(
                 sky_model,
                 center,
-                fov,
+                fov0,
                 ctx.work_dir,
                 ctx.work_dir.name,
             ):
@@ -533,23 +537,35 @@ def run(config: SimConfig) -> None:
             ctx.add_milestone("simulation_failed", "failed", elapsed_s=time.time() - t_phase_a, details={"error": str(exc)})
             raise
 
-        # phase 2: imaging
-        ctx.add_milestone("imaging_started", "started")
-        t_phase_b = time.time()
-        try:
-            if config.imaging.imager == "oskar-dirty":
-                run_dirty_imaging(ctx, visibility_path, fov, center)
-            else:
-                run_wsclean_imaging(ctx, visibility_path, fov)
-            ctx.add_milestone(
-                "imaging_completed",
-                "completed",
-                elapsed_s=time.time() - t_phase_b,
-                details={"Imager": config.imaging.imager},
-            )
-        except Exception as exc:
-            ctx.add_milestone("imaging_failed", "failed", elapsed_s=time.time() - t_phase_b, details={"error": str(exc)})
-            raise
+        # phase 2: batch imaging
+        for img_config in config.imaging:
+            tag = img_config.tag
+            sub_dir = ctx.work_dir / tag
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            fov_i = compute_fov(config.telescope, img_config.fov_deg, freq)
+
+            milestone_prefix = f"imaging_{tag}"
+            ctx.add_milestone(f"{milestone_prefix}_started", "started")
+            t_b = time.time()
+            try:
+                if img_config.imager == "oskar-dirty":
+                    run_dirty_imaging(ctx, visibility_path, fov_i, center, img_config, sub_dir)
+                else:
+                    run_wsclean_imaging(ctx, visibility_path, fov_i, img_config, sub_dir, n_channels=config.observation.n_channels or 1)
+                ctx.add_milestone(
+                    f"{milestone_prefix}_completed",
+                    "completed",
+                    elapsed_s=time.time() - t_b,
+                    details={"imager": img_config.imager, "tag": tag},
+                )
+            except Exception as exc:
+                ctx.add_milestone(
+                    f"{milestone_prefix}_failed",
+                    "failed",
+                    elapsed_s=time.time() - t_b,
+                    details={"error": str(exc), "tag": tag, "imager": img_config.imager},
+                )
+                raise
 
         ctx.manifest.mark_completed()
         ctx.manifest.add_output("weblog", ctx.weblog_path.name)

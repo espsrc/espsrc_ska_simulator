@@ -167,20 +167,20 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
         run_id="setup-summary",
         started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
         config=SimConfig(
-            clean_iterations=500,
             observation=ObsConfig(
                 frequency_mhz=1300.0,
                 bandwidth_mhz=100.0,
                 n_channels=8,
                 observation_time_s=60,
             ),
-            imaging=ImgConfig(
+            imaging=[ImgConfig(
                 imager="wsclean",
                 pixels=1024,
                 fov_deg=1.0,
                 robust=-0.5,
                 wsclean_command="wsclean",
-            ),
+                clean_iterations=500,
+            )],
         ),
     )
     manifest.add_milestone(

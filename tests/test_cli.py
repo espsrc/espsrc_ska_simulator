@@ -15,7 +15,7 @@ def _make_config_json(tmp_path, flux=None):
     config = SimConfig(
         source_flux_jy=[1.0],
         observation=ObsConfig(frequency_mhz=800.0),
-        imaging=ImgConfig(imager="oskar-dirty"),
+        imaging=[ImgConfig(imager="oskar-dirty")],
     )
     if flux is not None:
         config.source_flux_jy = flux
@@ -34,7 +34,7 @@ def test_config_file_loads_simconfig(monkeypatch, tmp_path):
 
     assert captured[0].source_flux_jy == [2.5, 5.0]
     assert captured[0].observation.frequency_mhz == 800.0
-    assert captured[0].imaging.imager == "oskar-dirty"
+    assert captured[0].imaging[0].imager == "oskar-dirty"
 
 
 def test_config_file_overrides_output_dir_and_overwrite(monkeypatch, tmp_path):
@@ -161,7 +161,7 @@ def test_default_imager_is_oskar_dirty(monkeypatch):
 
     cli.main([])
 
-    assert captured[0].imaging.imager == "oskar-dirty"
+    assert captured[0].imaging[0].imager == "oskar-dirty"
 
 
 def test_wsclean_imager_is_selected_explicitly(monkeypatch):
@@ -171,7 +171,7 @@ def test_wsclean_imager_is_selected_explicitly(monkeypatch):
 
     cli.main(["--imager", "wsclean"])
 
-    assert captured[0].imaging.imager == "wsclean"
+    assert captured[0].imaging[0].imager == "wsclean"
 
 
 def test_cleaning_flag_has_migration_message(capsys):
@@ -191,7 +191,7 @@ def test_wsclean_command_cli_override(monkeypatch):
 
     cli.main(["--imager", "wsclean", "--wsclean-command", command])
 
-    assert captured[0].imaging.wsclean_command == command
+    assert captured[0].imaging[0].wsclean_command == command
 
 
 def test_cli_rejects_source_flux_jy_with_catalog():

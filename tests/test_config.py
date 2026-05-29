@@ -172,14 +172,15 @@ def test_sim_config_defaults():
     assert cfg.rms is False
     assert cfg.rms_value == 0.0
     assert cfg.rms_sigma == 3.0
-    assert cfg.clean_iterations == 5000
     assert cfg.output_dir is None
     assert cfg.overwrite is False
     # nested configurations (post refactor)
     assert isinstance(cfg.observation, ObsConfig)
-    assert isinstance(cfg.imaging, ImgConfig)
+    assert isinstance(cfg.imaging, list)
+    assert cfg.imaging[0].pixels == 512
+    assert cfg.imaging[0].clean_iterations == 5000
+    assert cfg.imaging[0].tag == "default"
     assert cfg.observation.frequency_mhz == 700.0
-    assert cfg.imaging.pixels == 512
 
 
 def test_sim_config_explicit_telescope_version():
@@ -298,13 +299,49 @@ def test_sim_config_nested_observation_override():
     assert cfg.observation.observation_time_s == 1200
     assert cfg.observation.frequency_mhz == pytest.approx(900.0)
     # other nested defaults remain untouched
-    assert cfg.imaging.pixels == 512
+    assert cfg.imaging[0].pixels == 512
 
 
 def test_sim_config_nested_imaging_override():
     """nested ImgConfig can be fully replaced."""
-    cfg = SimConfig(imaging=ImgConfig(pixels=2048, imager="wsclean"))
-    assert cfg.imaging.pixels == 2048
-    assert cfg.imaging.imager == "wsclean"
+    cfg = SimConfig(imaging=[ImgConfig(tag="main", pixels=2048, imager="wsclean")])
+    assert cfg.imaging[0].pixels == 2048
+    assert cfg.imaging[0].imager == "wsclean"
     # other nested defaults remain untouched
     assert cfg.observation.observation_time_s == 600
+
+
+def test_sim_config_wraps_single_imaging_dict():
+    """Backward compat: a single imaging dict becomes a list of one."""
+    cfg = SimConfig(imaging={"tag": "legacy", "pixels": 256})
+    assert isinstance(cfg.imaging, list)
+    assert len(cfg.imaging) == 1
+    assert cfg.imaging[0].tag == "legacy"
+    assert cfg.imaging[0].pixels == 256
+
+
+def test_sim_config_rejects_duplicate_tags():
+    """Duplicate imaging tags are not allowed."""
+    with pytest.raises(ValidationError, match="duplicate imaging tags"):
+        SimConfig(
+            imaging=[
+                ImgConfig(tag="a", pixels=256),
+                ImgConfig(tag="a", pixels=512),
+            ]
+        )
+
+
+def test_sim_config_rejects_empty_imaging_list():
+    """At least one imaging block is required."""
+    with pytest.raises(ValidationError, match="at least one imaging block"):
+        SimConfig(imaging=[])
+
+
+def test_img_config_tag_validation():
+    """Tag must not be empty or contain path-special chars."""
+    with pytest.raises(ValidationError, match="tag must not be empty"):
+        ImgConfig(tag="")
+    with pytest.raises(ValidationError, match="tag must not contain whitespace"):
+        ImgConfig(tag="foo bar")
+    with pytest.raises(ValidationError, match="tag must not contain whitespace"):
+        ImgConfig(tag="foo/bar")
