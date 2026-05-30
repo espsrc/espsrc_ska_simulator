@@ -659,13 +659,12 @@ class SkyModel(KaraboSkyModel):
             # calculate the center of the sky model if phase_center is not set
             if sources is None:
                 sources = self.sources
-            if sources.size > 0:
-                center_ra = np.mean(np.array(sources[:, 0])) * u.deg
-                center_dec = np.mean(np.array(sources[:, 1])) * u.deg
-                self.phase_center = SkyCoord(ra=center_ra, dec=center_dec, frame="icrs")
-                return self.phase_center
-            else:
+            if sources is None or sources.size == 0:
                 raise ValueError("SkyModel has no sources and phase_center is not set.")
+            center_ra = np.mean(np.array(sources[:, 0])) * u.deg
+            center_dec = np.mean(np.array(sources[:, 1])) * u.deg
+            self.phase_center = SkyCoord(ra=center_ra, dec=center_dec, frame="icrs")
+            return self.phase_center
 
     @staticmethod
     def from_fits_table(fits_file, log_file="sky_model.log", prefix="sky_model"):
