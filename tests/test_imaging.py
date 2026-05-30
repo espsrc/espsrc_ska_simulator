@@ -360,6 +360,7 @@ def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
     def fake_run(argv, work_dir):
         captured_argv.append(argv)
         prefix = argv[argv.index("-name") + 1]
+        work_dir.mkdir(parents=True, exist_ok=True)
         (work_dir / f"{prefix}-MFS-image.fits").write_text("fits", encoding="utf-8")
         (work_dir / "old-run-MFS-image.fits").write_text("old", encoding="utf-8")
 
@@ -389,11 +390,11 @@ def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
         sub_dir=ctx.work_dir / config.imaging[0].tag,
     )
 
-    prefix = wsclean_output_prefix(ctx)
+    prefix = f"{config.imaging[0].tag}_wsclean"
     output_paths = [output.path for output in ctx.manifest.outputs]
     assert captured_argv[0][captured_argv[0].index("-name") + 1] == prefix
-    assert f"{prefix}-MFS-image.fits" in output_paths
-    assert f"{prefix}-MFS-image.png" in output_paths
+    assert f"default/{prefix}-MFS-image.fits" in output_paths
+    assert f"default/{prefix}-MFS-image.png" in output_paths
     assert all("old-run" not in output for output in output_paths)
     assert all("_bw" not in output for output in output_paths)
 
@@ -422,6 +423,7 @@ def test_run_wsclean_imaging_cleanup_keeps_run_scoped_outputs(tmp_path, monkeypa
 
     def fake_run(argv, work_dir):
         prefix = argv[argv.index("-name") + 1]
+        work_dir.mkdir(parents=True, exist_ok=True)
         (work_dir / f"{prefix}-MFS-image.fits").write_text("fits", encoding="utf-8")
         (work_dir / "wsclean-0000-temp.fits").write_text("temp", encoding="utf-8")
 
@@ -451,7 +453,7 @@ def test_run_wsclean_imaging_cleanup_keeps_run_scoped_outputs(tmp_path, monkeypa
         sub_dir=ctx.work_dir / config.imaging[0].tag,
     )
 
-    prefix = wsclean_output_prefix(ctx)
+    prefix = f"{config.imaging[0].tag}_wsclean"
     output_paths = [output.path for output in ctx.manifest.outputs]
-    assert f"{prefix}-MFS-image.fits" in output_paths
-    assert not (ctx.work_dir / "wsclean-0000-temp.fits").exists()
+    assert f"default/{prefix}-MFS-image.fits" in output_paths
+    assert not (ctx.work_dir / "default" / "wsclean-0000-temp.fits").exists()

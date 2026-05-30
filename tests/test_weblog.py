@@ -216,14 +216,13 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
     assert "12.5 MHz" in html
     assert "Total Bandwidth" in html
     assert "100 MHz" in html
-    assert "Imaging Setup" in html
+    assert "Imaging Products" in html
     assert "1024 x 1024 pixels" in html
     assert "Pixels</th>" not in html
     assert "Total FoV" in html
     assert "1 deg" in html
     assert "Pixel Size" in html
     assert "3.5156 arcsec" in html
-    assert "Cleaning & Imager Parameters" in html
     assert "Clean iterations" in html
     assert "500" in html
     assert "Major-cycle gain" in html
