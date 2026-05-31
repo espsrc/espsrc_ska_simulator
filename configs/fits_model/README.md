@@ -35,7 +35,7 @@ conda run -n skasim skasim --config configs/fits_model/meerkat_image_only_quick.
 conda run -n skasim skasim --config configs/fits_model/ska1mid_image_only_quick.json
 ```
 
-Composite catalog plus FITS image model:
+Composite small JSON catalog plus FITS image model:
 
 ```bash
 conda run -n skasim skasim --config configs/fits_model/vla_c_catalog_plus_image_quick.json

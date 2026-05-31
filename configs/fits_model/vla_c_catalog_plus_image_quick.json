@@ -4,7 +4,8 @@
   "models": [
     {
       "type": "component_sky_model",
-      "catalog": "GLEAM"
+      "path": "configs/fits_model/quick_component_catalog.json",
+      "sky_format": "json"
     },
     {
       "type": "continuum_i_alpha",
