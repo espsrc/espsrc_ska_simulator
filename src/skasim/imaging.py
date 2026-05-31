@@ -307,12 +307,15 @@ def write_fits_preview(
             levels = 5.0 * rms * np.sqrt(3.0) ** np.arange(1, 25)
             drawable_levels = levels[levels <= np.nanmax(finite)]
             if drawable_levels.size:
-                ffig.show_contour(
-                    hdul,
-                    levels=drawable_levels,
-                    colors="white",
-                    linewidths=0.45,
-                )
+                try:
+                    ffig.show_contour(
+                        hdul,
+                        levels=drawable_levels,
+                        colors="white",
+                        linewidths=0.45,
+                    )
+                except AttributeError as exc:
+                    logger.warning(f"Skipping FITS preview contours: {exc}")
         if "BMAJ" in hdu.header and "BMIN" in hdu.header:
             ffig.add_beam()
             ffig.beam.set_color("white")

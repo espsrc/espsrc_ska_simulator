@@ -17,6 +17,8 @@ from skasim.image_models import (
     inject_image_models,
     image_model_center,
     merge_model_data_into_data,
+    run_casa_ft,
+    run_casa_importfits,
     validate_continuum_i_alpha,
     write_image_model_previews,
 )
@@ -245,6 +247,78 @@ def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypat
     assert calls[2]["merged"] == tmp_path / "visibilities.MS"
     assert [m.name for m in ctx.manifest.milestones].count("image_model_injected") == 2
     assert ctx.manifest.milestones[-1].name == "image_injection_completed"
+
+
+def test_run_casa_importfits_uses_batch_fallback(tmp_path, monkeypatch):
+    """CASA importfits can run through a local CASA executable when casatasks is absent."""
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = "ok"
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return Result()
+
+    monkeypatch.setattr(
+        "skasim.image_models.require_casa_executable",
+        lambda: Path("/opt/casa/bin/casa"),
+    )
+    monkeypatch.setattr("skasim.image_models.subprocess.run", fake_run)
+
+    run_casa_importfits(
+        tmp_path,
+        [(tmp_path / "model.tt0.fits", tmp_path / "model.tt0.image")],
+    )
+
+    script = (tmp_path / "skasim_casa_importfits.py").read_text(encoding="utf-8")
+    assert "from casatasks import importfits" in script
+    assert "importfits(" in script
+    assert "model.tt0.fits" in script
+    assert calls[0][0][:5] == [
+        "/opt/casa/bin/casa",
+        "--nologger",
+        "--nogui",
+        "--log2term",
+        "-c",
+    ]
+    assert calls[0][1]["cwd"] == str(tmp_path)
+
+
+def test_run_casa_ft_uses_batch_fallback(tmp_path, monkeypatch):
+    """CASA ft falls back to a batch CASA process when casatasks is absent."""
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = "ok"
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return Result()
+
+    monkeypatch.setattr("skasim.image_models.import_casa_tasks", lambda: None)
+    monkeypatch.setattr(
+        "skasim.image_models.require_casa_executable",
+        lambda: Path("/opt/casa/bin/casa"),
+    )
+    monkeypatch.setattr("skasim.image_models.subprocess.run", fake_run)
+
+    run_casa_ft(
+        visibility_path=tmp_path / "visibilities.MS",
+        model_paths=[tmp_path / "model.tt0.image", tmp_path / "model.tt1.image"],
+        nterms=2,
+        reffreq="1400000000.0Hz",
+        incremental=True,
+    )
+
+    script = (tmp_path / "skasim_casa_ft.py").read_text(encoding="utf-8")
+    assert "from casatasks import ft" in script
+    assert "model.tt0.image" in script
+    assert "model.tt1.image" in script
+    assert "incremental=True" in script
+    assert calls[0][0][-1] == str(tmp_path / "skasim_casa_ft.py")
 
 
 def test_merge_model_data_into_data_adds_model_column(monkeypatch, tmp_path):
