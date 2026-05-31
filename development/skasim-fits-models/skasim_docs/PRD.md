@@ -184,7 +184,7 @@ The workflow may internally convert this model into the format required by the i
 A `static_stokes_maps` model must accept Stokes I/Q/U/V maps defined on a common spatial grid. The initial implementation may allow a subset of these Stokes planes as long as the supplied set is explicit.
 
 ### FR5a — `casa_taylor_terms` must accept prepared CASA image terms
-A `casa_taylor_terms` model must accept an existing `tt0` CASA image table, an optional `tt1` CASA image table, and a Taylor reference frequency. These products are already backend-ready and should be passed directly to CASA `ft`.
+A `casa_taylor_terms` model must accept an existing `tt0` CASA image table, an optional `tt1` CASA image table, and a Taylor reference frequency. The workflow should copy these products into the run directory, align the single-channel spectral coordinate to the configured Taylor reference frequency, and pass the run-local copies to CASA `ft`.
 
 ### FR6 — Sequential additive injection must be supported
 The workflow must support additive multi-model injection. If more than one image-like model is provided, the predicted visibilities must be added rather than replaced.
@@ -269,7 +269,9 @@ Validation:
 - at least `tt0` is supplied.
 
 Injection:
-- pass the supplied terms directly to CASA `ft` with `nterms` equal to the number of terms.
+- copy the supplied terms into the run directory,
+- align their single-channel spectral coordinate to `reference_frequency_hz`,
+- pass the run-local terms to CASA `ft` with `nterms` equal to the number of terms.
 
 ---
 

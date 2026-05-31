@@ -104,7 +104,9 @@ Version 1 practical fixture/testing mode.
 - The reference frequency is the Taylor expansion reference frequency of the model, not necessarily the observing-band centre.
 
 ### Injection route
-- CASA `ft` prediction into `MODEL_DATA` using the image table paths directly.
+- copy the CASA image tables into the run directory,
+- set their single-channel spectral coordinate to `reference_frequency_hz`,
+- CASA `ft` prediction into `MODEL_DATA` using the run-local image paths.
 
 ### Validation requirements
 - CASA image table directories exist.
@@ -113,7 +115,7 @@ Version 1 practical fixture/testing mode.
 
 ### Notes
 - This mode is for already-prepared CASA products such as local `*.model.tt0` / `*.model.tt1` fixtures.
-- It does not currently generate a FITS preview for the weblog because the source model is not a FITS image.
+- The `tt0` term is exported to FITS for the weblog model preview.
 
 ---
 

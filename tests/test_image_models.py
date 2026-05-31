@@ -198,6 +198,50 @@ def test_weblog_renders_existing_fits_model_output(tmp_path):
     assert "continuum_i_alpha" in html
 
 
+def test_weblog_renders_casa_taylor_term_preview(tmp_path, monkeypatch):
+    """CASA Taylor-term previews are exported to FITS before rendering."""
+    pytest.importorskip("aplpy")
+    pytest.importorskip("cmasher")
+    tt0 = tmp_path / "model.tt0"
+    tt1 = tmp_path / "model.tt1"
+    tt0.mkdir()
+    tt1.mkdir()
+    (tt0 / "table.dat").write_text("table", encoding="utf-8")
+    (tt1 / "table.dat").write_text("table", encoding="utf-8")
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0),
+                "tt1": str(tt1),
+                "reference_frequency_hz": 1.5e9,
+            }
+        ],
+        output_dir=str(tmp_path / "run"),
+    )
+    ctx = create_run_context(cfg)
+    calls = []
+
+    def fake_export(work_dir, imagename, fitsimage):
+        calls.append((work_dir, imagename, fitsimage))
+        stokes_i, _ = _write_model_pair(tmp_path, shape=(32, 32))
+        fitsimage.write_bytes(stokes_i.read_bytes())
+
+    monkeypatch.setattr("skasim.image_models.run_casa_exportfits", fake_export)
+
+    write_image_model_previews(
+        ctx,
+        SkyCoord(10.0 * u.deg, 2.0 * u.deg),
+        0.05 * u.deg,
+    )
+    html = render_weblog(ctx.manifest, ctx.work_dir)
+
+    assert calls[0][1] == tt0.resolve()
+    assert "FITS Model" in html
+    assert "casa_taylor_terms" in html
+    assert (ctx.work_dir / "run_fits_model.png").exists()
+
+
 def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypatch):
     """Image injection validates entries, predicts with CASA ft, and merges once."""
     stokes_i, alpha = _write_model_pair(tmp_path)
@@ -269,14 +313,28 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path):
             }
         ]
     )
+    ctx = create_run_context(SimConfig(output_dir=str(tmp_path / "run")))
+    calls = []
 
     report = validate_casa_taylor_terms(cfg.models[0])
-    product = prepare_casa_taylor_terms(cfg.models[0])
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            "skasim.image_models.run_casa_set_spectral_coordinate",
+            lambda work_dir, image_paths, frequency_hz: calls.append(
+                (work_dir, image_paths, frequency_hz)
+            ),
+        )
+        product = prepare_casa_taylor_terms(ctx, cfg.models[0], 0)
 
     assert report["nterms"] == 2
-    assert product.model_paths == [tt0.resolve(), tt1.resolve()]
+    assert product.model_paths == [
+        ctx.work_dir / "model_entry_01_casa_taylor.tt0.image",
+        ctx.work_dir / "model_entry_01_casa_taylor.tt1.image",
+    ]
     assert product.nterms == 2
     assert product.reffreq == "1500000000.0Hz"
+    assert (product.model_paths[0] / "table.dat").exists()
+    assert calls == [(ctx.work_dir, product.model_paths, 1.5e9)]
 
 
 def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
@@ -306,16 +364,28 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
         lambda **kwargs: calls.append(kwargs),
     )
     monkeypatch.setattr(
+        "skasim.image_models.run_casa_set_spectral_coordinate",
+        lambda work_dir, image_paths, frequency_hz: calls.append(
+            {"spectral_copy": image_paths, "frequency_hz": frequency_hz}
+        ),
+    )
+    monkeypatch.setattr(
         "skasim.image_models.merge_model_data_into_data",
         lambda visibility_path: calls.append({"merged": visibility_path}),
     )
 
     inject_image_models(ctx, tmp_path / "visibilities.MS")
 
-    assert calls[0]["model_paths"] == [tt0.resolve(), tt1.resolve()]
-    assert calls[0]["nterms"] == 2
-    assert calls[0]["reffreq"] == "1500000000.0Hz"
-    assert calls[1]["merged"] == tmp_path / "visibilities.MS"
+    copied_paths = [
+        ctx.work_dir / "model_entry_01_casa_taylor.tt0.image",
+        ctx.work_dir / "model_entry_01_casa_taylor.tt1.image",
+    ]
+    assert calls[0]["spectral_copy"] == copied_paths
+    assert calls[0]["frequency_hz"] == 1.5e9
+    assert calls[1]["model_paths"] == copied_paths
+    assert calls[1]["nterms"] == 2
+    assert calls[1]["reffreq"] == "1500000000.0Hz"
+    assert calls[2]["merged"] == tmp_path / "visibilities.MS"
     assert ctx.manifest.milestones[-1].name == "image_injection_completed"
 
 

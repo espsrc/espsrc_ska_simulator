@@ -97,10 +97,11 @@ products named `*.model.tt0` and `*.model.tt1`:
 }
 ```
 
-This mode does not convert the model. The CASA image directories are passed
-directly to CASA `ft`. Because CASA image directories are not FITS files, the
-current weblog FITS-model preview is only available for `continuum_i_alpha`
-unless a separate FITS preview product is supplied in a later implementation.
+This mode does not convert the pixel values through FITS for injection. `skasim`
+copies the CASA image directories into the run directory, aligns their
+single-channel spectral coordinate to `reference_frequency_hz`, and passes the
+run-local copies to CASA `ft`. The `tt0` image is also exported to FITS for the
+weblog model preview.
 
 ### `static_stokes_maps`
 
@@ -142,3 +143,8 @@ bash configs/fits_model/run_casa_taylor_model_demos.sh
 
 These are intentionally heavier than the quick smoke configs. Their outputs are
 written under `demo_output/casa_taylor_*`.
+
+If an older run shows a blank LOFAR dirty image, check `skasim_casa_ft.log` for
+`No overlap in frequency between image channels and selected data`. That means
+the run used the original CASA image spectral coordinate rather than the
+run-local aligned copy and should be rerun with the current code.
