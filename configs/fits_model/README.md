@@ -1,8 +1,17 @@
 # FITS Image-Model Smoke Configs
 
-These configs exercise `continuum_i_alpha` image-model injection with the
-smallest practical observation settings. They use the VLA model FITS files in
-`models_for_testing/` and write outputs under `demo_output/`.
+These configs exercise `continuum_i_alpha` image-model injection with compact
+but useful observation settings: 60 seconds and 128 channels. They use the VLA
+model FITS files in `models_for_testing/` and write outputs under
+`demo_output/`.
+
+## Run all demos
+
+From the repository root:
+
+```bash
+bash configs/fits_model/run_fits_model_demos.sh
+```
 
 ## Prepare the alpha map
 

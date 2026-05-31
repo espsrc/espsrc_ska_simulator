@@ -11,8 +11,8 @@
   "observation": {
     "frequency_mhz": 1455.5,
     "bandwidth_mhz": 8.0,
-    "n_channels": 2,
-    "observation_time_s": 30
+    "n_channels": 128,
+    "observation_time_s": 60
   },
   "imaging": {
     "pixels": 256,
