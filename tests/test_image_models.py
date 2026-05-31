@@ -17,8 +17,10 @@ from skasim.image_models import (
     inject_image_models,
     image_model_center,
     merge_model_data_into_data,
+    prepare_casa_taylor_terms,
     run_casa_ft,
     run_casa_importfits,
+    validate_casa_taylor_terms,
     validate_continuum_i_alpha,
     write_image_model_previews,
 )
@@ -246,6 +248,74 @@ def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypat
     assert [call.get("incremental") for call in calls[:2]] == [False, True]
     assert calls[2]["merged"] == tmp_path / "visibilities.MS"
     assert [m.name for m in ctx.manifest.milestones].count("image_model_injected") == 2
+    assert ctx.manifest.milestones[-1].name == "image_injection_completed"
+
+
+def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path):
+    """Existing CASA Taylor-term image directories are used directly."""
+    tt0 = tmp_path / "model.tt0"
+    tt1 = tmp_path / "model.tt1"
+    tt0.mkdir()
+    tt1.mkdir()
+    (tt0 / "table.dat").write_text("table", encoding="utf-8")
+    (tt1 / "table.dat").write_text("table", encoding="utf-8")
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0),
+                "tt1": str(tt1),
+                "reference_frequency_hz": 1.5e9,
+            }
+        ]
+    )
+
+    report = validate_casa_taylor_terms(cfg.models[0])
+    product = prepare_casa_taylor_terms(cfg.models[0])
+
+    assert report["nterms"] == 2
+    assert product.model_paths == [tt0.resolve(), tt1.resolve()]
+    assert product.nterms == 2
+    assert product.reffreq == "1500000000.0Hz"
+
+
+def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
+    """CASA Taylor-term entries are predicted with ft and merged into DATA."""
+    tt0 = tmp_path / "model.tt0"
+    tt1 = tmp_path / "model.tt1"
+    tt0.mkdir()
+    tt1.mkdir()
+    (tt0 / "table.dat").write_text("table", encoding="utf-8")
+    (tt1 / "table.dat").write_text("table", encoding="utf-8")
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0),
+                "tt1": str(tt1),
+                "reference_frequency_hz": 1.5e9,
+            }
+        ],
+        output_dir=str(tmp_path / "run"),
+    )
+    ctx = create_run_context(cfg)
+    calls = []
+
+    monkeypatch.setattr(
+        "skasim.image_models.run_casa_ft",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "skasim.image_models.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": visibility_path}),
+    )
+
+    inject_image_models(ctx, tmp_path / "visibilities.MS")
+
+    assert calls[0]["model_paths"] == [tt0.resolve(), tt1.resolve()]
+    assert calls[0]["nterms"] == 2
+    assert calls[0]["reffreq"] == "1500000000.0Hz"
+    assert calls[1]["merged"] == tmp_path / "visibilities.MS"
     assert ctx.manifest.milestones[-1].name == "image_injection_completed"
 
 

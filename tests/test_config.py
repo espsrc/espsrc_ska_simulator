@@ -6,6 +6,7 @@ import numpy as np
 from pydantic import ValidationError
 
 from skasim.config import (
+    CasaTaylorTermsModelEntry,
     ComponentSkyModelEntry,
     ContinuumIAlphaModelEntry,
     ImgConfig,
@@ -219,6 +220,29 @@ def test_sim_config_accepts_component_catalog_model_entry():
 
     assert isinstance(cfg.models[0], ComponentSkyModelEntry)
     assert cfg.models[0].catalog == "GLEAM"
+    assert cfg.source_flux_jy == []
+
+
+def test_sim_config_accepts_casa_taylor_terms_model_entry(tmp_path):
+    """Existing CASA Taylor-term images can be configured directly."""
+    tt0 = tmp_path / "model.tt0"
+    tt1 = tmp_path / "model.tt1"
+    tt0.mkdir()
+    tt1.mkdir()
+
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0),
+                "tt1": str(tt1),
+                "reference_frequency_hz": 1.5e9,
+            }
+        ]
+    )
+
+    assert isinstance(cfg.models[0], CasaTaylorTermsModelEntry)
+    assert cfg.models[0].reference_frequency_hz == pytest.approx(1.5e9)
     assert cfg.source_flux_jy == []
 
 

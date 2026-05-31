@@ -15,6 +15,7 @@ from astropy.wcs import WCS
 from loguru import logger
 
 from .config import (
+    CasaTaylorTermsModelEntry,
     ComponentSkyModelEntry,
     ContinuumIAlphaModelEntry,
     ModelEntry,
@@ -58,7 +59,14 @@ def image_model_entries(config: SimConfig) -> list[ModelEntry]:
     return [
         entry
         for entry in config.models
-        if isinstance(entry, (ContinuumIAlphaModelEntry, StaticStokesMapsModelEntry))
+        if isinstance(
+            entry,
+            (
+                ContinuumIAlphaModelEntry,
+                CasaTaylorTermsModelEntry,
+                StaticStokesMapsModelEntry,
+            ),
+        )
     ]
 
 
@@ -211,10 +219,14 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
                 "static_stokes_maps is schema-ready, but the CASA backend path is "
                 "planned for the next implementation phase."
             )
-        if not isinstance(entry, ContinuumIAlphaModelEntry):
+        if isinstance(entry, ContinuumIAlphaModelEntry):
+            report = validate_continuum_i_alpha(entry)
+            product = prepare_continuum_i_alpha_for_casa(ctx, entry, index)
+        elif isinstance(entry, CasaTaylorTermsModelEntry):
+            report = validate_casa_taylor_terms(entry)
+            product = prepare_casa_taylor_terms(entry)
+        else:
             continue
-        report = validate_continuum_i_alpha(entry)
-        product = prepare_continuum_i_alpha_for_casa(ctx, entry, index)
         run_casa_ft(
             visibility_path=visibility_path,
             model_paths=product.model_paths,
@@ -250,6 +262,42 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
         "image_injection_completed",
         "completed",
         details={"visibility_path": str(visibility_path), "model_data_merged": True},
+    )
+
+
+def validate_casa_taylor_terms(entry: CasaTaylorTermsModelEntry) -> dict:
+    """Validate an existing CASA Taylor-term image model entry."""
+    model_paths = [
+        Path(path).expanduser().resolve()
+        for path in (entry.tt0, entry.tt1)
+        if path is not None
+    ]
+    if not model_paths:
+        raise ValueError("casa_taylor_terms requires at least tt0.")
+    for path in model_paths:
+        if not path.is_dir():
+            raise ValueError(f"{path} must be a CASA image table directory.")
+        if not (path / "table.dat").exists():
+            raise ValueError(f"{path} does not look like a CASA image table.")
+    return {
+        "model_paths": [str(path) for path in model_paths],
+        "nterms": len(model_paths),
+        "reference_frequency_hz": entry.reference_frequency_hz,
+    }
+
+
+def prepare_casa_taylor_terms(entry: CasaTaylorTermsModelEntry) -> CasaModelProduct:
+    """Use existing CASA Taylor-term image directories directly."""
+    model_paths = [
+        Path(path).expanduser().resolve()
+        for path in (entry.tt0, entry.tt1)
+        if path is not None
+    ]
+    return CasaModelProduct(
+        model_paths=model_paths,
+        nterms=len(model_paths),
+        reffreq=f"{entry.reference_frequency_hz}Hz",
+        intermediates=[],
     )
 
 

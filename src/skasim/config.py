@@ -173,6 +173,24 @@ class ContinuumIAlphaModelEntry(BaseModel):
         return _require_existing_path(value)
 
 
+class CasaTaylorTermsModelEntry(BaseModel):
+    """Existing CASA Taylor-term image model set."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["casa_taylor_terms"]
+    tt0: str
+    tt1: Optional[str] = None
+    reference_frequency_hz: float = Field(gt=0)
+
+    @field_validator("tt0", "tt1")
+    @classmethod
+    def _path_exists(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        return _require_existing_path(value)
+
+
 class StaticStokesMapsModelEntry(BaseModel):
     """Static Stokes map set. Schema-ready for the phase-2 backend path."""
 
@@ -202,6 +220,7 @@ ModelEntry = Annotated[
     Union[
         ComponentSkyModelEntry,
         ContinuumIAlphaModelEntry,
+        CasaTaylorTermsModelEntry,
         StaticStokesMapsModelEntry,
     ],
     Field(discriminator="type"),
