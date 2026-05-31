@@ -57,6 +57,20 @@ Define the minimum validation set for image-based model injection in `skasim` ve
 
 ---
 
+## C2. CASA Taylor terms
+
+### C2.1. Single CASA Taylor-term pair
+- **Input**: one `casa_taylor_terms` model with `tt0` and `tt1`.
+- **Expected result**: workflow passes the existing CASA image tables directly to CASA `ft`, merges `MODEL_DATA` into `DATA`, and records the model paths.
+- **Purpose**: cover prepared CASA image fixtures such as local `*.model.tt0/.tt1` products.
+
+### C2.2. Missing CASA table content
+- **Input**: `casa_taylor_terms` path that exists but is not a CASA image table.
+- **Expected result**: clear validation failure.
+- **Purpose**: avoid passing arbitrary directories into CASA `ft`.
+
+---
+
 ## D. Composite and additive injection
 
 ### D1. Component catalog + `I+alpha`

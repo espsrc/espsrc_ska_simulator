@@ -85,20 +85,52 @@ Version 1 schema. Backend injection follows the continuum implementation.
 
 ---
 
+## 4. `casa_taylor_terms`
+
+### Purpose
+Inject an existing CASA multi-term image model directly.
+
+### Scope
+Version 1 practical fixture/testing mode.
+
+### Required content
+- `tt0`: CASA image table directory for Taylor term 0.
+- `tt1`: optional CASA image table directory for Taylor term 1.
+- `reference_frequency_hz`.
+
+### Expected assumptions
+- The CASA image tables are already backend-ready.
+- The terms are on compatible grids.
+- The reference frequency is the Taylor expansion reference frequency of the model, not necessarily the observing-band centre.
+
+### Injection route
+- CASA `ft` prediction into `MODEL_DATA` using the image table paths directly.
+
+### Validation requirements
+- CASA image table directories exist.
+- Each supplied term has CASA table content.
+- At least `tt0` is supplied.
+
+### Notes
+- This mode is for already-prepared CASA products such as local `*.model.tt0` / `*.model.tt1` fixtures.
+- It does not currently generate a FITS preview for the weblog because the source model is not a FITS image.
+
+---
+
 ## Planned future contracts
 
-### 4. `spectral_cube`
+### 5. `spectral_cube`
 - scope: version 2+
 - expected form: RA-Dec-frequency cube.
 
-### 5. `polarization_cube`
+### 6. `polarization_cube`
 - scope: version 2+
 - expected form: cube containing spectral/polarization structure.
 
-### 6. `rm_or_faraday_model`
+### 7. `rm_or_faraday_model`
 - scope: version 2+
 - expected form to be defined later.
 
-### 7. `dynamic_model`
+### 8. `dynamic_model`
 - scope: version 2+
 - expected to cover time-variable and frequency-variable signals.

@@ -14,6 +14,7 @@ Project owner: user / `skasim` maintainer
 
 Version 1 adds support for:
 - continuum image injection using `I(ν0)` + `alpha(x,y)`, and
+- existing CASA Taylor-term image models, and
 - static polarization map injection using Stokes I/Q/U/V maps,
 
 while preserving the existing component-sky-model path.
@@ -168,7 +169,8 @@ The configuration must allow a run to contain zero or one component sky model an
 ### FR3 — The workflow must support at least two image-based model entry types in v1
 Supported image-based model entry types in v1:
 1. `continuum_i_alpha`
-2. `static_stokes_maps`
+2. `casa_taylor_terms`
+3. `static_stokes_maps`
 
 ### FR4 — `continuum_i_alpha` must be an accepted user-facing model type
 A `continuum_i_alpha` model must accept:
@@ -180,6 +182,9 @@ The workflow may internally convert this model into the format required by the i
 
 ### FR5 — `static_stokes_maps` must be an accepted user-facing model type
 A `static_stokes_maps` model must accept Stokes I/Q/U/V maps defined on a common spatial grid. The initial implementation may allow a subset of these Stokes planes as long as the supplied set is explicit.
+
+### FR5a — `casa_taylor_terms` must accept prepared CASA image terms
+A `casa_taylor_terms` model must accept an existing `tt0` CASA image table, an optional `tt1` CASA image table, and a Taylor reference frequency. These products are already backend-ready and should be passed directly to CASA `ft`.
 
 ### FR6 — Sequential additive injection must be supported
 The workflow must support additive multi-model injection. If more than one image-like model is provided, the predicted visibilities must be added rather than replaced.
@@ -249,6 +254,22 @@ Expected semantics:
 
 Version 1 backend path:
 - helper conversion into the form required by CASA `ft`, then prediction into `MODEL_DATA`.
+
+### Contract D — `casa_taylor_terms`
+Purpose: use existing CASA multi-term image products without converting through FITS.
+
+Accepted content:
+- `tt0`: CASA image table directory,
+- `tt1`: optional CASA image table directory,
+- `reference_frequency_hz`.
+
+Validation:
+- each supplied term exists,
+- each supplied term looks like a CASA image table,
+- at least `tt0` is supplied.
+
+Injection:
+- pass the supplied terms directly to CASA `ft` with `nterms` equal to the number of terms.
 
 ---
 

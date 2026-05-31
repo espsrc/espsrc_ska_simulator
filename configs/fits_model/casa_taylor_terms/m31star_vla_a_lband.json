@@ -1,0 +1,27 @@
+{
+  "telescope": "VLA",
+  "telescope_version": "A",
+  "models": [
+    {
+      "type": "casa_taylor_terms",
+      "tt0": "models_for_testing/Target_M31STAR_EVLA_C_inf_1.model.tt0",
+      "tt1": "models_for_testing/Target_M31STAR_EVLA_C_inf_1.model.tt1",
+      "reference_frequency_hz": 5991892258.150883
+    }
+  ],
+  "center": "00h42m44.32903699s +41d16m08.4208316s",
+  "observation": {
+    "frequency_mhz": 1500.0,
+    "bandwidth_mhz": 1000.0,
+    "n_channels": 1024,
+    "observation_time_s": 600
+  },
+  "imaging": {
+    "pixels": 256,
+    "fov_deg": 0.2,
+    "imager": "oskar-dirty",
+    "uv_coverage": false
+  },
+  "output_dir": "demo_output/casa_taylor_m31star_vla_a_lband",
+  "overwrite": true
+}
