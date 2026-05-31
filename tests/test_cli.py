@@ -1,5 +1,7 @@
 """CLI configuration behavior."""
 
+import json
+
 from skasim import cli
 import skasim.pipeline
 from pydantic import ValidationError
@@ -152,6 +154,36 @@ def test_cli_accepts_catalog_plus_continuum_image_model(tmp_path, monkeypatch):
         "continuum_i_alpha",
     ]
     assert captured[0].models[0].catalog == "MIGHTEE"
+
+
+def test_cli_runs_json_config_file(tmp_path, monkeypatch):
+    """--config loads a JSON SimConfig and runs it directly."""
+    config_path = tmp_path / "run.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "telescope": "VLA",
+                "telescope_version": "C",
+                "catalog": "GLEAM",
+                "observation": {
+                    "frequency_mhz": 1400.0,
+                    "bandwidth_mhz": 8.0,
+                    "n_channels": 2,
+                },
+                "output_dir": str(tmp_path / "out"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    cli.main(["--config", str(config_path)])
+
+    assert captured[0].telescope == "VLA"
+    assert captured[0].telescope_version == "C"
+    assert captured[0].catalog == "GLEAM"
+    assert captured[0].observation.n_channels == 2
 
 
 def test_cli_help_has_single_canonical_surface(capsys):

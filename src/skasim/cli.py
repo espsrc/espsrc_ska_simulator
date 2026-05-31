@@ -8,7 +8,9 @@ warnings.filterwarnings("ignore", message="registration of accessor")
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 import argparse
+import json
 import sys
+from pathlib import Path
 from typing import List, Optional
 
 from .config import ImgConfig, ObsConfig, SimConfig
@@ -40,6 +42,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     p = argparse.ArgumentParser(
         description="SKA simulator: sky model -> visibilities -> image products",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="JSON SimConfig file. CLI simulation flags are ignored when provided.",
     )
 
     sky = p.add_argument_group("sky model source")
@@ -277,6 +285,16 @@ def main(argv: Optional[List[str]] = None) -> None:
             versions = [v.name for v in OSKAR_TELESCOPE_TO_VERSIONS.get(t, [])]
             print(f"  {t:<18} | Accepted versions: {', '.join(versions)}")
         sys.exit(0)
+
+    if args.config is not None:
+        config_path = Path(args.config)
+        with config_path.open("r", encoding="utf-8") as fh:
+            config_data = json.load(fh)
+        config = SimConfig(**config_data)
+        from .pipeline import run
+
+        run(config)
+        return
 
     # map CLI args to SimConfig
     obs = ObsConfig(
