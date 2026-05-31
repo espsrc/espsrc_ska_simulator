@@ -1,7 +1,8 @@
 """Image-model validation and reporting behavior."""
 
-from datetime import datetime, timezone
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from types import ModuleType
 
 import astropy.units as u
@@ -83,6 +84,37 @@ def test_validate_continuum_i_alpha_rejects_shape_mismatch(tmp_path):
 
     with pytest.raises(ValueError, match="matching spatial dimensions"):
         validate_continuum_i_alpha(cfg.models[0])
+
+
+def test_validate_continuum_i_alpha_accepts_real_model_fixture(tmp_path):
+    """Real WSClean model FITS headers are accepted as Jy/pixel image models."""
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "models_for_testing"
+        / "CY4223_L_004_20180322_avg_target_3C320_vla_loop_01-0000-model.fits"
+    )
+    if not fixture.exists():
+        pytest.skip("models_for_testing fixture directory is not present")
+    alpha = tmp_path / "alpha.fits"
+    with fits.open(fixture) as hdul:
+        header = hdul[0].header.copy()
+        header["BUNIT"] = "1"
+        fits.writeto(alpha, np.zeros_like(hdul[0].data), header, overwrite=True)
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "continuum_i_alpha",
+                "stokes_i": str(fixture),
+                "alpha": str(alpha),
+                "reference_frequency_hz": 1.4e9,
+            }
+        ]
+    )
+
+    report = validate_continuum_i_alpha(cfg.models[0])
+
+    assert report["spatial_shape"] == [1600, 1600]
+    assert report["unit"] == "JY/PIXEL"
 
 
 def test_image_model_center_uses_first_model_wcs(tmp_path):
