@@ -403,6 +403,7 @@ def run_casa_ft(
 def run_casa_script(executable: Path, script_path: Path, lines: list[str]) -> None:
     """Write and execute one CASA batch script, surfacing useful failure output."""
     script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log_path = script_path.with_suffix(".log")
     command = [
         str(executable),
         "--nologger",
@@ -412,15 +413,17 @@ def run_casa_script(executable: Path, script_path: Path, lines: list[str]) -> No
         str(script_path),
     ]
     logger.info(f"CASA batch command: {' '.join(command)}")
-    result = subprocess.run(
-        command,
-        cwd=str(script_path.parent),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
+    with log_path.open("w", encoding="utf-8") as log_file:
+        result = subprocess.run(
+            command,
+            cwd=str(script_path.parent),
+            text=True,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
     if result.returncode != 0:
-        tail = "\n".join(result.stdout.splitlines()[-80:])
+        tail = "\n".join(log_path.read_text(encoding="utf-8").splitlines()[-80:])
         raise RuntimeError(
             f"CASA batch command failed with exit code {result.returncode}: "
             f"{script_path}\n{tail}"
