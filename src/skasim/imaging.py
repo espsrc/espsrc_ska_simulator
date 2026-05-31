@@ -43,7 +43,7 @@ def run_dirty_imaging(
         imaging_npixel=config.imaging.pixels,
         imaging_cellsize=imaging_cellsize.to(u.rad).value,
         combine_across_frequencies=True,
-        imaging_phase_centre=center,
+        imaging_phase_centre=center.icrs,
     )
     imager = imager_module.OskarDirtyImager(config=cfg)
     dirty_image = imager.create_dirty_image(vis)
