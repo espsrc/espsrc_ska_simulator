@@ -556,6 +556,23 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
                 }
             break
 
+    # Resolve FITS image-model preview if present
+    fits_model_plots = []
+    for o in manifest.outputs:
+        output_path = o.path if hasattr(o, "path") else o
+        role = getattr(o, "role", None)
+        if role != "fits_model":
+            continue
+        fpath = work_dir / output_path
+        if fpath.exists() and output_path.endswith((".png", ".jpg", ".jpeg")):
+            fits_model_plots.append(
+                {
+                    "path": output_path,
+                    "data": _file_to_base64_data_uri(fpath),
+                    "model_type": o.metadata.get("model_type") if hasattr(o, "metadata") else None,
+                }
+            )
+
     observation_details = _find_milestone_details(manifest, "observation_configured")
     center = None
     if (
@@ -589,6 +606,7 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
         uv_coverage_plot=uv_coverage_plot,
         sky_model_plot=sky_model_plot,
         sky_model_fov_plot=sky_model_fov_plot,
+        fits_model_plots=fits_model_plots,
         observation_summary=_observation_summary(manifest),
         imaging_summary=_imaging_summary(manifest, fov_deg_value, representative_beam),
         imager_parameter_rows=_imager_parameter_rows(manifest, fov_deg_value, center),

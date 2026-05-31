@@ -4,16 +4,16 @@ skasim creates synthetic radio-interferometric observations from sky description
 
 ## Language
 
-**Catalogue**:
-A named or file-backed collection of sky sources used to build a sky model. Built-in catalogues are selected by name, such as `MIGHTEE`, `GLEAM`, or `SKAMid`; `catalogue` is the canonical term and `catalog` may appear only as a CLI spelling alias.
-_Avoid_: Catalog, source database, numeric catalogue ID
+**Catalog**:
+A named or file-backed collection of sky sources used to build a sky model. Built-in catalogs are selected by name, such as `MIGHTEE`, `GLEAM`, or `SKAMid`.
+_Avoid_: Source database, numeric catalog ID
 
 **Sky model**:
-The collection of sky sources that defines what the observation will simulate. It may come from a file, a catalogue, or generated source intensities.
-_Avoid_: Source database, input catalogue
+The collection of sky sources that defines what the observation will simulate. It may come from a file, a catalog, or generated source intensities.
+_Avoid_: Source database, input collection
 
 **Sky model source**:
-One input used to produce a sky model, such as a file, a catalogue, or generated source intensities. Version 0.2 accepts one sky model source per run; later releases may combine multiple sky model sources into one sky model.
+One input used to produce a sky model, such as a file, a catalog, or generated source intensities. Version 0.2 accepts one sky model source per run; later releases may combine multiple sky model sources into one sky model.
 _Avoid_: Model, input
 
 **Source intensity**:
@@ -38,10 +38,10 @@ _Avoid_: WSClean path, cleaner binary
 
 ## Example Dialogue
 
-Dev: "Should this run use a catalogue or inline random sources?"
+Dev: "Should this run use a catalog or inline random sources?"
 
-Domain expert: "Use catalogue 1, the MIGHTEE catalogue, and keep `--catalog` as an alias for users who type the American spelling."
-Correction: for 0.2, say `--catalogue MIGHTEE`; numeric catalogue IDs are not part of the domain language.
+Domain expert: "Use catalog 1, the MIGHTEE catalog."
+Correction: numeric catalog IDs are not part of the domain language.
 
 Dev: "How should cleaned imaging find WSClean on this machine?"
 
@@ -51,7 +51,7 @@ Dev: "Does `--flux-density 1 5 10` describe one polarized source?"
 
 Domain expert: "No, it describes three generated sources with those Stokes-I source intensities."
 
-Dev: "Can one run use a background catalogue and a foreground FITS file?"
+Dev: "Can one run use a background catalog and a foreground FITS file?"
 
 Domain expert: "Not in 0.2; that is multiple sky model sources, which should be possible in a later release."
 

@@ -1,9 +1,17 @@
 """tests/test_config.py"""
 
 import pytest
+from astropy.io import fits
+import numpy as np
 from pydantic import ValidationError
 
-from skasim.config import ImgConfig, ObsConfig, SimConfig
+from skasim.config import (
+    ComponentSkyModelEntry,
+    ContinuumIAlphaModelEntry,
+    ImgConfig,
+    ObsConfig,
+    SimConfig,
+)
 
 # ---------------------------------------------------------------------------
 # ObsConfig
@@ -160,6 +168,7 @@ def test_sim_config_defaults():
     assert cfg.telescope == "SKA1MID"
     assert cfg.telescope_version is None
     assert cfg.sky_file is None
+    assert cfg.models == []
     assert cfg.sky_format == "auto"
     assert cfg.catalog is None
     assert cfg.column_mapping == "0,1,2,3,4,5,6,7,8,9,10,11,12"
@@ -180,6 +189,66 @@ def test_sim_config_defaults():
     assert isinstance(cfg.imaging, ImgConfig)
     assert cfg.observation.frequency_mhz == 700.0
     assert cfg.imaging.pixels == 512
+
+
+def test_sim_config_accepts_continuum_i_alpha_model_entry(tmp_path):
+    """Typed image-model entries are accepted as the multi-model API."""
+    stokes_i = tmp_path / "stokes_i.fits"
+    alpha = tmp_path / "alpha.fits"
+    fits.writeto(stokes_i, np.ones((4, 4)), overwrite=True)
+    fits.writeto(alpha, np.zeros((4, 4)), overwrite=True)
+
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "continuum_i_alpha",
+                "stokes_i": str(stokes_i),
+                "alpha": str(alpha),
+                "reference_frequency_hz": 1.4e9,
+            }
+        ]
+    )
+
+    assert isinstance(cfg.models[0], ContinuumIAlphaModelEntry)
+    assert cfg.source_flux_jy == []
+
+
+def test_sim_config_accepts_component_catalog_model_entry():
+    """Catalog component entries use the canonical catalog spelling."""
+    cfg = SimConfig(models=[{"type": "component_sky_model", "catalog": "gleam"}])
+
+    assert isinstance(cfg.models[0], ComponentSkyModelEntry)
+    assert cfg.models[0].catalog == "GLEAM"
+    assert cfg.source_flux_jy == []
+
+
+def test_sim_config_rejects_two_component_model_entries(tmp_path):
+    """A run may have at most one component sky-model contribution."""
+    component_path = tmp_path / "sources.json"
+    component_path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="at most one component_sky_model"):
+        SimConfig(
+            models=[
+                {"type": "component_sky_model", "path": str(component_path)},
+                {"type": "component_sky_model", "catalog": "MIGHTEE"},
+            ]
+        )
+
+
+def test_component_model_entry_requires_path_or_catalog(tmp_path):
+    """Component entries must identify exactly one source."""
+    component_path = tmp_path / "sources.json"
+    component_path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="exactly one"):
+        ComponentSkyModelEntry(type="component_sky_model")
+    with pytest.raises(ValidationError, match="exactly one"):
+        ComponentSkyModelEntry(
+            type="component_sky_model",
+            path=str(component_path),
+            catalog="MIGHTEE",
+        )
 
 
 def test_sim_config_explicit_telescope_version():

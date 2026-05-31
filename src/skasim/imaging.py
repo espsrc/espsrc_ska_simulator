@@ -261,6 +261,9 @@ def write_fits_preview(
     png_path: Path,
     title: str,
     recenter: tuple[float, float, float] | None = None,
+    scale_factor: float = 1000.0,
+    bunit: str = "mJy/beam",
+    colorbar_label: str = "mJy/beam",
 ) -> None:
     """Write a publication-style PNG preview for a WSClean FITS image, optionally recentered."""
     import matplotlib
@@ -276,7 +279,7 @@ def write_fits_preview(
         while data.ndim > 2:
             data = data[0]
 
-        display_data = data * 1000.0
+        display_data = data * scale_factor
         finite = display_data[np.isfinite(display_data)]
         if finite.size:
             rms = float(np.nanstd(finite))
@@ -289,7 +292,7 @@ def write_fits_preview(
             rms = 0.0
             vmin = vmax = None
 
-        hdu = _make_2d_preview_hdu(display_data, source_hdu.header, bunit="mJy/beam")
+        hdu = _make_2d_preview_hdu(display_data, source_hdu.header, bunit=bunit)
         hdul = fits.HDUList([hdu])
         fig = plt.figure(figsize=(8, 7))
         ffig = aplpy.FITSFigure(hdul, figure=fig)
@@ -317,7 +320,7 @@ def write_fits_preview(
         ffig.axis_labels.set_xtext("RA")
         ffig.axis_labels.set_ytext("Dec")
         ffig.add_colorbar()
-        ffig.colorbar.set_axis_label_text("mJy/beam")
+        ffig.colorbar.set_axis_label_text(colorbar_label)
         ffig.savefig(str(png_path), dpi=150)
         plt.close(fig)
 

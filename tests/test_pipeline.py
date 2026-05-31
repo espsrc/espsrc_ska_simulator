@@ -400,6 +400,26 @@ def test_build_sky_model_named_catalog(tmp_path, monkeypatch, catalog, loader_na
     assert ctx.manifest.milestones[-1].details["format"] == catalog
 
 
+def test_build_sky_model_typed_component_catalog(tmp_path, monkeypatch):
+    """Typed component entries can select a built-in catalog."""
+    fake_sky = SkyModel(np.array([[10.0, 20.0, 1.0]]))
+    monkeypatch.setattr(
+        SkyModel,
+        "get_MIGHTEE_Sky",
+        staticmethod(lambda: fake_sky),
+        raising=False,
+    )
+    config = SimConfig(models=[{"type": "component_sky_model", "catalog": "MIGHTEE"}])
+    ctx = _make_ctx(tmp_path, config)
+
+    sky, center = build_sky_model(ctx, fov=0.2 * u.deg)
+
+    assert sky is fake_sky
+    assert center.ra.value == pytest.approx(10.0)
+    assert ctx.manifest.milestones[-1].details["format"] == "MIGHTEE"
+    assert ctx.manifest.milestones[-1].details["model_entries"] == 1
+
+
 # --------------------------------------------------------------------------- #
 # build_sky_model — invalid configurations
 # --------------------------------------------------------------------------- #

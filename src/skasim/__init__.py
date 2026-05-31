@@ -1,5 +1,19 @@
 """Public Python API for skasim configuration."""
 
-from .config import ImgConfig, ObsConfig, SimConfig
+from .config import (
+    ComponentSkyModelEntry,
+    ContinuumIAlphaModelEntry,
+    ImgConfig,
+    ObsConfig,
+    SimConfig,
+    StaticStokesMapsModelEntry,
+)
 
-__all__ = ["ImgConfig", "ObsConfig", "SimConfig"]
+__all__ = [
+    "ComponentSkyModelEntry",
+    "ContinuumIAlphaModelEntry",
+    "ImgConfig",
+    "ObsConfig",
+    "SimConfig",
+    "StaticStokesMapsModelEntry",
+]
