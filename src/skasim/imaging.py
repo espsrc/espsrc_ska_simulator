@@ -31,8 +31,8 @@ def run_dirty_imaging(
     visibility_path: Path,
     fov: u.Quantity,
     center: SkyCoord,
-    img_config: ImgConfig,       # << NEW
-    sub_dir: Path,               # << NEW — work_dir/{tag}
+    img_config: ImgConfig,  # << NEW
+    sub_dir: Path,  # << NEW — work_dir/{tag}
 ) -> None:
     """produce dirty image via OSKAR."""
     imager_module = require_karabo_module("karabo.imaging.imager_oskar")
@@ -137,14 +137,139 @@ def run_wsclean_command(argv: list[str], work_dir: Path):
     )
 
 
+def wsclean_output_prefix(ctx: RunContext) -> str:
+    """Return the stable WSClean output prefix for this run."""
+    return f"{ctx.work_dir.name}_wsclean"
+
+
 def collect_wsclean_outputs(work_dir: Path, output_prefix: str) -> list[Path]:
     """Collect WSClean FITS outputs for one configured output prefix."""
     return sorted(work_dir.glob(f"{output_prefix}*.fits"))
 
 
-def wsclean_output_prefix(ctx: RunContext) -> str:
-    """Return the stable WSClean output prefix for this run."""
-    return f"{ctx.work_dir.name}_wsclean"
+# --------------------------------------------------------------------------- #
+# UV coverage (shadeMS)
+# --------------------------------------------------------------------------- #
+
+
+def build_shadems_uv_coverage_argv(
+    img_config: ImgConfig,
+    visibility_path: Path,
+    output_dir: Path,
+    png_name: str,
+    title: str,
+) -> list[str]:
+    """Build a shell-free shadeMS argv list for a U/V coverage plot."""
+    canvas_size = str(img_config.uv_coverage_canvas_size)
+    return shlex.split(img_config.shadems_command) + [
+        str(visibility_path),
+        "--xaxis",
+        "u",
+        "--yaxis",
+        "v",
+        "--dir",
+        str(output_dir),
+        "--png",
+        png_name,
+        "--title",
+        title,
+        "--xlabel",
+        "u",
+        "--ylabel",
+        "v",
+        "--xcanvas",
+        canvas_size,
+        "--ycanvas",
+        canvas_size,
+        "--spread-pix",
+        "2",
+        "--no-lim-save",
+    ]
+
+
+def shadems_uv_coverage_env(work_dir: Path) -> dict[str, str]:
+    """Return an environment with writable cache directories for shadeMS imports."""
+    env = os.environ.copy()
+    cache_dir = work_dir / ".cache"
+    mpl_dir = cache_dir / "matplotlib"
+    numba_dir = cache_dir / "numba"
+    mpl_dir.mkdir(parents=True, exist_ok=True)
+    numba_dir.mkdir(parents=True, exist_ok=True)
+    env["MPLCONFIGDIR"] = str(mpl_dir)
+    env["NUMBA_CACHE_DIR"] = str(numba_dir)
+    return env
+
+
+def run_shadems_command(argv: list[str], work_dir: Path):
+    """Run shadeMS with argv, an explicit cwd, and writable cache directories."""
+    return subprocess.run(
+        argv,
+        shell=False,
+        cwd=str(work_dir),
+        env=shadems_uv_coverage_env(work_dir),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def write_uv_coverage_plot(
+    ctx: RunContext, visibility_path: Path, img_config: ImgConfig
+) -> Path:
+    """Generate a shadeMS UV-coverage plot and record it in the run manifest."""
+    run_id = ctx.work_dir.name
+    png_name = f"{run_id}_uvcoverage.png"
+    log_name = f"{run_id}_uvcoverage_shadems.log"
+    png_path = ctx.work_dir / png_name
+    log_path = ctx.work_dir / log_name
+    argv = build_shadems_uv_coverage_argv(
+        img_config=img_config,
+        visibility_path=visibility_path,
+        output_dir=ctx.work_dir,
+        png_name=png_name,
+        title=f"{run_id} uv coverage",
+    )
+
+    try:
+        result = run_shadems_command(argv, ctx.work_dir)
+    except subprocess.CalledProcessError as exc:
+        output = (exc.stdout or "") + (exc.stderr or "")
+        log_path.write_text(output, encoding="utf-8")
+        ctx.manifest.add_output(
+            "log",
+            log_name,
+            role="uv_coverage",
+            metadata={"tool": "shadems", "returncode": exc.returncode},
+        )
+        raise
+
+    log_path.write_text((result.stdout or "") + (result.stderr or ""), encoding="utf-8")
+    if not png_path.exists():
+        raise FileNotFoundError(f"shadeMS did not produce {png_path}")
+
+    ctx.manifest.add_output(
+        "plot",
+        png_name,
+        role="uv_coverage",
+        metadata={
+            "tool": "shadems",
+            "xaxis": "u",
+            "yaxis": "v",
+            "canvas_size": img_config.uv_coverage_canvas_size,
+        },
+    )
+    ctx.manifest.add_output(
+        "log",
+        log_name,
+        role="uv_coverage",
+        metadata={"tool": "shadems"},
+    )
+    return png_path
+
+
+# --------------------------------------------------------------------------- #
+# image previews (FITS -> PNG via APLpy)
+# --------------------------------------------------------------------------- #
 
 
 def write_fits_preview(
@@ -157,9 +282,9 @@ def write_fits_preview(
     import matplotlib
 
     matplotlib.use("Agg", force=True)
-    import matplotlib.pyplot as plt
     import aplpy
     import cmasher as cmr
+    import matplotlib.pyplot as plt
 
     with fits.open(img_path) as source_hdul:
         source_hdu = source_hdul[0]
@@ -212,6 +337,7 @@ def write_fits_preview(
         ffig.savefig(str(png_path), dpi=150)
         plt.close(fig)
 
+
 def _make_2d_preview_hdu(
     data: np.ndarray,
     header: fits.Header,
@@ -259,11 +385,15 @@ def write_sky_model_previews(
         [src.get("minor_axis", 0.0) or 0.0 for src in sources],
         dtype=float,
     )
-    position_angle = np.asarray([src.get("pa", 0.0) or 0.0 for src in sources], dtype=float)
+    position_angle = np.asarray(
+        [src.get("pa", 0.0) or 0.0 for src in sources], dtype=float
+    )
     positive_flux = flux[flux > 0]
     norm = None
     if positive_flux.size:
-        norm = LogNorm(vmin=float(np.nanmin(positive_flux)), vmax=float(np.nanmax(positive_flux)))
+        norm = LogNorm(
+            vmin=float(np.nanmin(positive_flux)), vmax=float(np.nanmax(positive_flux))
+        )
 
     full_name = f"{run_id}_sky_model.png"
     fov_name = f"{run_id}_sky_model_fov.png"
@@ -331,6 +461,8 @@ def _plot_sky_model_sources(
         ax.set_ylim(*ylim)
     else:
         ax.set_ylim(*_padded_limits(dec))
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_box_aspect(1)
 
     compact = _compact_source_mask(major_axis, plot_width_deg)
     resolved = ~compact
@@ -386,7 +518,9 @@ def _plot_sky_model_sources(
     plt.close(fig)
 
 
-def _padded_limits(values: np.ndarray, pad_fraction: float = 0.05) -> tuple[float, float]:
+def _padded_limits(
+    values: np.ndarray, pad_fraction: float = 0.05
+) -> tuple[float, float]:
     """Return finite min/max limits with a small visual padding."""
     finite = values[np.isfinite(values)]
     if finite.size == 0:
@@ -465,8 +599,8 @@ def run_wsclean_imaging(
     ctx: RunContext,
     visibility_path: Path,
     fov: u.Quantity,
-    img_config: ImgConfig,       # << NEW
-    sub_dir: Path,               # << NEW — work_dir/{tag}
+    img_config: ImgConfig,  # << NEW
+    sub_dir: Path,  # << NEW — work_dir/{tag}
     n_channels: int = 1,
 ) -> None:
     """produce cleaned image via external WSClean binary."""
@@ -476,7 +610,11 @@ def run_wsclean_imaging(
 
     output_prefix = f"{img_config.tag}_wsclean"
     argv = build_wsclean_argv(
-        img_config, visibility_path, fov, output_prefix=output_prefix, n_channels=n_channels
+        img_config,
+        visibility_path,
+        fov,
+        output_prefix=output_prefix,
+        n_channels=n_channels,
     )
     logger.info(f"WSClean command: {argv}")
 

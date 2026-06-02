@@ -17,9 +17,9 @@ from astropy.coordinates import SkyCoord
 from loguru import logger
 
 from .config import SimConfig
-from .imaging import run_dirty_imaging, run_wsclean_imaging
-from .manifest import RunContext, create_run_context
+from .imaging import run_dirty_imaging, run_wsclean_imaging, write_uv_coverage_plot
 from .loaders import FitsCatalogLoader
+from .manifest import RunContext, create_run_context
 from .runtime import require_karabo_module
 from .sky import SkyModel, Source
 from .utils import get_diameter
@@ -170,12 +170,9 @@ def _load_sky_from_file(
 
     # fits table or image
     if ext in (".fits", ".fit"):
-        return _load_sky_from_fits(
-            fpath, column_mapping, flux_scale, frequency
-        )
+        return _load_sky_from_fits(fpath, column_mapping, flux_scale, frequency)
 
     raise ValueError(f"Unsupported sky-file extension: {ext}")
-
 
 
 def _load_sky_from_fits(
@@ -330,9 +327,7 @@ def build_sky_model(
     has_polarization = any(
         value != 0.0 for values in (stokes_q, stokes_u, stokes_v) for value in values
     )
-    arr = np.array(
-        [s.to_sky_model(reduced_form=not has_polarization) for s in sources]
-    )
+    arr = np.array([s.to_sky_model(reduced_form=not has_polarization) for s in sources])
     sky_model.add_point_sources(arr)
     center = sky_model.get_center()
     ctx.add_milestone(
@@ -468,9 +463,9 @@ def run_simulation(
 
 def run(config: SimConfig) -> None:
     """Execute the full simulation pipeline from a SimConfig."""
-    from .weblog import render_weblog
-
     import matplotlib
+
+    from .weblog import render_weblog
 
     matplotlib.use("Agg", force=True)
 
@@ -487,7 +482,10 @@ def run(config: SimConfig) -> None:
         logger.info(f"Imager(s) : {', '.join(img.imager for img in config.imaging)}")
 
         telescope = build_telescope(ctx)
-        telescope_png = ctx.work_dir / f"{ctx.work_dir.name}_{config.telescope}_{config.telescope_version or ''}_telescope.png"
+        telescope_png = (
+            ctx.work_dir
+            / f"{ctx.work_dir.name}_{config.telescope}_{config.telescope_version or ''}_telescope.png"
+        )
         try:
             telescope.plot_telescope(file=str(telescope_png))
         finally:
@@ -522,7 +520,9 @@ def run(config: SimConfig) -> None:
             logger.warning(f"Sky model previews failed: {exc}")
             logger.exception("Sky model preview traceback")
 
-        observation, _, bandwidth, n_channels, delta_freq, start_freq = build_observation(ctx, center, telescope)
+        observation, _, bandwidth, n_channels, delta_freq, start_freq = (
+            build_observation(ctx, center, telescope)
+        )
         logger.info(f"StartFreq : {start_freq.to(u.MHz).value:.3f} MHz")
         logger.info(f"DeltaFreq : {delta_freq.to(u.MHz).value:.3f} MHz")
         logger.info(f"N channels: {n_channels}")
@@ -532,10 +532,36 @@ def run(config: SimConfig) -> None:
         t_phase_a = time.time()
         try:
             visibility_path = run_simulation(ctx, telescope, observation, sky_model)
-            ctx.add_milestone("simulation_completed", "completed", elapsed_s=time.time() - t_phase_a)
+            ctx.add_milestone(
+                "simulation_completed", "completed", elapsed_s=time.time() - t_phase_a
+            )
         except Exception as exc:
-            ctx.add_milestone("simulation_failed", "failed", elapsed_s=time.time() - t_phase_a, details={"error": str(exc)})
+            ctx.add_milestone(
+                "simulation_failed",
+                "failed",
+                elapsed_s=time.time() - t_phase_a,
+                details={"error": str(exc)},
+            )
             raise
+
+        # UV coverage (shadeMS) — once per run, using first imaging config
+        if config.imaging[0].uv_coverage:
+            ctx.add_milestone("uv_coverage_started", "started")
+            try:
+                uv_coverage_path = write_uv_coverage_plot(
+                    ctx, visibility_path, config.imaging[0]
+                )
+                ctx.add_milestone(
+                    "uv_coverage_completed",
+                    "completed",
+                    details={"path": str(uv_coverage_path.relative_to(ctx.work_dir))},
+                )
+            except Exception:
+                ctx.add_milestone(
+                    "uv_coverage_failed",
+                    "failed",
+                )
+                logger.exception("UV coverage plot failed")
 
         # phase 2: batch imaging
         for img_config in config.imaging:
@@ -549,9 +575,18 @@ def run(config: SimConfig) -> None:
             t_b = time.time()
             try:
                 if img_config.imager == "oskar-dirty":
-                    run_dirty_imaging(ctx, visibility_path, fov_i, center, img_config, sub_dir)
+                    run_dirty_imaging(
+                        ctx, visibility_path, fov_i, center, img_config, sub_dir
+                    )
                 else:
-                    run_wsclean_imaging(ctx, visibility_path, fov_i, img_config, sub_dir, n_channels=config.observation.n_channels or 1)
+                    run_wsclean_imaging(
+                        ctx,
+                        visibility_path,
+                        fov_i,
+                        img_config,
+                        sub_dir,
+                        n_channels=config.observation.n_channels or 1,
+                    )
                 ctx.add_milestone(
                     f"{milestone_prefix}_completed",
                     "completed",
@@ -563,7 +598,11 @@ def run(config: SimConfig) -> None:
                     f"{milestone_prefix}_failed",
                     "failed",
                     elapsed_s=time.time() - t_b,
-                    details={"error": str(exc), "tag": tag, "imager": img_config.imager},
+                    details={
+                        "error": str(exc),
+                        "tag": tag,
+                        "imager": img_config.imager,
+                    },
                 )
                 raise
 

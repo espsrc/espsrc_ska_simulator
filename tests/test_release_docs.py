@@ -19,7 +19,7 @@ def test_installation_docs_describe_pip_and_conda_paths():
     text = (REPO_ROOT / "docs/installation.rst").read_text(encoding="utf-8")
 
     assert "pip-only" in text
-    assert "conda create -y -n skasim python=3.9" in text
+    assert "conda create -y -n skasim python=3.10" in text
     assert 'karabo-pipeline "cuda-version=11.7"' in text
     assert "conda run -n skasim pip install -e ." in text
     assert "import karabo, oskar" in text
@@ -27,9 +27,11 @@ def test_installation_docs_describe_pip_and_conda_paths():
     assert "Karabo extra" not in text
     assert "--wsclean-command" in text
     assert (
-        "singularity exec /mnt/software/containers/wsclean_3.4_idg_dysco_everybeam.sif wsclean"
+        "singularity exec /mnt/software/containers/wsclean-3.10-dysco.sif wsclean"
         in text
     )
+    assert "shadeMS" in text
+    assert "shadems" in text.lower()
     assert "smoke_mightee_wsclean_quick" in text
     assert "example" in text.lower()
 
@@ -55,6 +57,7 @@ def test_smoke_docs_include_named_catalog_and_fits_shapes():
     text = (REPO_ROOT / "docs/installation.rst").read_text(encoding="utf-8")
     assert "smoke_mightee_wsclean_quick" in text
     assert "visibilities.MS" in text
+    assert "shadeMS UV-coverage" in text
     assert "WSClean FITS products" in text
     assert "PNG previews" in text
     assert "run_manifest.json" in text

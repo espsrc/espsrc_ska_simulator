@@ -17,12 +17,15 @@ from skasim.imaging import (
     _padded_limits,
     _sky_model_ellipses,
     _sky_model_position_angle,
+    build_shadems_uv_coverage_argv,
     build_wsclean_argv,
     collect_wsclean_outputs,
     run_wsclean_command,
-    wsclean_output_prefix,
+    shadems_uv_coverage_env,
     write_fits_preview,
     write_sky_model_previews,
+    write_uv_coverage_plot,
+    wsclean_output_prefix,
 )
 from skasim.manifest import create_run_context
 
@@ -181,8 +184,38 @@ def test_write_sky_model_previews_writes_full_and_fov_pngs(tmp_path):
     sky_model = SkyModel(
         np.array(
             [
-                [150.0, 2.0, 1.0, 0.0, 0.0, 0.0, 700e6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [150.1, 2.1, 0.5, 0.0, 0.0, 0.0, 700e6, 0.0, 0.0, 4.0, 2.0, 0.0, 0.0, 0.0],
+                [
+                    150.0,
+                    2.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    700e6,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+                [
+                    150.1,
+                    2.1,
+                    0.5,
+                    0.0,
+                    0.0,
+                    0.0,
+                    700e6,
+                    0.0,
+                    0.0,
+                    4.0,
+                    2.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
             ]
         )
     )
@@ -245,7 +278,9 @@ def test_flux_marker_sizes_scale_with_flux_density():
 
 def test_reference_catalog_generator_writes_ds9_regions(tmp_path):
     """Reference JSON catalog generation has a matching DS9 region writer."""
-    script = Path(__file__).resolve().parents[1] / "scripts" / "generate_gaussian_catalog.py"
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "generate_gaussian_catalog.py"
+    )
     spec = importlib.util.spec_from_file_location("generate_gaussian_catalog", script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -272,9 +307,13 @@ def test_reference_catalog_generator_writes_ds9_regions(tmp_path):
     assert "point(150.0000000000,2.0000000000) # point=cross 8" in text
 
 
-def test_reference_catalog_generator_uses_broad_demo_distributions(tmp_path, monkeypatch):
+def test_reference_catalog_generator_uses_broad_demo_distributions(
+    tmp_path, monkeypatch
+):
     """Reference catalog fluxes and sizes exercise compact, faint, and extended sources."""
-    script = Path(__file__).resolve().parents[1] / "scripts" / "generate_gaussian_catalog.py"
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "generate_gaussian_catalog.py"
+    )
     spec = importlib.util.spec_from_file_location("generate_gaussian_catalog", script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -284,10 +323,14 @@ def test_reference_catalog_generator_uses_broad_demo_distributions(tmp_path, mon
 
     import json
 
-    sources = json.loads((tmp_path / "demo_output" / "reference_gaussian_catalog.json").read_text())
+    sources = json.loads(
+        (tmp_path / "demo_output" / "reference_gaussian_catalog.json").read_text()
+    )
     fluxes = np.array([source["I"] for source in sources])
     major_axes = np.array([source["major_axis"] for source in sources])
-    axis_ratios = np.array([source["minor_axis"] / source["major_axis"] for source in sources])
+    axis_ratios = np.array(
+        [source["minor_axis"] / source["major_axis"] for source in sources]
+    )
     position_angles = np.array([source["pa"] for source in sources])
     spectral_indices = np.array([source["spec_index"] for source in sources])
 
@@ -331,9 +374,7 @@ def test_padded_limits_use_source_coordinates():
     assert upper > 150.5
 
 
-def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
-    tmp_path, monkeypatch
-):
+def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(tmp_path, monkeypatch):
     """WSClean imaging records only stable outputs for the current prefix."""
     from skasim.imaging import run_wsclean_imaging
 
@@ -351,7 +392,9 @@ def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
             return SimpleNamespace(TMP_PREFIX_CUSTOM="tmp", TMP_PURPOSE_CUSTOM="test")
         if module_name == "karabo.util.file_handler":
             return SimpleNamespace(
-                FileHandler=lambda: SimpleNamespace(get_tmp_dir=lambda **kwargs: tmp_path)
+                FileHandler=lambda: SimpleNamespace(
+                    get_tmp_dir=lambda **kwargs: tmp_path
+                )
             )
         raise AssertionError(module_name)
 
@@ -385,7 +428,9 @@ def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
     ctx = create_run_context(config)
 
     run_wsclean_imaging(
-        ctx, ctx.visibility_path, 0.2 * u.deg,
+        ctx,
+        ctx.visibility_path,
+        0.2 * u.deg,
         img_config=config.imaging[0],
         sub_dir=ctx.work_dir / config.imaging[0].tag,
     )
@@ -417,7 +462,9 @@ def test_run_wsclean_imaging_cleanup_keeps_run_scoped_outputs(tmp_path, monkeypa
             return SimpleNamespace(TMP_PREFIX_CUSTOM="tmp", TMP_PURPOSE_CUSTOM="test")
         if module_name == "karabo.util.file_handler":
             return SimpleNamespace(
-                FileHandler=lambda: SimpleNamespace(get_tmp_dir=lambda **kwargs: tmp_path)
+                FileHandler=lambda: SimpleNamespace(
+                    get_tmp_dir=lambda **kwargs: tmp_path
+                )
             )
         raise AssertionError(module_name)
 
@@ -448,7 +495,9 @@ def test_run_wsclean_imaging_cleanup_keeps_run_scoped_outputs(tmp_path, monkeypa
     ctx = create_run_context(config)
 
     run_wsclean_imaging(
-        ctx, ctx.visibility_path, 0.2 * u.deg,
+        ctx,
+        ctx.visibility_path,
+        0.2 * u.deg,
         img_config=config.imaging[0],
         sub_dir=ctx.work_dir / config.imaging[0].tag,
     )
@@ -457,3 +506,71 @@ def test_run_wsclean_imaging_cleanup_keeps_run_scoped_outputs(tmp_path, monkeypa
     output_paths = [output.path for output in ctx.manifest.outputs]
     assert f"default/{prefix}-MFS-image.fits" in output_paths
     assert not (ctx.work_dir / "default" / "wsclean-0000-temp.fits").exists()
+
+
+def test_build_shadems_uv_coverage_argv_uses_verified_configuration(tmp_path):
+    """shadeMS UV coverage uses U/V axes and a square canvas."""
+    img_config = ImgConfig(
+        shadems_command="python -m shade_ms",
+        uv_coverage_canvas_size=600,
+    )
+
+    argv = build_shadems_uv_coverage_argv(
+        img_config=img_config,
+        visibility_path=tmp_path / "visibilities.MS",
+        output_dir=tmp_path,
+        png_name="run_uvcoverage.png",
+        title="run uv coverage",
+    )
+
+    assert argv[:3] == ["python", "-m", "shade_ms"]
+    assert "--xaxis" in argv
+    assert argv[argv.index("--xaxis") + 1] == "u"
+    assert "--yaxis" in argv
+    assert argv[argv.index("--yaxis") + 1] == "v"
+    assert argv[argv.index("--xcanvas") + 1] == "600"
+    assert argv[argv.index("--ycanvas") + 1] == "600"
+    assert argv[argv.index("--spread-pix") + 1] == "2"
+    assert "--no-lim-save" in argv
+
+
+def test_shadems_uv_coverage_env_uses_writable_cache_dirs(tmp_path):
+    """shadeMS receives writable Matplotlib and Numba cache directories."""
+    env = shadems_uv_coverage_env(tmp_path)
+
+    assert Path(env["MPLCONFIGDIR"]).is_dir()
+    assert Path(env["NUMBA_CACHE_DIR"]).is_dir()
+    assert Path(env["MPLCONFIGDIR"]).parent.parent == tmp_path
+    assert Path(env["NUMBA_CACHE_DIR"]).parent.parent == tmp_path
+
+
+def test_write_uv_coverage_plot_records_manifest_outputs(tmp_path, monkeypatch):
+    """shadeMS plot generation records both PNG and command log outputs."""
+    config = SimConfig(output_dir=str(tmp_path / "run"))
+    ctx = create_run_context(config)
+    visibility_path = ctx.work_dir / "visibilities.MS"
+    visibility_path.mkdir()
+
+    def fake_run(argv, work_dir):
+        (work_dir / "run_uvcoverage.png").write_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+            b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+            b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+
+        return SimpleNamespace(stdout="shadeMS ok\n", stderr="")
+
+    monkeypatch.setattr("skasim.imaging.run_shadems_command", fake_run)
+
+    png_path = write_uv_coverage_plot(ctx, visibility_path, config.imaging[0])
+
+    assert png_path == ctx.work_dir / "run_uvcoverage.png"
+    uv_outputs = [
+        output for output in ctx.manifest.outputs if output.role == "uv_coverage"
+    ]
+    assert [output.kind for output in uv_outputs] == ["plot", "log"]
+    assert uv_outputs[0].path == "run_uvcoverage.png"
+    assert uv_outputs[0].metadata["tool"] == "shadems"
+    assert (ctx.work_dir / "run_uvcoverage_shadems.log").read_text(
+        encoding="utf-8"
+    ) == "shadeMS ok\n"

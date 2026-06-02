@@ -39,7 +39,12 @@ def _find_image_outputs(manifest: RunManifest, work_dir: Path) -> list[dict]:
         output_path = o.path if hasattr(o, "path") else o
         if "telescope" in output_path.lower() or o.role == "telescope":
             continue
-        if "sky_model" in output_path.lower() or o.role in ("sky_model", "sky_model_fov"):
+        if o.role == "uv_coverage":
+            continue
+        if "sky_model" in output_path.lower() or o.role in (
+            "sky_model",
+            "sky_model_fov",
+        ):
             continue
         if not output_path.endswith((".png", ".jpg", ".jpeg")):
             continue
@@ -116,7 +121,11 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
             )
         product["beam"] = _science_product_beam(product)
 
-    return [product for product in products.values() if any(product.get(k) for k in ("model", "clean", "residual", "dirty"))]
+    return [
+        product
+        for product in products.values()
+        if any(product.get(k) for k in ("model", "clean", "residual", "dirty"))
+    ]
 
 
 def _science_product_beam(product: dict) -> dict | None:
@@ -209,7 +218,9 @@ def _imaging_summary_for_block(
         "image_size": f"{img_config.pixels} x {img_config.pixels}",
         "fov_deg": _format_float(fov_deg, 4) if fov_deg is not None else None,
         "pixel_size_arcsec": (
-            _format_float(pixel_size_arcsec, 4) if pixel_size_arcsec is not None else None
+            _format_float(pixel_size_arcsec, 4)
+            if pixel_size_arcsec is not None
+            else None
         ),
         "beam": _format_beam(beam),
     }
@@ -325,14 +336,21 @@ def _build_imaging_tabs(
                 beam = p["beam"]
                 break
 
-        tabs.append({
-            "tag": tag,
-            "imaging_summary": _imaging_summary_for_block(img_config, fov_deg, beam),
-            "imager_parameter_rows": _imager_parameter_rows_for_block(
-                img_config, manifest, fov_deg, center,
-            ),
-            "products": tag_products,
-        })
+        tabs.append(
+            {
+                "tag": tag,
+                "imaging_summary": _imaging_summary_for_block(
+                    img_config, fov_deg, beam
+                ),
+                "imager_parameter_rows": _imager_parameter_rows_for_block(
+                    img_config,
+                    manifest,
+                    fov_deg,
+                    center,
+                ),
+                "products": tag_products,
+            }
+        )
 
     return tabs
 
@@ -510,10 +528,14 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
 
     # aggregate imaging duration across all tags
     imaging_starts = [
-        m.timestamp_utc for m in manifest.milestones if m.name.endswith("_started") and m.name.startswith("imaging_")
+        m.timestamp_utc
+        for m in manifest.milestones
+        if m.name.endswith("_started") and m.name.startswith("imaging_")
     ]
     imaging_ends = [
-        m.timestamp_utc for m in manifest.milestones if m.name.endswith("_completed") and m.name.startswith("imaging_")
+        m.timestamp_utc
+        for m in manifest.milestones
+        if m.name.endswith("_completed") and m.name.startswith("imaging_")
     ]
     imaging_duration = None
     if imaging_starts and imaging_ends:
@@ -521,9 +543,12 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
 
     # Derived telescope properties
     from .utils import get_diameter
+
     dish_diameter = None
     derived_fov = None
-    fov_deg_value = manifest.config.imaging[0].fov_deg if manifest.config.imaging else None
+    fov_deg_value = (
+        manifest.config.imaging[0].fov_deg if manifest.config.imaging else None
+    )
     telescope_name = manifest.config.telescope
     freq_mhz = manifest.config.observation.frequency_mhz
 
@@ -551,21 +576,37 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             if fpath.exists():
                 telescope_plot = {
                     "path": output_path,
-                    "data": _file_to_base64_data_uri(fpath)
+                    "data": _file_to_base64_data_uri(fpath),
                 }
             break
+
+    # Resolve UV coverage plot if present
+    uv_coverage_plot = None
+    for o in manifest.outputs:
+        output_path = o.path if hasattr(o, "path") else o
+        role = getattr(o, "role", None)
+        if role == "uv_coverage" or "uvcoverage" in output_path.lower():
+            fpath = work_dir / output_path
+            if fpath.exists() and output_path.endswith((".png", ".jpg", ".jpeg")):
+                uv_coverage_plot = {
+                    "path": output_path,
+                    "data": _file_to_base64_data_uri(fpath),
+                }
+                break
 
     # Resolve sky model plot if present
     sky_model_plot = None
     for o in manifest.outputs:
         output_path = o.path if hasattr(o, "path") else o
         role = getattr(o, "role", None)
-        if role == "sky_model" or ("sky_model" in output_path.lower() and "_fov" not in output_path.lower()):
+        if role == "sky_model" or (
+            "sky_model" in output_path.lower() and "_fov" not in output_path.lower()
+        ):
             fpath = work_dir / output_path
             if fpath.exists():
                 sky_model_plot = {
                     "path": output_path,
-                    "data": _file_to_base64_data_uri(fpath)
+                    "data": _file_to_base64_data_uri(fpath),
                 }
             break
 
@@ -574,12 +615,14 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
     for o in manifest.outputs:
         output_path = o.path if hasattr(o, "path") else o
         role = getattr(o, "role", None)
-        if role == "sky_model_fov" or ("sky_model" in output_path.lower() and "_fov" in output_path.lower()):
+        if role == "sky_model_fov" or (
+            "sky_model" in output_path.lower() and "_fov" in output_path.lower()
+        ):
             fpath = work_dir / output_path
             if fpath.exists():
                 sky_model_fov_plot = {
                     "path": output_path,
-                    "data": _file_to_base64_data_uri(fpath)
+                    "data": _file_to_base64_data_uri(fpath),
                 }
             break
 
@@ -596,7 +639,10 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
 
     science_products = _find_science_products(manifest, work_dir)
     imaging_tabs = _build_imaging_tabs(
-        manifest, science_products, fov_deg_value, center,
+        manifest,
+        science_products,
+        fov_deg_value,
+        center,
     )
 
     html = template.render(
@@ -611,6 +657,7 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
         images=_find_image_outputs(manifest, work_dir),
         imaging_tabs=imaging_tabs,
         telescope_plot=telescope_plot,
+        uv_coverage_plot=uv_coverage_plot,
         sky_model_plot=sky_model_plot,
         sky_model_fov_plot=sky_model_fov_plot,
         observation_summary=_observation_summary(manifest),

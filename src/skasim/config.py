@@ -87,6 +87,11 @@ class ImgConfig(BaseModel):
     wsclean_command: str = "wsclean"
     clean_iterations: int = 5000
 
+    # shadeMS UV coverage
+    uv_coverage: bool = True
+    shadems_command: str = "shadems"
+    uv_coverage_canvas_size: int = 600
+
     @field_validator("pixels")
     @classmethod
     def _min_pixels(cls, v: int) -> int:
@@ -100,8 +105,15 @@ class ImgConfig(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("tag must not be empty")
-        if any(c in v for c in [' ', '/', '\\', ':', '*', '?', '"', '<', '>', '|']):
+        if any(c in v for c in [" ", "/", "\\", ":", "*", "?", '"', "<", ">", "|"]):
             raise ValueError("tag must not contain whitespace or path-special chars")
+        return v
+
+    @field_validator("uv_coverage_canvas_size")
+    @classmethod
+    def _positive_uv_coverage_canvas_size(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("uv_coverage_canvas_size must be >= 1")
         return v
 
 
@@ -166,21 +178,18 @@ class SimConfig(BaseModel):
     def _reject_generated_intensities_with_explicit_source(cls, data):
         if not isinstance(data, dict):
             return data
-        if (
-            any(
-                data.get(field) not in (None, [])
-                for field in (
-                    "source_flux_jy",
-                    "stokes_q_jy",
-                    "stokes_u_jy",
-                    "stokes_v_jy",
-                )
+        if any(
+            data.get(field) not in (None, [])
+            for field in (
+                "source_flux_jy",
+                "stokes_q_jy",
+                "stokes_u_jy",
+                "stokes_v_jy",
             )
-            and (
-                data.get("sky_file") is not None
-                or data.get("catalog") is not None
-                or data.get("fits_image") is not None
-            )
+        ) and (
+            data.get("sky_file") is not None
+            or data.get("catalog") is not None
+            or data.get("fits_image") is not None
         ):
             raise ValueError(
                 "Generated source flux and polarization flags are only valid in "
@@ -219,7 +228,9 @@ class SimConfig(BaseModel):
             self.stokes_u_jy = None
             self.stokes_v_jy = None
         elif not self.source_flux_jy:
-            raise ValueError("Generated source mode requires at least one flux density.")
+            raise ValueError(
+                "Generated source mode requires at least one flux density."
+            )
         else:
             n_sources = len(self.source_flux_jy)
             for field_name in ("stokes_q_jy", "stokes_u_jy", "stokes_v_jy"):

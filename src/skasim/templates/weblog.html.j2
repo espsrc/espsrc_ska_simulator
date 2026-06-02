@@ -154,6 +154,14 @@
         </a>
       </div>
       {% endif %}
+      {% if uv_coverage_plot %}
+      <div class="plot-container">
+        <div class="plot-title">UV Coverage</div>
+        <a href="{{ uv_coverage_plot.path }}" target="_blank" rel="noopener">
+          <img src="{{ uv_coverage_plot.data }}" alt="UV coverage">
+        </a>
+      </div>
+      {% endif %}
     </div>
 
 

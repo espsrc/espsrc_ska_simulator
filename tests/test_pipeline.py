@@ -13,7 +13,6 @@ from astropy.coordinates import SkyCoord
 
 from skasim.config import ImgConfig, ObsConfig, SimConfig
 from skasim.manifest import create_run_context
-from skasim.sky import SkyModel
 from skasim.pipeline import (
     _load_sky_from_file,
     _load_sky_from_fits,
@@ -24,6 +23,7 @@ from skasim.pipeline import (
     run_simulation,
     source_ref_get_best_observation_time,
 )
+from skasim.sky import SkyModel
 
 
 class _FakeTelescope:
@@ -33,6 +33,7 @@ class _FakeTelescope:
 
 class _FakeVersions(Enum):
     SKA_OST_ARRAY_CONFIG_2_3_1 = "ska-ost-array-config-2.3.1"
+
 
 # --------------------------------------------------------------------------- #
 # telescope
@@ -198,6 +199,7 @@ def test_create_run_context_no_prefix_uses_timestamp(tmp_path):
 # helpers for JSON fixture
 # --------------------------------------------------------------------------- #
 
+
 def _make_ctx(tmp_path, config):
     """Build a RunContext inside tmp_path for tests that need one."""
     old_cwd = os.getcwd()
@@ -207,6 +209,7 @@ def _make_ctx(tmp_path, config):
         return ctx
     finally:
         os.chdir(old_cwd)
+
 
 def _single_source_json():
     return {
@@ -296,7 +299,10 @@ def test_load_sky_from_file_unknown_extension():
 def test_load_sky_from_file_empty_json_raises():
     """An empty JSON array raises ValueError about no sources."""
     mopen = mock_open(read_data="[]")
-    with patch("builtins.open", mopen), pytest.raises(ValueError, match="No sources found in JSON"):
+    with (
+        patch("builtins.open", mopen),
+        pytest.raises(ValueError, match="No sources found in JSON"),
+    ):
         _load_sky_from_file("empty.json")
 
 
@@ -436,8 +442,12 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
         called = []
 
         monkeypatch.setattr(pipeline, "build_telescope", lambda ctx: _FakeTelescope())
-        monkeypatch.setattr(pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg)
-        monkeypatch.setattr(pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center))
+        monkeypatch.setattr(
+            pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg
+        )
+        monkeypatch.setattr(
+            pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center)
+        )
         monkeypatch.setattr(
             pipeline,
             "build_observation",
@@ -465,6 +475,13 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
             "run_wsclean_imaging",
             lambda *args, **kwargs: called.append("wsclean"),
         )
+        monkeypatch.setattr(
+            pipeline,
+            "write_uv_coverage_plot",
+            lambda ctx, visibility_path, img_config: (
+                called.append("uv") or (ctx.work_dir / "uv.png")
+            ),
+        )
 
         config = SimConfig(
             output_dir="imager_run",
@@ -474,19 +491,19 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
         pipeline.run(config)
 
         manifest = json.loads(
-            (tmp_path / "imager_run" / "run_manifest.json").read_text(
-                encoding="utf-8"
-            )
+            (tmp_path / "imager_run" / "run_manifest.json").read_text(encoding="utf-8")
         )
     finally:
         os.chdir(old_cwd)
 
-    assert called == ["wsclean"]
+    assert called == ["uv", "wsclean"]
     assert manifest["config"]["imaging"][0]["imager"] == "wsclean"
     assert (tmp_path / "imager_run" / "weblog.html").exists()
     assert any(output["kind"] == "weblog" for output in manifest["outputs"])
     imaging_done = [
-        item for item in manifest["milestones"] if item["name"] == "imaging_default_completed"
+        item
+        for item in manifest["milestones"]
+        if item["name"] == "imaging_default_completed"
     ][0]
     assert imaging_done["details"]["imager"] == "wsclean"
 
@@ -539,7 +556,9 @@ def test_run_records_failure_milestone_details_as_dict(tmp_path, monkeypatch):
             "build_telescope",
             lambda ctx: _FakeTelescope(),
         )
-        monkeypatch.setattr(pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg)
+        monkeypatch.setattr(
+            pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg
+        )
         monkeypatch.setattr(
             pipeline,
             "build_sky_model",
@@ -588,6 +607,7 @@ def test_run_records_failure_milestone_details_as_dict(tmp_path, monkeypatch):
 
 def test_run_simulation_does_not_rebuild_observation(tmp_path, monkeypatch):
     """Simulation uses the already-built observation instead of duplicating setup."""
+
     class FakeInterferometerSimulation:
         params = None
         run_args = None
@@ -627,7 +647,10 @@ def test_run_simulation_does_not_rebuild_observation(tmp_path, monkeypatch):
 # batch imaging
 # --------------------------------------------------------------------------- #
 
-def test_run_batch_imaging_creates_subdirs_and_calls_both_imagers(tmp_path, monkeypatch):
+
+def test_run_batch_imaging_creates_subdirs_and_calls_both_imagers(
+    tmp_path, monkeypatch
+):
     """Multiple imaging blocks each get their own sub-directory and imager call."""
     import skasim.pipeline as pipeline
 
@@ -640,13 +663,22 @@ def test_run_batch_imaging_creates_subdirs_and_calls_both_imagers(tmp_path, monk
         called = []
 
         monkeypatch.setattr(pipeline, "build_telescope", lambda ctx: _FakeTelescope())
-        monkeypatch.setattr(pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg)
-        monkeypatch.setattr(pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center))
+        monkeypatch.setattr(
+            pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg
+        )
+        monkeypatch.setattr(
+            pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center)
+        )
         monkeypatch.setattr(
             pipeline,
             "build_observation",
             lambda ctx, center, telescope: (
-                object(), 700 * u.MHz, 100 * u.MHz, 8, 12.5 * u.MHz, 650 * u.MHz,
+                object(),
+                700 * u.MHz,
+                100 * u.MHz,
+                8,
+                12.5 * u.MHz,
+                650 * u.MHz,
             ),
         )
         monkeypatch.setattr(
@@ -657,12 +689,16 @@ def test_run_batch_imaging_creates_subdirs_and_calls_both_imagers(tmp_path, monk
         monkeypatch.setattr(
             pipeline,
             "run_dirty_imaging",
-            lambda ctx, vis_path, fov, center, img_config, sub_dir: called.append(("dirty", img_config.tag, str(sub_dir))),
+            lambda ctx, vis_path, fov, center, img_config, sub_dir: called.append(
+                ("dirty", img_config.tag, str(sub_dir))
+            ),
         )
         monkeypatch.setattr(
             pipeline,
             "run_wsclean_imaging",
-            lambda ctx, vis_path, fov, img_config, sub_dir, n_channels=1: called.append(("wsclean", img_config.tag, str(sub_dir))),
+            lambda ctx, vis_path, fov, img_config, sub_dir, n_channels=1: called.append(
+                ("wsclean", img_config.tag, str(sub_dir))
+            ),
         )
 
         config = SimConfig(
@@ -686,7 +722,9 @@ def test_run_batch_imaging_creates_subdirs_and_calls_both_imagers(tmp_path, monk
         assert (work_dir / "robust2").is_dir()
 
         # milestones per tag
-        manifest = json.loads((work_dir / "run_manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads(
+            (work_dir / "run_manifest.json").read_text(encoding="utf-8")
+        )
         milestone_names = {m["name"] for m in manifest["milestones"]}
         assert "imaging_robust0_completed" in milestone_names
         assert "imaging_robust2_completed" in milestone_names
@@ -706,13 +744,22 @@ def test_run_batch_imaging_fail_fast_on_first_error(tmp_path, monkeypatch):
         fake_sky.get_center.return_value = center
 
         monkeypatch.setattr(pipeline, "build_telescope", lambda ctx: _FakeTelescope())
-        monkeypatch.setattr(pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg)
-        monkeypatch.setattr(pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center))
+        monkeypatch.setattr(
+            pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg
+        )
+        monkeypatch.setattr(
+            pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center)
+        )
         monkeypatch.setattr(
             pipeline,
             "build_observation",
             lambda ctx, center, telescope: (
-                object(), 700 * u.MHz, 100 * u.MHz, 8, 12.5 * u.MHz, 650 * u.MHz,
+                object(),
+                700 * u.MHz,
+                100 * u.MHz,
+                8,
+                12.5 * u.MHz,
+                650 * u.MHz,
             ),
         )
         monkeypatch.setattr(
@@ -738,9 +785,13 @@ def test_run_batch_imaging_fail_fast_on_first_error(tmp_path, monkeypatch):
             pipeline.run(config)
 
         work_dir = tmp_path / "fail_fast_run"
-        manifest = json.loads((work_dir / "run_manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads(
+            (work_dir / "run_manifest.json").read_text(encoding="utf-8")
+        )
         # only the first tag should have a failed milestone
-        failed_names = {m["name"] for m in manifest["milestones"] if m["status"] == "failed"}
+        failed_names = {
+            m["name"] for m in manifest["milestones"] if m["status"] == "failed"
+        }
         assert "imaging_a_failed" in failed_names
         assert "imaging_b_started" not in {m["name"] for m in manifest["milestones"]}
     finally:
@@ -748,7 +799,7 @@ def test_run_batch_imaging_fail_fast_on_first_error(tmp_path, monkeypatch):
 
 
 def test_weblog_has_tabs_for_multiple_tags(tmp_path, monkeypatch):
-    """ weblog template renders tab buttons when multiple tags exist."""
+    """weblog template renders tab buttons when multiple tags exist."""
     import skasim.pipeline as pipeline
 
     old_cwd = os.getcwd()
@@ -759,13 +810,22 @@ def test_weblog_has_tabs_for_multiple_tags(tmp_path, monkeypatch):
         fake_sky.get_center.return_value = center
 
         monkeypatch.setattr(pipeline, "build_telescope", lambda ctx: _FakeTelescope())
-        monkeypatch.setattr(pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg)
-        monkeypatch.setattr(pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center))
+        monkeypatch.setattr(
+            pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg
+        )
+        monkeypatch.setattr(
+            pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center)
+        )
         monkeypatch.setattr(
             pipeline,
             "build_observation",
             lambda ctx, center, telescope: (
-                object(), 700 * u.MHz, 100 * u.MHz, 8, 12.5 * u.MHz, 650 * u.MHz,
+                object(),
+                700 * u.MHz,
+                100 * u.MHz,
+                8,
+                12.5 * u.MHz,
+                650 * u.MHz,
             ),
         )
         monkeypatch.setattr(
@@ -776,13 +836,15 @@ def test_weblog_has_tabs_for_multiple_tags(tmp_path, monkeypatch):
         monkeypatch.setattr(
             pipeline,
             "run_wsclean_imaging",
-            lambda ctx, vis_path, fov, img_config, sub_dir, n_channels=1: ctx.manifest.add_output(
-                "image_product",
-                f"{img_config.tag}_wsclean-MFS-image.fits",
-                image_product_id=f"{img_config.tag}_wsclean",
-                imager="wsclean",
-                role="image",
-                metadata={"tag": img_config.tag},
+            lambda ctx, vis_path, fov, img_config, sub_dir, n_channels=1: (
+                ctx.manifest.add_output(
+                    "image_product",
+                    f"{img_config.tag}_wsclean-MFS-image.fits",
+                    image_product_id=f"{img_config.tag}_wsclean",
+                    imager="wsclean",
+                    role="image",
+                    metadata={"tag": img_config.tag},
+                )
             ),
         )
 
@@ -796,7 +858,9 @@ def test_weblog_has_tabs_for_multiple_tags(tmp_path, monkeypatch):
         )
         pipeline.run(config)
 
-        html = (tmp_path / "weblog_tabs_run" / "weblog.html").read_text(encoding="utf-8")
+        html = (tmp_path / "weblog_tabs_run" / "weblog.html").read_text(
+            encoding="utf-8"
+        )
         assert 'class="tab-buttons"' in html
         assert "tagA" in html
         assert "tagB" in html
