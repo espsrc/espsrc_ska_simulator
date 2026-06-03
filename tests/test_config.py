@@ -3,7 +3,13 @@
 import pytest
 from pydantic import ValidationError
 
-from skasim.config import ImgConfig, ObsConfig, SimConfig
+from skasim.config import (
+    ComponentSkyModelEntry,
+    ContinuumIAlphaModelEntry,
+    ImgConfig,
+    ObsConfig,
+    SimConfig,
+)
 
 # ---------------------------------------------------------------------------
 # ObsConfig
@@ -181,6 +187,66 @@ def test_sim_config_defaults():
     assert cfg.imaging[0].clean_iterations == 5000
     assert cfg.imaging[0].tag == "default"
     assert cfg.observation.frequency_mhz == 700.0
+    assert cfg.models == []
+
+
+def test_sim_config_accepts_continuum_i_alpha_model_entry(tmp_path):
+    """Typed image-model entries are accepted as the multi-model API."""
+    import numpy as np
+    from astropy.io import fits
+
+    stokes_i = tmp_path / "stokes_i.fits"
+    alpha = tmp_path / "alpha.fits"
+    fits.writeto(stokes_i, np.ones((4, 4)), overwrite=True)
+    fits.writeto(alpha, np.zeros((4, 4)), overwrite=True)
+
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "continuum_i_alpha",
+                "stokes_i": str(stokes_i),
+                "alpha": str(alpha),
+                "reference_frequency_hz": 1.4e9,
+            }
+        ]
+    )
+
+    assert isinstance(cfg.models[0], ContinuumIAlphaModelEntry)
+    assert cfg.source_flux_jy == []
+
+
+def test_sim_config_accepts_component_catalog_model_entry():
+    """Catalog component entries use the canonical catalog spelling."""
+    cfg = SimConfig(models=[{"type": "component_sky_model", "catalog": "gleam"}])
+
+    assert isinstance(cfg.models[0], ComponentSkyModelEntry)
+    assert cfg.models[0].catalog == "GLEAM"
+    assert cfg.source_flux_jy == []
+
+
+def test_sim_config_accepts_casa_taylor_terms_model_entry(tmp_path):
+    """Existing CASA Taylor-term images can be configured directly."""
+    pytest.skip(
+        "CasaTaylorTermsModelEntry pending integration in remaining merge commits"
+    )
+    tt0 = tmp_path / "model.tt0"
+    tt1 = tmp_path / "model.tt1"
+    tt0.mkdir()
+    tt1.mkdir()
+
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0),
+                "tt1": str(tt1),
+                "reference_frequency_hz": 1.5e9,
+            }
+        ]
+    )
+
+    assert cfg.models[0].reference_frequency_hz == pytest.approx(1.5e9)
+    assert cfg.source_flux_jy == []
 
 
 def test_sim_config_explicit_telescope_version():

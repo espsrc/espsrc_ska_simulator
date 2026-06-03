@@ -125,6 +125,24 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=None,
         help="Generated source Stokes V values in Jy; must match --flux-density length",
     )
+    sky.add_argument(
+        "--continuum-stokes-i",
+        type=str,
+        default=None,
+        help="Continuum image-model Stokes I FITS image in Jy/pixel",
+    )
+    sky.add_argument(
+        "--continuum-alpha",
+        type=str,
+        default=None,
+        help="Continuum image-model spectral-index FITS image",
+    )
+    sky.add_argument(
+        "--reference-frequency-hz",
+        type=float,
+        default=None,
+        help="Reference frequency for --continuum-stokes-i in Hz",
+    )
 
     pointing = p.add_argument_group("observation")
     pointing.add_argument(
@@ -435,13 +453,49 @@ def main(argv: Optional[List[str]] = None) -> None:
         uv_coverage_canvas_size=args.uv_coverage_canvas_size,
     )
 
+    # Build typed model entries from legacy CLI flags
+    model_entries = []
+    if args.model is not None:
+        model_entries.append(
+            {
+                "type": "component_sky_model",
+                "path": args.model,
+                "sky_format": "auto",
+                "column_mapping": args.column_mapping,
+                "flux_scale": args.flux_scale,
+            }
+        )
+    if args.catalog is not None:
+        model_entries.append(
+            {
+                "type": "component_sky_model",
+                "catalog": args.catalog,
+            }
+        )
+    continuum_fields = (
+        args.continuum_stokes_i,
+        args.continuum_alpha,
+        args.reference_frequency_hz,
+    )
+    if any(value is not None for value in continuum_fields):
+        if not all(value is not None for value in continuum_fields):
+            p.error(
+                "--continuum-stokes-i, --continuum-alpha, and "
+                "--reference-frequency-hz must be provided together."
+            )
+        model_entries.append(
+            {
+                "type": "continuum_i_alpha",
+                "stokes_i": args.continuum_stokes_i,
+                "alpha": args.continuum_alpha,
+                "reference_frequency_hz": args.reference_frequency_hz,
+            }
+        )
+
     config_kwargs = {
         "telescope": args.telescope,
         "telescope_version": args.telescope_version,
-        "sky_file": args.model,
         "sky_format": "auto",
-        "catalog": args.catalog,
-        "fits_image": args.fits_image,
         "column_mapping": args.column_mapping,
         "flux_scale": args.flux_scale,
         "center": args.center,
@@ -453,6 +507,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         "output_dir": args.output_dir,
         "overwrite": args.overwrite,
     }
+    if model_entries:
+        config_kwargs["models"] = model_entries
+    else:
+        config_kwargs["sky_file"] = args.model
+        config_kwargs["catalog"] = args.catalog
+        config_kwargs["fits_image"] = args.fits_image
     if args.source_flux_jy is not None:
         config_kwargs["source_flux_jy"] = args.source_flux_jy
     if args.stokes_q_jy is not None:

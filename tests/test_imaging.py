@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import astropy.units as u
 import numpy as np
 import pytest
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 
 from skasim.config import ImgConfig, ObsConfig, SimConfig
@@ -20,6 +21,7 @@ from skasim.imaging import (
     build_shadems_uv_coverage_argv,
     build_wsclean_argv,
     collect_wsclean_outputs,
+    run_dirty_imaging,
     run_wsclean_command,
     shadems_uv_coverage_env,
     write_fits_preview,
@@ -111,6 +113,67 @@ def test_run_wsclean_command_uses_argv_and_working_directory(tmp_path, monkeypat
     assert calls[0][1]["cwd"] == str(tmp_path)
     assert calls[0][1]["shell"] is False
     assert calls[0][1]["check"] is True
+
+
+def test_run_dirty_imaging_passes_icrs_phase_centre(tmp_path, monkeypatch):
+    """FITS-derived FK5 centres are transformed before calling Karabo dirty imaging."""
+    captured = {}
+
+    class FakeVisibility:
+        def __init__(self, path):
+            self.path = path
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            captured["phase_centre"] = kwargs["imaging_phase_centre"]
+
+    class FakeDirtyImage:
+        def write_to_file(self, path, overwrite):
+            Path(path).write_text("fits", encoding="utf-8")
+
+    class FakeImager:
+        def __init__(self, config):
+            self.config = config
+
+        def create_dirty_image(self, visibility):
+            captured["visibility"] = visibility
+            return FakeDirtyImage()
+
+    def fake_require(module_name):
+        if module_name == "karabo.imaging.imager_oskar":
+            return SimpleNamespace(
+                OskarDirtyImagerConfig=FakeConfig,
+                OskarDirtyImager=FakeImager,
+            )
+        if module_name == "karabo.simulation.visibility":
+            return SimpleNamespace(Visibility=FakeVisibility)
+        raise AssertionError(module_name)
+
+    monkeypatch.setattr("skasim.imaging.require_karabo_module", fake_require)
+    monkeypatch.setattr(
+        "skasim.imaging.write_fits_preview",
+        lambda img_path, png_path, title: Path(png_path).write_text(
+            "png", encoding="utf-8"
+        ),
+    )
+
+    config = SimConfig(
+        output_dir=str(tmp_path / "run"),
+        imaging=[ImgConfig(pixels=64, tag="default")],
+    )
+    ctx = create_run_context(config)
+
+    run_dirty_imaging(
+        ctx,
+        tmp_path / "visibilities.MS",
+        0.1 * u.deg,
+        SkyCoord(10.0 * u.deg, 2.0 * u.deg, frame="fk5"),
+        ctx.config.imaging[0],
+        ctx.work_dir,
+    )
+
+    assert captured["phase_centre"].frame.name == "icrs"
+    assert captured["visibility"].path == str(tmp_path / "visibilities.MS")
 
 
 def test_collect_wsclean_outputs_matches_only_configured_prefix(tmp_path):

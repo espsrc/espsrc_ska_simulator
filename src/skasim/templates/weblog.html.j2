@@ -167,16 +167,29 @@
 
     <!-- Sky Model configuration -->
     {% set sky_ms = manifest.milestones | selectattr("name", "equalto", "sky_model_loaded") | list | first | default(none) %}
-    {% if sky_ms and sky_ms.details %}
+    {% if (sky_ms and sky_ms.details) or fits_model_plots %}
     <h2>Sky Model</h2>
     <div class="config-row">
+      {% if sky_ms and sky_ms.details %}
       <table>
         <tr><th>Format</th><td>{{ sky_ms.details.get("format", "?") }}</td></tr>
         <tr><th>Sources</th><td>{{ sky_ms.details.get("n_sources", "?") }} sources</td></tr>
+        {% if sky_ms.details.get("model_entries") %}
+        <tr><th>Model Entries</th><td>{{ sky_ms.details.get("model_entries") }}</td></tr>
+        {% endif %}
         {% if sky_ms.details.get("path") %}
         <tr><th>Path</th><td style="word-break: break-all; font-size: 0.78rem; font-family: monospace;">{{ sky_ms.details.get("path") }}</td></tr>
         {% endif %}
       </table>
+      {% endif %}
+      {% for plot in fits_model_plots %}
+      <div class="plot-container">
+        <div class="plot-title">FITS Model{% if plot.model_type %} ({{ plot.model_type }}){% endif %}</div>
+        <a href="{{ plot.path }}" target="_blank" rel="noopener">
+          <img src="{{ plot.data }}" alt="FITS model preview">
+        </a>
+      </div>
+      {% endfor %}
       {% if sky_model_plot %}
       <div class="plot-container">
         <div class="plot-title">Full Sky Model</div>

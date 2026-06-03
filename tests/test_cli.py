@@ -3,11 +3,12 @@
 import json
 import tempfile
 
-from skasim import cli
-import skasim.pipeline
-from skasim.config import SimConfig, ObsConfig, ImgConfig
-from pydantic import ValidationError
 import pytest
+from pydantic import ValidationError
+
+import skasim.pipeline
+from skasim import cli
+from skasim.config import ImgConfig, ObsConfig, SimConfig
 
 
 def _make_config_json(tmp_path, flux=None):
@@ -43,7 +44,15 @@ def test_config_file_overrides_output_dir_and_overwrite(monkeypatch, tmp_path):
     monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
 
     config_path = _make_config_json(tmp_path)
-    cli.main(["--config", config_path, "--output-dir", str(tmp_path / "custom"), "--overwrite"])
+    cli.main(
+        [
+            "--config",
+            config_path,
+            "--output-dir",
+            str(tmp_path / "custom"),
+            "--overwrite",
+        ]
+    )
 
     assert captured[0].output_dir == str(tmp_path / "custom")
     assert captured[0].overwrite is True
@@ -82,6 +91,7 @@ def test_config_file_missing_file(monkeypatch, tmp_path, capsys):
 # existing tests below
 # --------------------------------------------------------------------------- #
 
+
 def test_catalog_sets_named_catalog(monkeypatch):
     """--catalog is the canonical CLI spelling for built-in catalogs."""
     captured = []
@@ -89,7 +99,8 @@ def test_catalog_sets_named_catalog(monkeypatch):
 
     cli.main(["--catalog", "GLEAM"])
 
-    assert captured[0].catalog == "GLEAM"
+    assert captured[0].catalog is None
+    assert captured[0].models[0].catalog == "GLEAM"
 
 
 def test_numeric_catalog_cli_value_has_migration_message():
@@ -196,8 +207,67 @@ def test_wsclean_command_cli_override(monkeypatch):
 
 def test_cli_rejects_source_flux_jy_with_catalog():
     """CLI users cannot combine generated-source intensities with a catalog."""
-    with pytest.raises(ValidationError, match="generated source mode"):
+    with pytest.raises(ValidationError, match="typed models"):
         cli.main(["--catalog", "MIGHTEE", "--flux-density", "1.0"])
+
+
+def test_cli_accepts_catalog_plus_continuum_image_model(tmp_path, monkeypatch):
+    """A catalog contribution can be combined with a continuum image model."""
+    stokes_i = tmp_path / "stokes_i.fits"
+    alpha = tmp_path / "alpha.fits"
+    stokes_i.write_text("placeholder", encoding="utf-8")
+    alpha.write_text("placeholder", encoding="utf-8")
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    cli.main(
+        [
+            "--catalog",
+            "MIGHTEE",
+            "--continuum-stokes-i",
+            str(stokes_i),
+            "--continuum-alpha",
+            str(alpha),
+            "--reference-frequency-hz",
+            "1400000000",
+        ]
+    )
+
+    assert [entry.type for entry in captured[0].models] == [
+        "component_sky_model",
+        "continuum_i_alpha",
+    ]
+    assert captured[0].models[0].catalog == "MIGHTEE"
+
+
+def test_cli_runs_json_config_file(tmp_path, monkeypatch):
+    """--config loads a JSON SimConfig and runs it directly."""
+    config_path = tmp_path / "run.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "telescope": "VLA",
+                "telescope_version": "C",
+                "catalog": "GLEAM",
+                "observation": {
+                    "frequency_mhz": 1400.0,
+                    "bandwidth_mhz": 8.0,
+                    "n_channels": 2,
+                },
+                "output_dir": str(tmp_path / "out"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    cli.main(["--config", str(config_path)])
+
+    assert captured[0].telescope == "VLA"
+    assert captured[0].telescope_version == "C"
+    assert captured[0].catalog == "GLEAM"
+    assert captured[0].observation.n_channels == 2
 
 
 def test_cli_help_has_single_canonical_surface(capsys):
@@ -216,6 +286,9 @@ def test_cli_help_has_single_canonical_surface(capsys):
     assert "--stokes-u" in help_text
     assert "--stokes-v" in help_text
     assert "--catalog" in help_text
+    assert "--continuum-stokes-i" in help_text
+    assert "--continuum-alpha" in help_text
+    assert "--reference-frequency-hz" in help_text
 
     for removed in (
         "--stokes-i",

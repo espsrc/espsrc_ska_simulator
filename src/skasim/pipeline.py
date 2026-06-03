@@ -18,7 +18,14 @@ from loguru import logger
 
 from .config import SimConfig
 from .imaging import run_dirty_imaging, run_wsclean_imaging, write_uv_coverage_plot
-from .loaders import FitsCatalogLoader
+from .loaders import (
+    FitsCatalogLoader,
+    component_model_entries,
+    image_model_center,
+    image_model_entries,
+    inject_image_models,
+    write_image_model_previews,
+)
 from .manifest import RunContext, create_run_context
 from .runtime import require_karabo_module
 from .sky import SkyModel, Source
@@ -193,6 +200,36 @@ def _load_sky_from_fits(
 
 
 # --------------------------------------------------------------------------- #
+# sky model — catalog loader helper
+# --------------------------------------------------------------------------- #
+
+
+def _load_sky_from_catalog(catalog: str) -> tuple[SkyModel, str]:
+    """Load one built-in catalog and return (sky_model, format_label)."""
+    if catalog == "MIGHTEE":
+        logger.info("Loading MIGHTEE catalog")
+        if not hasattr(SkyModel, "get_MIGHTEE_Sky"):
+            require_karabo_module("karabo.simulation.sky_model")
+        return SkyModel.get_MIGHTEE_Sky(), "MIGHTEE"
+    if catalog == "GLEAM":
+        logger.info("Loading GLEAM catalog")
+        if not hasattr(SkyModel, "get_GLEAM_Sky"):
+            require_karabo_module("karabo.simulation.sky_model")
+        return SkyModel.get_GLEAM_Sky(), "GLEAM"
+    if catalog == "SKAMid":
+        skamid_path = Path("SKAMid_B1_8h_v3.fits").resolve()
+        if skamid_path.exists():
+            logger.info(f"Loading SKAMid catalog {skamid_path}")
+            return (
+                SkyModel.get_sky_model_from_fits(fits_file=str(skamid_path)),
+                "SKAMid",
+            )
+        logger.info(f"SKAMid catalog not found at {skamid_path}")
+        raise FileNotFoundError(str(skamid_path))
+    raise ValueError(f"Catalog {catalog} not available")
+
+
+# --------------------------------------------------------------------------- #
 # sky model — high-level builder
 # --------------------------------------------------------------------------- #
 
@@ -203,6 +240,58 @@ def build_sky_model(
 ) -> tuple[SkyModel, SkyCoord]:
     """Return (sky_model, center)."""
     config = ctx.config
+    component_entries = component_model_entries(config)
+    image_entries = image_model_entries(config)
+
+    if component_entries:
+        entry = component_entries[0]
+        component_path = None
+        if entry.path is not None:
+            component_path = Path(entry.path).expanduser().resolve()
+            sky_model = _load_sky_from_file(
+                str(component_path),
+                column_mapping=entry.column_mapping or "0,1,2,3,4,5,6,7,8,9,10,11,12",
+                flux_scale=entry.flux_scale,
+                frequency=config.observation.frequency_mhz * u.MHz,
+            )
+            component_format = entry.sky_format
+        else:
+            assert entry.catalog is not None
+            sky_model, component_format = _load_sky_from_catalog(entry.catalog)
+        center = sky_model.get_center()
+        n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
+        ctx.add_milestone(
+            "sky_model_loaded",
+            "completed",
+            details={
+                "path": str(component_path) if component_path is not None else None,
+                "format": component_format,
+                "n_sources": n_srcs,
+                "model_entries": len(config.models),
+            },
+        )
+        if component_path is not None:
+            ctx.manifest.add_output(
+                "sky_model",
+                str(component_path),
+                metadata={"format": component_format, "n_sources": n_srcs},
+            )
+        return sky_model, center
+
+    if image_entries:
+        center = image_model_center(image_entries) or Source.from_name("HCG16").coords()
+        sky_model = SkyModel()
+        sky_model.phase_center = center
+        ctx.add_milestone(
+            "sky_model_loaded",
+            "completed",
+            details={
+                "format": "image_models",
+                "n_sources": 0,
+                "model_entries": len(image_entries),
+            },
+        )
+        return sky_model, center
 
     # 1) file path given?
     if config.sky_file is not None:
@@ -230,31 +319,9 @@ def build_sky_model(
         )
         return sky_model, center
 
-    # 2) built-in catalog
+    # 2) built-in catalog (legacy path)
     if config.catalog is not None:
-        if config.catalog == "MIGHTEE":
-            logger.info("Loading MIGHTEE catalog")
-            if not hasattr(SkyModel, "get_MIGHTEE_Sky"):
-                require_karabo_module("karabo.simulation.sky_model")
-            sky_model = SkyModel.get_MIGHTEE_Sky()
-            fmt = "MIGHTEE"
-        elif config.catalog == "GLEAM":
-            logger.info("Loading GLEAM catalog")
-            if not hasattr(SkyModel, "get_GLEAM_Sky"):
-                require_karabo_module("karabo.simulation.sky_model")
-            sky_model = SkyModel.get_GLEAM_Sky()
-            fmt = "GLEAM"
-        elif config.catalog == "SKAMid":
-            skamid_path = Path("SKAMid_B1_8h_v3.fits").resolve()
-            if skamid_path.exists():
-                logger.info(f"Loading SKAMid catalog {skamid_path}")
-                sky_model = SkyModel.get_sky_model_from_fits(fits_file=str(skamid_path))
-                fmt = "SKAMid"
-            else:
-                logger.info(f"SKAMid catalog not found at {skamid_path}")
-                raise FileNotFoundError(str(skamid_path))
-        else:
-            raise ValueError(f"Catalog {config.catalog} not available")
+        sky_model, fmt = _load_sky_from_catalog(config.catalog)
         center = sky_model.get_center()
         n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
         ctx.add_milestone(
@@ -264,7 +331,7 @@ def build_sky_model(
         )
         return sky_model, center
 
-    # 3) FITS image ingestion
+    # 3) FITS image ingestion (legacy path)
     if config.fits_image is not None:
         from .loaders import FitsImageLoader
 
@@ -456,6 +523,15 @@ def run_simulation(
     return visibility_path
 
 
+def build_zero_flux_sky_model(center: SkyCoord) -> SkyModel:
+    """Build a one-source zero-flux sky model for base-MS fallback creation."""
+    sky_model = SkyModel()
+    source = Source(center.ra, center.dec, 0 * u.Jy)
+    sky_model.add_point_sources(np.array([source.to_sky_model(reduced_form=True)]))
+    sky_model.phase_center = center
+    return sky_model
+
+
 # --------------------------------------------------------------------------- #
 # top-level orchestrator
 # --------------------------------------------------------------------------- #
@@ -516,6 +592,7 @@ def run(config: SimConfig) -> None:
                 ctx.work_dir.name,
             ):
                 ctx.manifest.add_output("plot", path, role=role)
+            write_image_model_previews(ctx, center, fov0)
         except Exception as exc:
             logger.warning(f"Sky model previews failed: {exc}")
             logger.exception("Sky model preview traceback")
@@ -531,7 +608,30 @@ def run(config: SimConfig) -> None:
         ctx.add_milestone("simulation_started", "started")
         t_phase_a = time.time()
         try:
-            visibility_path = run_simulation(ctx, telescope, observation, sky_model)
+            try:
+                visibility_path = run_simulation(ctx, telescope, observation, sky_model)
+            except Exception:
+                if image_model_entries(config) and not component_model_entries(config):
+                    logger.warning(
+                        "Empty base-MS creation failed; retrying with a zero-flux "
+                        "placeholder source."
+                    )
+                    if ctx.visibility_path.exists():
+                        shutil.rmtree(ctx.visibility_path)
+                    ctx.add_milestone(
+                        "base_ms_fallback",
+                        "completed",
+                        details={"strategy": "zero_flux_placeholder_source"},
+                    )
+                    visibility_path = run_simulation(
+                        ctx,
+                        telescope,
+                        observation,
+                        build_zero_flux_sky_model(center),
+                    )
+                else:
+                    raise
+            inject_image_models(ctx, visibility_path)
             ctx.add_milestone(
                 "simulation_completed", "completed", elapsed_s=time.time() - t_phase_a
             )
