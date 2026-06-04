@@ -15,6 +15,7 @@ from astropy.wcs import WCS
 from loguru import logger
 
 from ..config import (
+    CasaTaylorTermsModelEntry,
     ComponentSkyModelEntry,
     ContinuumIAlphaModelEntry,
     ModelEntry,
@@ -56,7 +57,14 @@ def image_model_entries(config: SimConfig) -> list[ModelEntry]:
     return [
         entry
         for entry in config.models
-        if isinstance(entry, (ContinuumIAlphaModelEntry, StaticStokesMapsModelEntry))
+        if isinstance(
+            entry,
+            (
+                ContinuumIAlphaModelEntry,
+                CasaTaylorTermsModelEntry,
+                StaticStokesMapsModelEntry,
+            ),
+        )
     ]
 
 
@@ -164,6 +172,10 @@ def write_image_model_previews(
 
     for index, entry in enumerate(entries, start=1):
         image_path = primary_model_fits_path(entry)
+        export_path = None
+        if image_path is None and isinstance(entry, CasaTaylorTermsModelEntry):
+            image_path = Path(entry.tt0).expanduser().resolve()
+            export_path = ctx.work_dir / f"model_entry_{index:02d}_casa_taylor.tt0.fits"
         if image_path is None:
             continue
         # use the FITS image's own WCS center to avoid recentering NaN
@@ -184,8 +196,12 @@ def write_image_model_previews(
         suffix = "" if len(entries) == 1 else f"_{index:02d}"
         png_name = f"{ctx.work_dir.name}_fits_model{suffix}.png"
         png_path = ctx.work_dir / png_name
+        preview_source = image_path
+        if export_path is not None:
+            run_casa_exportfits(ctx.work_dir, image_path, export_path)
+            preview_source = export_path
         write_fits_preview(
-            image_path,
+            preview_source,
             png_path,
             "FITS Model",
             recenter=recenter,
@@ -201,6 +217,7 @@ def write_image_model_previews(
                 "model_entry_index": index - 1,
                 "model_type": entry.type,
                 "source_fits": str(image_path),
+                "preview_fits": str(preview_source),
             },
         )
 
@@ -223,10 +240,14 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
                 "static_stokes_maps is schema-ready, but the CASA backend path is "
                 "planned for the next implementation phase."
             )
-        if not isinstance(entry, ContinuumIAlphaModelEntry):
+        if isinstance(entry, ContinuumIAlphaModelEntry):
+            report = validate_continuum_i_alpha(entry)
+            product = prepare_continuum_i_alpha_for_casa(ctx, entry, index)
+        elif isinstance(entry, CasaTaylorTermsModelEntry):
+            report = validate_casa_taylor_terms(entry)
+            product = prepare_casa_taylor_terms(ctx, entry, index)
+        else:
             continue
-        report = validate_continuum_i_alpha(entry)
-        product = prepare_continuum_i_alpha_for_casa(ctx, entry, index)
         run_casa_ft(
             visibility_path=visibility_path,
             model_paths=product.model_paths,
@@ -262,6 +283,59 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
         "image_injection_completed",
         "completed",
         details={"visibility_path": str(visibility_path), "model_data_merged": True},
+    )
+
+
+def validate_casa_taylor_terms(entry: CasaTaylorTermsModelEntry) -> dict:
+    """Validate an existing CASA Taylor-term image model entry."""
+    model_paths = [
+        Path(path).expanduser().resolve()
+        for path in (entry.tt0, entry.tt1)
+        if path is not None
+    ]
+    if not model_paths:
+        raise ValueError("casa_taylor_terms requires at least tt0.")
+    for path in model_paths:
+        if not path.is_dir():
+            raise ValueError(f"{path} must be a CASA image table directory.")
+        if not (path / "table.dat").exists():
+            raise ValueError(f"{path} does not look like a CASA image table.")
+    return {
+        "model_paths": [str(path) for path in model_paths],
+        "nterms": len(model_paths),
+        "reference_frequency_hz": entry.reference_frequency_hz,
+    }
+
+
+def prepare_casa_taylor_terms(
+    ctx: RunContext,
+    entry: CasaTaylorTermsModelEntry,
+    index: int,
+) -> CasaModelProduct:
+    """Copy CASA Taylor-term images into the run and align their spectral coordinate."""
+    source_paths = [
+        Path(path).expanduser().resolve()
+        for path in (entry.tt0, entry.tt1)
+        if path is not None
+    ]
+    prefix = f"model_entry_{index + 1:02d}_casa_taylor"
+    model_paths = []
+    for term_index, source_path in enumerate(source_paths):
+        target_path = ctx.work_dir / f"{prefix}.tt{term_index}.image"
+        if target_path.exists():
+            shutil.rmtree(target_path)
+        shutil.copytree(source_path, target_path)
+        model_paths.append(target_path)
+    run_casa_set_spectral_coordinate(
+        ctx.work_dir,
+        model_paths,
+        entry.reference_frequency_hz,
+    )
+    return CasaModelProduct(
+        model_paths=model_paths,
+        nterms=len(model_paths),
+        reffreq=f"{entry.reference_frequency_hz}Hz",
+        intermediates=model_paths,
     )
 
 
@@ -373,6 +447,54 @@ def run_casa_importfits(
             )
 
 
+def run_casa_exportfits(
+    work_dir: Path,
+    imagename: Path,
+    fitsimage: Path,
+) -> None:
+    """Run CASA exportfits in batch mode for a CASA image table."""
+    executable = require_casa_executable()
+    script_path = work_dir / "skasim_casa_exportfits.py"
+    lines = [
+        "# Auto-generated by skasim; safe to delete after the run.",
+        "try:",
+        "    from casatasks import exportfits",
+        "except Exception:",
+        "    pass",
+        "exportfits(imagename={!r}, fitsimage={!r}, overwrite=True)".format(
+            str(imagename),
+            str(fitsimage),
+        ),
+    ]
+    run_casa_script(executable, script_path, lines)
+
+
+def run_casa_set_spectral_coordinate(
+    work_dir: Path,
+    image_paths: list[Path],
+    frequency_hz: float,
+) -> None:
+    """Set the single-channel spectral coordinate of CASA images to the run reference."""
+    executable = require_casa_executable()
+    script_path = work_dir / "skasim_casa_set_spectral_coordinate.py"
+    hdvalue = f"{frequency_hz}Hz"
+    lines = [
+        "# Auto-generated by skasim; safe to delete after the run.",
+        "try:",
+        "    from casatasks import imhead",
+        "except Exception:",
+        "    pass",
+    ]
+    for image_path in image_paths:
+        lines.append(
+            "imhead(imagename={!r}, mode='put', hdkey='crval4', hdvalue={!r})".format(
+                str(image_path),
+                hdvalue,
+            )
+        )
+    run_casa_script(executable, script_path, lines)
+
+
 def run_casa_ft(
     visibility_path: Path,
     model_paths: list[Path],
@@ -417,22 +539,12 @@ def run_casa_ft(
         ")",
     ]
     run_casa_script(executable, script_path, lines)
-    # verify MODEL_DATA was created; if missing, ft failed silently (e.g. import)
-    try:
-        from casacore.tables import table
-
-        with table(str(visibility_path), readonly=True, ack=False) as ms_table:
-            if "MODEL_DATA" not in set(ms_table.colnames()):
-                raise RuntimeError(
-                    f"CASA ft did not create MODEL_DATA in {visibility_path}."
-                )
-    except Exception as exc:
-        raise RuntimeError(f"Failed to verify MODEL_DATA after CASA ft: {exc}") from exc
 
 
 def run_casa_script(executable: Path, script_path: Path, lines: list[str]) -> None:
     """Write and execute one CASA batch script, surfacing useful failure output."""
     script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log_path = script_path.with_suffix(".log")
     command = [
         str(executable),
         "--nologger",
@@ -442,44 +554,21 @@ def run_casa_script(executable: Path, script_path: Path, lines: list[str]) -> No
         str(script_path),
     ]
     logger.info(f"CASA batch command: {' '.join(command)}")
-    result = subprocess.run(
-        command,
-        cwd=str(script_path.parent),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    if result.returncode != 0:
-        output = result.stdout
-        # CASA often exits 1 for benign warnings (measurespath, data_update).
-        # Only treat it as failure if a real Python/CASA task error appears.
-        has_real_error = "Traceback" in output or any(
-            line.strip().startswith(
-                (
-                    "Error:",
-                    "Exception:",
-                    "SyntaxError",
-                    "NameError",
-                    "AttributeError",
-                    "ImportError",
-                    "TypeError",
-                    "ValueError",
-                    "RuntimeError",
-                    "ModuleNotFoundError",
-                )
-            )
-            for line in output.splitlines()
+    with log_path.open("w", encoding="utf-8") as log_file:
+        result = subprocess.run(
+            command,
+            cwd=str(script_path.parent),
+            text=True,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
         )
-        if has_real_error:
-            tail = "\n".join(output.splitlines()[-80:])
+        if result.returncode != 0:
+            tail = "\n".join(log_path.read_text(encoding="utf-8").splitlines()[-80:])
             raise RuntimeError(
                 f"CASA batch command failed with exit code {result.returncode}: "
                 f"{script_path}\n{tail}"
             )
-        logger.warning(
-            f"CASA exited {result.returncode} with only benign warnings; "
-            "proceeding to verify side-effects."
-        )
 
 
 def merge_model_data_into_data(visibility_path: Path) -> None:

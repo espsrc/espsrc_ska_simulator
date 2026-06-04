@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from skasim.config import (
+    CasaTaylorTermsModelEntry,
     ComponentSkyModelEntry,
     ContinuumIAlphaModelEntry,
     ImgConfig,
@@ -226,9 +227,6 @@ def test_sim_config_accepts_component_catalog_model_entry():
 
 def test_sim_config_accepts_casa_taylor_terms_model_entry(tmp_path):
     """Existing CASA Taylor-term images can be configured directly."""
-    pytest.skip(
-        "CasaTaylorTermsModelEntry pending integration in remaining merge commits"
-    )
     tt0 = tmp_path / "model.tt0"
     tt1 = tmp_path / "model.tt1"
     tt0.mkdir()
@@ -245,6 +243,7 @@ def test_sim_config_accepts_casa_taylor_terms_model_entry(tmp_path):
         ]
     )
 
+    assert isinstance(cfg.models[0], CasaTaylorTermsModelEntry)
     assert cfg.models[0].reference_frequency_hz == pytest.approx(1.5e9)
     assert cfg.source_flux_jy == []
 

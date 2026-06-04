@@ -1,7 +1,9 @@
 """Image-model validation and reporting behavior."""
 
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 
 import astropy.units as u
 import numpy as np
@@ -13,8 +15,15 @@ from astropy.wcs import WCS
 from skasim.config import SimConfig
 from skasim.loaders.image_models import (
     image_model_center,
+    import_casa_tasks,
     inject_image_models,
     merge_model_data_into_data,
+    prepare_casa_taylor_terms,
+    run_casa_exportfits,
+    run_casa_ft,
+    run_casa_importfits,
+    run_casa_set_spectral_coordinate,
+    validate_casa_taylor_terms,
     validate_continuum_i_alpha,
     write_image_model_previews,
 )
@@ -195,6 +204,50 @@ def test_weblog_renders_existing_fits_model_output(tmp_path):
     assert "continuum_i_alpha" in html
 
 
+def test_weblog_renders_casa_taylor_term_preview(tmp_path, monkeypatch):
+    """CASA Taylor-term previews are exported to FITS before rendering."""
+    pytest.importorskip("aplpy")
+    pytest.importorskip("cmasher")
+    tt0 = tmp_path / "model.tt0"
+    tt1 = tmp_path / "model.tt1"
+    tt0.mkdir()
+    tt1.mkdir()
+    (tt0 / "table.dat").write_text("table", encoding="utf-8")
+    (tt1 / "table.dat").write_text("table", encoding="utf-8")
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0),
+                "tt1": str(tt1),
+                "reference_frequency_hz": 1.5e9,
+            }
+        ],
+        output_dir=str(tmp_path / "run"),
+    )
+    ctx = create_run_context(cfg)
+    calls = []
+
+    def fake_export(work_dir, imagename, fitsimage):
+        calls.append((work_dir, imagename, fitsimage))
+        stokes_i, _ = _write_model_pair(tmp_path, shape=(32, 32))
+        fitsimage.write_bytes(stokes_i.read_bytes())
+
+    monkeypatch.setattr("skasim.loaders.image_models.run_casa_exportfits", fake_export)
+
+    write_image_model_previews(
+        ctx,
+        SkyCoord(10.0 * u.deg, 2.0 * u.deg),
+        0.05 * u.deg,
+    )
+    html = render_weblog(ctx.manifest, ctx.work_dir)
+
+    assert calls[0][1] == tt0.resolve()
+    assert "FITS Model" in html
+    assert "casa_taylor_terms" in html
+    assert (ctx.work_dir / "run_fits_model.png").exists()
+
+
 def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypatch):
     """Image injection validates entries, predicts with CASA ft, and merges once."""
     from pathlib import Path
@@ -297,3 +350,236 @@ def test_merge_model_data_into_data():
     assert len(calls) == 1
     assert calls[0][0] == "DATA"
     assert np.allclose(calls[0][1], 1.5)
+
+
+def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path):
+    """Existing CASA Taylor-term image directories are copied and aligned."""
+    tt0 = tmp_path / "model.tt0"
+    tt1 = tmp_path / "model.tt1"
+    tt0.mkdir()
+    tt1.mkdir()
+    (tt0 / "table.dat").write_text("table", encoding="utf-8")
+    (tt1 / "table.dat").write_text("table", encoding="utf-8")
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0),
+                "tt1": str(tt1),
+                "reference_frequency_hz": 1.5e9,
+            }
+        ],
+        output_dir=str(tmp_path / "run"),
+    )
+    ctx = create_run_context(cfg)
+    calls = []
+
+    report = validate_casa_taylor_terms(cfg.models[0])
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "skasim.loaders.image_models.run_casa_set_spectral_coordinate",
+            lambda work_dir, image_paths, frequency_hz: calls.append(
+                (work_dir, image_paths, frequency_hz)
+            ),
+        )
+        product = prepare_casa_taylor_terms(ctx, cfg.models[0], 0)
+
+    assert report["nterms"] == 2
+    assert product.model_paths == [
+        ctx.work_dir / "model_entry_01_casa_taylor.tt0.image",
+        ctx.work_dir / "model_entry_01_casa_taylor.tt1.image",
+    ]
+    assert product.nterms == 2
+    assert product.reffreq == "1500000000.0Hz"
+    assert (product.model_paths[0] / "table.dat").exists()
+    assert calls == [(ctx.work_dir, product.model_paths, 1.5e9)]
+
+
+def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
+    """CASA Taylor-term entries are predicted with ft and merged into DATA."""
+    tt0 = tmp_path / "model.tt0"
+    tt1 = tmp_path / "model.tt1"
+    tt0.mkdir()
+    tt1.mkdir()
+    (tt0 / "table.dat").write_text("table", encoding="utf-8")
+    (tt1 / "table.dat").write_text("table", encoding="utf-8")
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0),
+                "tt1": str(tt1),
+                "reference_frequency_hz": 1.5e9,
+            }
+        ],
+        output_dir=str(tmp_path / "run"),
+    )
+    ctx = create_run_context(cfg)
+    calls = []
+
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.run_casa_set_spectral_coordinate",
+        lambda work_dir, image_paths, frequency_hz: calls.append(
+            {"spectral_copy": image_paths, "frequency_hz": frequency_hz}
+        ),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.run_casa_ft",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": visibility_path}),
+    )
+
+    inject_image_models(ctx, tmp_path / "visibilities.MS")
+
+    copied_paths = [
+        ctx.work_dir / "model_entry_01_casa_taylor.tt0.image",
+        ctx.work_dir / "model_entry_01_casa_taylor.tt1.image",
+    ]
+    assert calls[0]["spectral_copy"] == copied_paths
+    assert calls[0]["frequency_hz"] == 1.5e9
+    assert calls[1]["model_paths"] == copied_paths
+    assert calls[1]["nterms"] == 2
+    assert calls[1]["reffreq"] == "1500000000.0Hz"
+    assert calls[2]["merged"] == tmp_path / "visibilities.MS"
+    assert ctx.manifest.milestones[-1].name == "image_injection_completed"
+
+
+def test_run_casa_importfits_uses_batch_fallback(tmp_path, monkeypatch):
+    """CASA importfits can run through a local CASA executable when casatasks is absent."""
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = "ok"
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        # create the side-effects that the real CASA importfits would produce
+        for _fitsimage, imagename in [
+            (tmp_path / "model.tt0.fits", tmp_path / "model.tt0.image"),
+        ]:
+            table_dir = (
+                Path(imagename) if not isinstance(imagename, Path) else imagename
+            )
+            table_dir.mkdir(parents=True, exist_ok=True)
+            (table_dir / "table.dat").write_text("fake", encoding="utf-8")
+        return Result()
+
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.require_casa_executable",
+        lambda: Path("/opt/casa/bin/casa"),
+    )
+    monkeypatch.setattr("skasim.loaders.image_models.subprocess.run", fake_run)
+
+    run_casa_importfits(
+        tmp_path,
+        [(tmp_path / "model.tt0.fits", tmp_path / "model.tt0.image")],
+    )
+
+    script = (tmp_path / "skasim_casa_importfits.py").read_text(encoding="utf-8")
+    assert "from casatasks import importfits" in script
+    assert "importfits(" in script
+    assert "model.tt0.fits" in script
+    assert calls[0][0][:5] == [
+        "/opt/casa/bin/casa",
+        "--nologger",
+        "--nogui",
+        "--log2term",
+        "-c",
+    ]
+    assert calls[0][1]["cwd"] == str(tmp_path)
+
+
+def test_run_casa_ft_uses_batch_fallback(tmp_path, monkeypatch):
+    """CASA ft falls back to a batch CASA process when casatasks is absent."""
+    import sys
+    from types import ModuleType
+
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = "ok"
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return Result()
+
+    # mock casacore.tables.table for the post-batch verification
+    class FakeTable:
+        def __init__(self, path, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def colnames(self):
+            return ["DATA", "MODEL_DATA"]
+
+    fake_tables = ModuleType("casacore.tables")
+    fake_tables.table = FakeTable
+    monkeypatch.setitem(sys.modules, "casacore.tables", fake_tables)
+
+    monkeypatch.setattr("skasim.loaders.image_models.import_casa_tasks", lambda: None)
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.require_casa_executable",
+        lambda: Path("/opt/casa/bin/casa"),
+    )
+    monkeypatch.setattr("skasim.loaders.image_models.subprocess.run", fake_run)
+
+    run_casa_ft(
+        visibility_path=tmp_path / "visibilities.MS",
+        model_paths=[tmp_path / "model.tt0.image", tmp_path / "model.tt1.image"],
+        nterms=2,
+        reffreq="1400000000.0Hz",
+        incremental=True,
+    )
+
+    script = (tmp_path / "skasim_casa_ft.py").read_text(encoding="utf-8")
+    assert "from casatasks import ft" in script
+    assert "model.tt0.image" in script
+    assert "model.tt1.image" in script
+    assert "incremental=True" in script
+    assert calls[0][0][-1] == str(tmp_path / "skasim_casa_ft.py")
+
+
+def test_merge_model_data_into_data_adds_model_column(monkeypatch, tmp_path):
+    """The final delivered DATA column includes image MODEL_DATA."""
+    data = np.array([[[1 + 0j, 2 + 0j]]])
+    model = np.array([[[3 + 0j, 4 + 0j]]])
+    written = {}
+
+    class FakeTable:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def colnames(self):
+            return ["DATA", "MODEL_DATA"]
+
+        def getcol(self, name):
+            return {"DATA": data, "MODEL_DATA": model}[name]
+
+        def putcol(self, name, value):
+            written[name] = value
+
+    casacore_module = ModuleType("casacore")
+    tables_module = ModuleType("casacore.tables")
+    tables_module.table = FakeTable
+    monkeypatch.setitem(sys.modules, "casacore", casacore_module)
+    monkeypatch.setitem(sys.modules, "casacore.tables", tables_module)
+
+    merge_model_data_into_data(tmp_path / "visibilities.MS")
+
+    assert np.array_equal(written["DATA"], data + model)
