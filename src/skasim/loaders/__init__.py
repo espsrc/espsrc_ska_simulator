@@ -5,6 +5,7 @@ from .fits_image import FitsImageLoader
 from .image_models import (
     CasaModelProduct,
     FitsImageInfo,
+    adjust_spectral_reference,
     component_model_entries,
     image_model_center,
     image_model_entries,
@@ -26,6 +27,7 @@ __all__ = [
     "FitsImageLoader",
     "FitsImageInfo",
     "CasaModelProduct",
+    "adjust_spectral_reference",
     "component_model_entries",
     "image_model_entries",
     "image_model_center",

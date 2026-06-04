@@ -24,6 +24,7 @@ from ..config import (
 )
 from ..imaging import write_fits_preview
 from ..manifest import RunContext
+from ..runtime import require_casacore
 
 
 @dataclass(frozen=True)
@@ -312,7 +313,16 @@ def prepare_casa_taylor_terms(
     entry: CasaTaylorTermsModelEntry,
     index: int,
 ) -> CasaModelProduct:
-    """Copy CASA Taylor-term images into the run and align their spectral coordinate."""
+    """Copy CASA Taylor-term images into the run and align their spectral reference.
+
+    The reference frequency is adjusted to the observation band centre.
+    For nterms≥2, tt0 pixel data is scaled:  tt0' = tt0 · (ν_obs / ν_old)^α
+    where α = mean(tt1) / mean(tt0).  tt1 pixel data is unchanged.
+    For nterms=1, only CRVAL4 is updated.
+    """
+    new_ref_hz = ctx.config.observation.frequency_mhz * 1e6
+    old_ref_hz = entry.reference_frequency_hz
+
     source_paths = [
         Path(path).expanduser().resolve()
         for path in (entry.tt0, entry.tt1)
@@ -326,15 +336,68 @@ def prepare_casa_taylor_terms(
             shutil.rmtree(target_path)
         shutil.copytree(source_path, target_path)
         model_paths.append(target_path)
-    run_casa_set_spectral_coordinate(
-        ctx.work_dir,
-        model_paths,
-        entry.reference_frequency_hz,
+
+    nterms = len(model_paths)
+
+    if nterms >= 2:
+        # alpha map: element-wise tt1/tt0, with safeguard for tt0==0 (those pixels
+        # stay zero regardless of spectral index).
+        casacore_table = require_casacore()
+        with casacore_table(str(model_paths[0]), readonly=True, ack=False) as tbl0:
+            tt0_data = np.asarray(tbl0.getcol("map"))
+        with casacore_table(str(model_paths[1]), readonly=True, ack=False) as tbl1:
+            tt1_data = np.asarray(tbl1.getcol("map"))
+
+        # compute element-wise alpha, safeguarding divide-by-zero
+        with np.errstate(divide="ignore", invalid="ignore"):
+            alpha_map = np.where(
+                tt0_data != 0,
+                tt1_data / tt0_data,
+                0.0,
+            )
+        alpha_mean = float(np.mean(alpha_map))
+        logger.info(
+            f"prepare_casa_taylor_terms: alpha_map_mean={alpha_mean:.6f} "
+            f"from element-wise tt1/tt0"
+        )
+
+        adjust_spectral_reference(
+            model_paths[0],
+            old_ref_hz,
+            new_ref_hz,
+            alpha_map=alpha_map,
+        )
+        # tt1: only set CRVAL4, no pixel-data correction
+        adjust_spectral_reference(
+            model_paths[1],
+            old_ref_hz,
+            new_ref_hz,
+            alpha_map=None,
+        )
+    else:
+        # nterms=1: spectrally flat, only set CRVAL4
+        adjust_spectral_reference(
+            model_paths[0],
+            old_ref_hz,
+            new_ref_hz,
+            alpha_map=None,
+        )
+
+    ctx.add_milestone(
+        "adjusted_spectral_reference",
+        "completed",
+        details={
+            "model_type": "casa_taylor_terms",
+            "old_reference_frequency_hz": old_ref_hz,
+            "new_reference_frequency_hz": new_ref_hz,
+            "nterms": nterms,
+        },
     )
+
     return CasaModelProduct(
         model_paths=model_paths,
-        nterms=len(model_paths),
-        reffreq=f"{entry.reference_frequency_hz}Hz",
+        nterms=nterms,
+        reffreq=f"{new_ref_hz}Hz",
         intermediates=model_paths,
     )
 
@@ -344,7 +407,14 @@ def prepare_continuum_i_alpha_for_casa(
     entry: ContinuumIAlphaModelEntry,
     index: int,
 ) -> CasaModelProduct:
-    """Create CASA image products for a continuum I+alpha model."""
+    """Create CASA image products for a continuum I+alpha model.
+
+    Adjusts the spectral reference to the observation band centre using
+    the explicit spectral index from the model entry.
+    """
+    new_ref_hz = ctx.config.observation.frequency_mhz * 1e6
+    old_ref_hz = entry.reference_frequency_hz
+
     stokes_path = Path(entry.stokes_i).expanduser().resolve()
     alpha_path = Path(entry.alpha).expanduser().resolve()
     prefix = f"model_entry_{index + 1:02d}_continuum"
@@ -375,12 +445,107 @@ def prepare_continuum_i_alpha_for_casa(
             [(tt0_fits, tt0_image), (tt1_fits, tt1_image)],
         )
 
+    # adjust spectral reference: tt0 pixel data scaled by (ν_new/ν_old)^α
+    # α is the mean spectral index from the alpha map
+    alpha_mean = float(np.mean(alpha_data))
+    adjust_spectral_reference(
+        tt0_image,
+        old_ref_hz,
+        new_ref_hz,
+        alpha_map=alpha_data,
+    )
+    # tt1: only set CRVAL4, no pixel-data correction
+    adjust_spectral_reference(
+        tt1_image,
+        old_ref_hz,
+        new_ref_hz,
+        alpha_map=None,
+    )
+
+    ctx.add_milestone(
+        "adjusted_spectral_reference",
+        "completed",
+        details={
+            "model_type": "continuum_i_alpha",
+            "old_reference_frequency_hz": old_ref_hz,
+            "new_reference_frequency_hz": new_ref_hz,
+            "alpha_mean": alpha_mean,
+            "nterms": 2,
+        },
+    )
+
     return CasaModelProduct(
         model_paths=[tt0_image, tt1_image],
         nterms=2,
-        reffreq=f"{entry.reference_frequency_hz}Hz",
+        reffreq=f"{new_ref_hz}Hz",
         intermediates=[tt0_fits, tt1_fits],
     )
+
+
+def adjust_spectral_reference(
+    image_path: Path,
+    old_ref_hz: float,
+    new_ref_hz: float,
+    alpha_map: np.ndarray | None = None,
+) -> float:
+    """Adjust the spectral reference of a CASA image to the observation band centre.
+
+    For nterms=1 (alpha_map is None), set CRVAL4 to new_ref_hz only — the model
+    is spectrally flat and no pixel-data correction is needed.
+
+    For nterms≥2 (alpha_map provided), correct the pixel data element-wise following
+    CASA's Taylor-series convention::
+
+        tt0'(x,y) = tt0(x,y) · (ν_new / ν_old) ^ α(x,y)
+
+    where α(x,y) = tt1(x,y) / tt0(x,y)   for each pixel.  CRVAL4 is also set.
+
+    Returns the adjusted reference frequency in Hz (always new_ref_hz).
+    """
+    if alpha_map is not None:
+        casacore_table = require_casacore()
+
+        # element-wise scaling
+        factor = (new_ref_hz / old_ref_hz) ** alpha_map
+        with casacore_table(str(image_path), readonly=False, ack=False) as tbl:
+            data = np.asarray(tbl.getcol("map"))
+            corrected = data * factor
+            tbl.putcol("map", corrected)
+        logger.info(
+            f"Adjusted pixel data in {image_path}: ref_freq {old_ref_hz:.3e}Hz → "
+            f"{new_ref_hz:.3e}Hz (factor range: [{np.min(factor):.4f}, {np.max(factor):.4f}])"
+        )
+    else:
+        logger.info(
+            f"Spectrally flat image {image_path}: updating CRVAL4 = {new_ref_hz:.3e}Hz "
+            "(no pixel-data correction)"
+        )
+
+    _set_crval4_via_script(image_path.parent, [image_path], new_ref_hz)
+    return new_ref_hz
+
+
+def _set_crval4_via_script(
+    work_dir: Path,
+    image_paths: list[Path],
+    frequency_hz: float,
+) -> None:
+    """Set CRVAL4 on CASA images — subprocess fallback for environments without casatasks."""
+    try:
+        from casatasks import imhead
+
+        for image_path in image_paths:
+            imhead(
+                imagename=str(image_path),
+                mode="put",
+                hdkey="crval4",
+                hdvalue=f"{frequency_hz}Hz",
+            )
+        return
+    except Exception:
+        pass  # fall through to batch mode
+
+    run_casa_set_spectral_coordinate(work_dir, image_paths, frequency_hz)
 
 
 def import_casa_tasks():
