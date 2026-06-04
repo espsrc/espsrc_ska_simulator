@@ -86,7 +86,7 @@ the package dependencies. To inspect it directly, use::
 The pipeline runs shadeMS with U and V axes, a square canvas, and writable
 Matplotlib/Numba cache directories inside the run output directory.
 
-Verifying The Installation
+Verifying the installation
 --------------------------
 
 For the pip-only path, confirm that the CLI can be inspected::

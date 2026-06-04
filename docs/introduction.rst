@@ -26,13 +26,19 @@ The goal of ``skasim`` is to deliver a low-friction wrapper that bundles existin
 - **A strict configuration model** based on Pydantic — ``SimConfig``,
   ``ObsConfig``, ``ImgConfig`` — that validates parameters at construction time
   and rejects removed 0.1 fields.
-- **Multiple sky-model inputs**: generated source intensities, FITS catalogs,
-  JSON source lists, Pickle/Karabo models, and named built-in catalogs
-  (MIGHTEE, GLEAM, SKAMid).
-- **Two imaging pathways**: fast dirty imaging via OSKAR, or cleaned (CLEAN-deconvolved) imaging via the external WSClean binary.
-- **A single CLI entrypoint** — that exposes all options as command-line arguments.
-- **Run records**: every run writes a structured manifest and a weblog, including
-  failed runs.
+- **Multiple sky-model inputs**: Generated point sources, component catalogs 
+  (FITS, JSON, Karabo), and advanced image-based models including CASA Taylor 
+  terms and FITS I+Alpha maps with automatic spectral reference adjustment.
+- **Support for multi-imaging passes**: Run multiple imaging configurations 
+  (e.g., varying deconvolution settings or robust weights) in a single pipeline 
+  execution, each with its own result directory and weblog section.
+- **Two imaging pathways**: Fast dirty imaging via OSKAR, or cleaned 
+  (CLEAN-deconvolved) imaging via WSClean.
+- **A single CLI entrypoint**: Exposes the full configuration model as 
+  command-line arguments.
+- **Automated run records**: Every run produces a structured JSON manifest 
+  and a self-contained ``weblog.html`` report, facilitating provenance 
+  tracking and sharing.
 
 How it works
 -------------

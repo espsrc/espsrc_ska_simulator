@@ -1,5 +1,7 @@
-skasim — SKA Synthetic Observation Simulator
-==============================================
+skasim
+======
+
+Simulator for SKA-era radio interferometry.
 
 .. toctree::
    :maxdepth: 2
@@ -8,19 +10,12 @@ skasim — SKA Synthetic Observation Simulator
    introduction
    installation
    guide
+   outputs
    examples
    api
 
-Overview
---------
-
-``skasim`` is a Python package for simulating SKA (Square Kilometre Array)
-synthetic observations.
-
-*work in progress*
-
 Indices and tables
-------------------
+==================
 
 * :ref:`genindex`
 * :ref:`modindex`
