@@ -301,58 +301,51 @@ def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypat
 
     # two entries -> two ft calls + one merge
     assert len(calls) == 3
-    ft_calls = [c for c in calls if "model" in c]
+    ft_calls = [c for c in calls if "visibility_path" in c]
     assert ft_calls[0].get("incremental") is False
     assert ft_calls[1].get("incremental") is True
     assert any(c.get("merged") == "fake.ms" for c in calls)
 
 
-def test_merge_model_data_into_data():
+def test_merge_model_data_into_data(monkeypatch, tmp_path):
     """MODEL_DATA is accumulated into DATA."""
     calls = []
 
     class FakeTable:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *_args, **_kwargs):
             pass
 
         def __enter__(self):
             return self
 
-        def __exit__(self, *args):
-            pass
+        def __exit__(self, *_exc):
+            return False
 
         def colnames(self):
             return ["DATA", "MODEL_DATA"]
 
         def getcol(self, name):
-            if name == "DATA":
-                return np.ones((4, 1, 1))
-            if name == "MODEL_DATA":
-                return np.ones((4, 1, 1)) * 0.5
-            return None
+            return {
+                "DATA": np.ones((4, 1, 1)),
+                "MODEL_DATA": np.ones((4, 1, 1)) * 0.5,
+            }[name]
 
         def putcol(self, name, value):
             calls.append((name, value))
 
-    import skasim.loaders.image_models as im_mod
+    # inject fake casacore.tables.table before the function imports it
+    fake_tables = ModuleType("casacore.tables")
+    fake_tables.table = FakeTable
+    monkeypatch.setitem(sys.modules, "casacore.tables", fake_tables)
 
-    orig_table = getattr(im_mod, "table", None)
-    im_mod.table = lambda *a, **k: FakeTable(*a, **k)
-    try:
-        merge_model_data_into_data(Path("fake.ms"))
-    finally:
-        if orig_table is not None:
-            im_mod.table = orig_table
-        else:
-            if hasattr(im_mod, "table"):
-                delattr(im_mod, "table")
+    merge_model_data_into_data(tmp_path / "visibilities.MS")
 
     assert len(calls) == 1
     assert calls[0][0] == "DATA"
     assert np.allclose(calls[0][1], 1.5)
 
 
-def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path):
+def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path, monkeypatch):
     """Existing CASA Taylor-term image directories are copied and aligned."""
     tt0 = tmp_path / "model.tt0"
     tt1 = tmp_path / "model.tt1"
@@ -374,15 +367,38 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path):
     ctx = create_run_context(cfg)
     calls = []
 
+    # fake casacore table to satisfy require_casacore + pixel reads
+    fake_map_data = np.ones((4, 4), dtype=np.float32)
+
+    class FakeCasacoreTable:
+        def __init__(self, path, readonly=True, ack=False):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def getcol(self, name):
+            return fake_map_data
+
+        def putcol(self, name, value):
+            pass
+
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.require_casacore",
+        lambda: FakeCasacoreTable,
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.run_casa_set_spectral_coordinate",
+        lambda work_dir, image_paths, frequency_hz: calls.append(
+            (work_dir, image_paths, frequency_hz)
+        ),
+    )
+
     report = validate_casa_taylor_terms(cfg.models[0])
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(
-            "skasim.loaders.image_models.run_casa_set_spectral_coordinate",
-            lambda work_dir, image_paths, frequency_hz: calls.append(
-                (work_dir, image_paths, frequency_hz)
-            ),
-        )
-        product = prepare_casa_taylor_terms(ctx, cfg.models[0], 0)
+    product = prepare_casa_taylor_terms(ctx, cfg.models[0], 0)
 
     assert report["nterms"] == 2
     assert product.model_paths == [
@@ -390,9 +406,12 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path):
         ctx.work_dir / "model_entry_01_casa_taylor.tt1.image",
     ]
     assert product.nterms == 2
-    assert product.reffreq == "1500000000.0Hz"
+    assert product.reffreq == "700000000.0Hz"
     assert (product.model_paths[0] / "table.dat").exists()
-    assert calls == [(ctx.work_dir, product.model_paths, 1.5e9)]
+    # adjust_spectral_reference calls _set_crval4_via_script for each term
+    assert len(calls) == 2
+    assert calls[0] == (ctx.work_dir, [product.model_paths[0]], 700_000_000.0)
+    assert calls[1] == (ctx.work_dir, [product.model_paths[1]], 700_000_000.0)
 
 
 def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
@@ -417,6 +436,29 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
     ctx = create_run_context(cfg)
     calls = []
 
+    # fake casacore table to satisfy require_casacore + pixel reads
+    fake_map_data = np.ones((4, 4), dtype=np.float32)
+
+    class FakeCasacoreTable:
+        def __init__(self, path, readonly=True, ack=False):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def getcol(self, name):
+            return fake_map_data
+
+        def putcol(self, name, value):
+            pass
+
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.require_casacore",
+        lambda: FakeCasacoreTable,
+    )
     monkeypatch.setattr(
         "skasim.loaders.image_models.run_casa_set_spectral_coordinate",
         lambda work_dir, image_paths, frequency_hz: calls.append(
@@ -438,12 +480,17 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
         ctx.work_dir / "model_entry_01_casa_taylor.tt0.image",
         ctx.work_dir / "model_entry_01_casa_taylor.tt1.image",
     ]
-    assert calls[0]["spectral_copy"] == copied_paths
-    assert calls[0]["frequency_hz"] == 1.5e9
-    assert calls[1]["model_paths"] == copied_paths
-    assert calls[1]["nterms"] == 2
-    assert calls[1]["reffreq"] == "1500000000.0Hz"
-    assert calls[2]["merged"] == tmp_path / "visibilities.MS"
+    # prepare_casa_taylor_terms now adjusts spectral reference inline:
+    #   calls[0]: adjust_spectral_reference for tt0 (via run_casa_set_spectral_coordinate)
+    #   calls[1]: adjust_spectral_reference for tt1 (via run_casa_set_spectral_coordinate)
+    #   calls[2]: run_casa_ft
+    #   calls[3]: merge_model_data_into_data
+    assert calls[0]["frequency_hz"] == 700_000_000.0
+    assert calls[1]["frequency_hz"] == 700_000_000.0
+    assert calls[2]["model_paths"] == copied_paths
+    assert calls[2]["nterms"] == 2
+    assert calls[2]["reffreq"] == "700000000.0Hz"
+    assert calls[3]["merged"] == tmp_path / "visibilities.MS"
     assert ctx.manifest.milestones[-1].name == "image_injection_completed"
 
 
