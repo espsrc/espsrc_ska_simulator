@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import astropy.units as u
 import numpy as np
 import pytest
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 
 from skasim.config import ImgConfig, ObsConfig, SimConfig
@@ -19,10 +20,11 @@ from skasim.imaging import (
     _sky_model_position_angle,
     build_wsclean_argv,
     collect_wsclean_outputs,
+    run_dirty_imaging,
     run_wsclean_command,
-    wsclean_output_prefix,
     write_fits_preview,
     write_sky_model_previews,
+    wsclean_output_prefix,
 )
 from skasim.manifest import create_run_context
 
@@ -30,16 +32,16 @@ from skasim.manifest import create_run_context
 def test_build_wsclean_argv_uses_default_command():
     """The default WSClean command builds an argv list starting with wsclean."""
     config = SimConfig(
-        imaging=ImgConfig(imager="wsclean", wsclean_command="wsclean", pixels=256)
+        imaging=[ImgConfig(imager="wsclean", wsclean_command="wsclean", pixels=256)]
     )
 
     argv = build_wsclean_argv(
-        config=config,
+        img_config=config.imaging[0],
         visibility_path=Path("visibilities.MS"),
         fov=0.2 * u.deg,
         output_prefix="run-clean",
+        n_channels=1,
     )
-
     assert argv[0] == "wsclean"
     assert "-name" in argv
     assert argv[argv.index("-name") + 1] == "run-clean"
@@ -50,11 +52,11 @@ def test_build_wsclean_argv_parses_singularity_command():
     """Containerized WSClean commands are parsed into argv without shell text."""
     command = "singularity exec /mnt/software/containers/wsclean-3.10-dysco.sif wsclean"
     config = SimConfig(
-        imaging=ImgConfig(imager="wsclean", wsclean_command=command, pixels=256)
+        imaging=[ImgConfig(imager="wsclean", wsclean_command=command, pixels=256)]
     )
 
     argv = build_wsclean_argv(
-        config=config,
+        img_config=config.imaging[0],
         visibility_path=Path("visibilities.MS"),
         fov=0.2 * u.deg,
         output_prefix="run-clean",
@@ -73,14 +75,15 @@ def test_build_wsclean_argv_caps_channels_out_to_available_channels():
     """Small smoke runs should not request more WSClean outputs than channels."""
     config = SimConfig(
         observation=ObsConfig(bandwidth_mhz=25.0, n_channels=2),
-        imaging=ImgConfig(imager="wsclean", pixels=256),
+        imaging=[ImgConfig(imager="wsclean", pixels=256)],
     )
 
     argv = build_wsclean_argv(
-        config=config,
+        img_config=config.imaging[0],
         visibility_path=Path("visibilities.MS"),
         fov=0.2 * u.deg,
         output_prefix="run-clean",
+        n_channels=config.observation.n_channels,
     )
 
     assert argv[argv.index("-channels-out") + 1] == "2"
@@ -107,6 +110,67 @@ def test_run_wsclean_command_uses_argv_and_working_directory(tmp_path, monkeypat
     assert calls[0][1]["cwd"] == str(tmp_path)
     assert calls[0][1]["shell"] is False
     assert calls[0][1]["check"] is True
+
+
+def test_run_dirty_imaging_passes_icrs_phase_centre(tmp_path, monkeypatch):
+    """FITS-derived FK5 centres are transformed before calling Karabo dirty imaging."""
+    captured = {}
+
+    class FakeVisibility:
+        def __init__(self, path):
+            self.path = path
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            captured["phase_centre"] = kwargs["imaging_phase_centre"]
+
+    class FakeDirtyImage:
+        def write_to_file(self, path, overwrite):
+            Path(path).write_text("fits", encoding="utf-8")
+
+    class FakeImager:
+        def __init__(self, config):
+            self.config = config
+
+        def create_dirty_image(self, visibility):
+            captured["visibility"] = visibility
+            return FakeDirtyImage()
+
+    def fake_require(module_name):
+        if module_name == "karabo.imaging.imager_oskar":
+            return SimpleNamespace(
+                OskarDirtyImagerConfig=FakeConfig,
+                OskarDirtyImager=FakeImager,
+            )
+        if module_name == "karabo.simulation.visibility":
+            return SimpleNamespace(Visibility=FakeVisibility)
+        raise AssertionError(module_name)
+
+    monkeypatch.setattr("skasim.imaging.require_karabo_module", fake_require)
+    monkeypatch.setattr(
+        "skasim.imaging.write_fits_preview",
+        lambda img_path, png_path, title: Path(png_path).write_text(
+            "png", encoding="utf-8"
+        ),
+    )
+
+    config = SimConfig(
+        output_dir=str(tmp_path / "run"),
+        imaging=[ImgConfig(pixels=64, tag="default")],
+    )
+    ctx = create_run_context(config)
+
+    run_dirty_imaging(
+        ctx,
+        tmp_path / "visibilities.MS",
+        0.1 * u.deg,
+        SkyCoord(10.0 * u.deg, 2.0 * u.deg, frame="fk5"),
+        ctx.config.imaging[0],
+        ctx.work_dir,
+    )
+
+    assert captured["phase_centre"].frame.name == "icrs"
+    assert captured["visibility"].path == str(tmp_path / "visibilities.MS")
 
 
 def test_collect_wsclean_outputs_matches_only_configured_prefix(tmp_path):
@@ -180,8 +244,38 @@ def test_write_sky_model_previews_writes_full_and_fov_pngs(tmp_path):
     sky_model = SkyModel(
         np.array(
             [
-                [150.0, 2.0, 1.0, 0.0, 0.0, 0.0, 700e6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [150.1, 2.1, 0.5, 0.0, 0.0, 0.0, 700e6, 0.0, 0.0, 4.0, 2.0, 0.0, 0.0, 0.0],
+                [
+                    150.0,
+                    2.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    700e6,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+                [
+                    150.1,
+                    2.1,
+                    0.5,
+                    0.0,
+                    0.0,
+                    0.0,
+                    700e6,
+                    0.0,
+                    0.0,
+                    4.0,
+                    2.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
             ]
         )
     )
@@ -244,7 +338,9 @@ def test_flux_marker_sizes_scale_with_flux_density():
 
 def test_reference_catalog_generator_writes_ds9_regions(tmp_path):
     """Reference JSON catalog generation has a matching DS9 region writer."""
-    script = Path(__file__).resolve().parents[1] / "scripts" / "generate_gaussian_catalog.py"
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "generate_gaussian_catalog.py"
+    )
     spec = importlib.util.spec_from_file_location("generate_gaussian_catalog", script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -271,9 +367,13 @@ def test_reference_catalog_generator_writes_ds9_regions(tmp_path):
     assert "point(150.0000000000,2.0000000000) # point=cross 8" in text
 
 
-def test_reference_catalog_generator_uses_broad_demo_distributions(tmp_path, monkeypatch):
+def test_reference_catalog_generator_uses_broad_demo_distributions(
+    tmp_path, monkeypatch
+):
     """Reference catalog fluxes and sizes exercise compact, faint, and extended sources."""
-    script = Path(__file__).resolve().parents[1] / "scripts" / "generate_gaussian_catalog.py"
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "generate_gaussian_catalog.py"
+    )
     spec = importlib.util.spec_from_file_location("generate_gaussian_catalog", script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -283,10 +383,14 @@ def test_reference_catalog_generator_uses_broad_demo_distributions(tmp_path, mon
 
     import json
 
-    sources = json.loads((tmp_path / "demo_output" / "reference_gaussian_catalog.json").read_text())
+    sources = json.loads(
+        (tmp_path / "demo_output" / "reference_gaussian_catalog.json").read_text()
+    )
     fluxes = np.array([source["I"] for source in sources])
     major_axes = np.array([source["major_axis"] for source in sources])
-    axis_ratios = np.array([source["minor_axis"] / source["major_axis"] for source in sources])
+    axis_ratios = np.array(
+        [source["minor_axis"] / source["major_axis"] for source in sources]
+    )
     position_angles = np.array([source["pa"] for source in sources])
     spectral_indices = np.array([source["spec_index"] for source in sources])
 
@@ -330,9 +434,7 @@ def test_padded_limits_use_source_coordinates():
     assert upper > 150.5
 
 
-def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
-    tmp_path, monkeypatch
-):
+def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(tmp_path, monkeypatch):
     """WSClean imaging records only stable outputs for the current prefix."""
     from skasim.imaging import run_wsclean_imaging
 
@@ -350,7 +452,9 @@ def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
             return SimpleNamespace(TMP_PREFIX_CUSTOM="tmp", TMP_PURPOSE_CUSTOM="test")
         if module_name == "karabo.util.file_handler":
             return SimpleNamespace(
-                FileHandler=lambda: SimpleNamespace(get_tmp_dir=lambda **kwargs: tmp_path)
+                FileHandler=lambda: SimpleNamespace(
+                    get_tmp_dir=lambda **kwargs: tmp_path
+                )
             )
         raise AssertionError(module_name)
 
@@ -359,6 +463,7 @@ def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
     def fake_run(argv, work_dir):
         captured_argv.append(argv)
         prefix = argv[argv.index("-name") + 1]
+        work_dir.mkdir(parents=True, exist_ok=True)
         (work_dir / f"{prefix}-MFS-image.fits").write_text("fits", encoding="utf-8")
         (work_dir / "old-run-MFS-image.fits").write_text("old", encoding="utf-8")
 
@@ -378,17 +483,23 @@ def test_run_wsclean_imaging_uses_run_prefix_and_stable_outputs(
 
     config = SimConfig(
         output_dir=str(tmp_path / "example"),
-        imaging=ImgConfig(imager="wsclean"),
+        imaging=[ImgConfig(imager="wsclean")],
     )
     ctx = create_run_context(config)
 
-    run_wsclean_imaging(ctx, ctx.visibility_path, 0.2 * u.deg)
+    run_wsclean_imaging(
+        ctx,
+        ctx.visibility_path,
+        0.2 * u.deg,
+        img_config=config.imaging[0],
+        sub_dir=ctx.work_dir / config.imaging[0].tag,
+    )
 
-    prefix = wsclean_output_prefix(ctx)
+    prefix = f"{config.imaging[0].tag}_wsclean"
     output_paths = [output.path for output in ctx.manifest.outputs]
     assert captured_argv[0][captured_argv[0].index("-name") + 1] == prefix
-    assert f"{prefix}-MFS-image.fits" in output_paths
-    assert f"{prefix}-MFS-image.png" in output_paths
+    assert f"default/{prefix}-MFS-image.fits" in output_paths
+    assert f"default/{prefix}-MFS-image.png" in output_paths
     assert all("old-run" not in output for output in output_paths)
     assert all("_bw" not in output for output in output_paths)
 
@@ -411,12 +522,15 @@ def test_run_wsclean_imaging_cleanup_keeps_run_scoped_outputs(tmp_path, monkeypa
             return SimpleNamespace(TMP_PREFIX_CUSTOM="tmp", TMP_PURPOSE_CUSTOM="test")
         if module_name == "karabo.util.file_handler":
             return SimpleNamespace(
-                FileHandler=lambda: SimpleNamespace(get_tmp_dir=lambda **kwargs: tmp_path)
+                FileHandler=lambda: SimpleNamespace(
+                    get_tmp_dir=lambda **kwargs: tmp_path
+                )
             )
         raise AssertionError(module_name)
 
     def fake_run(argv, work_dir):
         prefix = argv[argv.index("-name") + 1]
+        work_dir.mkdir(parents=True, exist_ok=True)
         (work_dir / f"{prefix}-MFS-image.fits").write_text("fits", encoding="utf-8")
         (work_dir / "wsclean-0000-temp.fits").write_text("temp", encoding="utf-8")
 
@@ -436,13 +550,19 @@ def test_run_wsclean_imaging_cleanup_keeps_run_scoped_outputs(tmp_path, monkeypa
 
     config = SimConfig(
         output_dir=str(tmp_path / "wsclean-00case"),
-        imaging=ImgConfig(imager="wsclean"),
+        imaging=[ImgConfig(imager="wsclean")],
     )
     ctx = create_run_context(config)
 
-    run_wsclean_imaging(ctx, ctx.visibility_path, 0.2 * u.deg)
+    run_wsclean_imaging(
+        ctx,
+        ctx.visibility_path,
+        0.2 * u.deg,
+        img_config=config.imaging[0],
+        sub_dir=ctx.work_dir / config.imaging[0].tag,
+    )
 
-    prefix = wsclean_output_prefix(ctx)
+    prefix = f"{config.imaging[0].tag}_wsclean"
     output_paths = [output.path for output in ctx.manifest.outputs]
-    assert f"{prefix}-MFS-image.fits" in output_paths
-    assert not (ctx.work_dir / "wsclean-0000-temp.fits").exists()
+    assert f"default/{prefix}-MFS-image.fits" in output_paths
+    assert not (ctx.work_dir / "default" / "wsclean-0000-temp.fits").exists()

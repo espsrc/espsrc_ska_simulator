@@ -1,0 +1,36 @@
+{
+    "description": "VLA-C composite: component catalog + continuum I+α image, dirty image (60 s)",
+    "telescope": "VLA",
+    "telescope_version": "C",
+    "models": [
+        {
+            "type": "component_sky_model",
+            "path": "configs/fits_model/quick_component_catalog.json",
+            "sky_format": "json"
+        },
+        {
+            "type": "continuum_i_alpha",
+            "stokes_i": "models_for_testing/CY4223_L_004_20180322_avg_target_3C320_vla_loop_01-0003-model.fits",
+            "alpha": "configs/fits_model/generated/3c320_flat_alpha.fits",
+            "reference_frequency_hz": 1455500000.0
+        }
+    ],
+    "center": "15h31m25.36s 35d33m40.2s",
+    "observation": {
+        "frequency_mhz": 1455.5,
+        "bandwidth_mhz": 8.0,
+        "n_channels": 128,
+        "observation_time_s": 60
+    },
+    "uv_coverage": false,
+    "imaging": [
+        {
+            "tag": "dirty",
+            "pixels": 256,
+            "fov_deg": 0.04,
+            "imager": "oskar-dirty"
+        }
+    ],
+    "output_dir": "demo_output/fits_model_vla_c_catalog_plus_image_quick",
+    "overwrite": true
+}

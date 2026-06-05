@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 
 import astropy.coordinates as acoord
 import numpy as np
-import xarray as xr
 from astropy import units as u
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord
 from astropy.coordinates.name_resolve import NameResolveError
@@ -13,8 +12,7 @@ from astropy.time import Time
 from astropy.utils.iers import conf as iers_conf
 from loguru import logger
 
-from .utils import show_exc
-from radio_beam import Beam
+from .utils import get_diameter
 
 
 class Source:
@@ -139,6 +137,7 @@ class Source:
             "isl_rms": self.isl_rms.to(u.Jy).value,
         }
 
+    @staticmethod
     def from_array(
         array,
         colnames=[
@@ -308,7 +307,7 @@ class Source:
                 sources.append(src)
 
             except Exception as e:
-                logger.error(show_exc(e))
+                logger.exception("Failed to create source from row")
                 continue
 
         return sources
@@ -319,7 +318,7 @@ class Source:
         coord = SkyCoord(ra=self.ra, dec=self.dec, unit=(u.deg, u.deg), frame="icrs")
         # print RA/DEC in hms/dms format
 
-        str2print = f"Source({coord.to_string('hmsdms')}, I={self.I:.6f})"
+        str2print = f"Source({coord.to_string('hmsdms')}, I={self.I:.6f}"
 
         json_values = self.to_json()
         for key, value in json_values.items():
@@ -429,6 +428,7 @@ class Source:
             true_redshift=data[12], obs_redshift=data[13],
         )
 
+    @staticmethod
     def from_json(json_data):
         # create a Source object from a JSON dictionary
         return Source(
@@ -659,13 +659,12 @@ class SkyModel(KaraboSkyModel):
             # calculate the center of the sky model if phase_center is not set
             if sources is None:
                 sources = self.sources
-            if sources.size > 0:
-                center_ra = np.mean(np.array(sources[:, 0])) * u.deg
-                center_dec = np.mean(np.array(sources[:, 1])) * u.deg
-                self.phase_center = SkyCoord(ra=center_ra, dec=center_dec, frame="icrs")
-                return self.phase_center
-            else:
+            if sources is None or sources.size == 0:
                 raise ValueError("SkyModel has no sources and phase_center is not set.")
+            center_ra = np.mean(np.array(sources[:, 0])) * u.deg
+            center_dec = np.mean(np.array(sources[:, 1])) * u.deg
+            self.phase_center = SkyCoord(ra=center_ra, dec=center_dec, frame="icrs")
+            return self.phase_center
 
     @staticmethod
     def from_fits_table(fits_file, log_file="sky_model.log", prefix="sky_model"):

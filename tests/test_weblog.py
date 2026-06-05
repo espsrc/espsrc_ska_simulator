@@ -1,5 +1,6 @@
 """Weblog rendering behavior."""
 
+import sys
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -14,7 +15,7 @@ def test_weblog_renders_structured_outputs(tmp_path):
     """The weblog displays structured output kinds and paths."""
     manifest = RunManifest(
         run_id="example",
-        started_at=datetime(2026, 5, 22, 17, 30, 0),
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
         config=SimConfig(),
     )
     manifest.add_output("visibility", "visibilities.MS")
@@ -32,7 +33,7 @@ def test_weblog_skips_missing_image_outputs(tmp_path):
     """Failed runs can render even if an image output record points to a missing file."""
     manifest = RunManifest(
         run_id="missing-image",
-        started_at=datetime(2026, 5, 22, 17, 30, 0),
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
         config=SimConfig(),
     )
     manifest.add_output("image_product", "missing.png", imager="wsclean", role="image")
@@ -167,20 +168,22 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
         run_id="setup-summary",
         started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
         config=SimConfig(
-            clean_iterations=500,
             observation=ObsConfig(
                 frequency_mhz=1300.0,
                 bandwidth_mhz=100.0,
                 n_channels=8,
                 observation_time_s=60,
             ),
-            imaging=ImgConfig(
-                imager="wsclean",
-                pixels=1024,
-                fov_deg=1.0,
-                robust=-0.5,
-                wsclean_command="wsclean",
-            ),
+            imaging=[
+                ImgConfig(
+                    imager="wsclean",
+                    pixels=1024,
+                    fov_deg=1.0,
+                    robust=-0.5,
+                    wsclean_command="wsclean",
+                    clean_iterations=500,
+                )
+            ],
         ),
     )
     manifest.add_milestone(
@@ -216,14 +219,13 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
     assert "12.5 MHz" in html
     assert "Total Bandwidth" in html
     assert "100 MHz" in html
-    assert "Imaging Setup" in html
+    assert "Imaging Products" in html
     assert "1024 x 1024 pixels" in html
     assert "Pixels</th>" not in html
     assert "Total FoV" in html
     assert "1 deg" in html
     assert "Pixel Size" in html
     assert "3.5156 arcsec" in html
-    assert "Cleaning & Imager Parameters" in html
     assert "Clean iterations" in html
     assert "500" in html
     assert "Major-cycle gain" in html
@@ -254,6 +256,31 @@ def test_weblog_renders_antenna_count_in_telescope_section(tmp_path):
 
     assert "Antennas" in html
     assert "64" in html
+
+
+def test_weblog_renders_uv_coverage_next_to_telescope_layout(tmp_path):
+    """UV coverage is rendered in the telescope section, not duplicated in the gallery."""
+    manifest = RunManifest(
+        run_id="uv-layout",
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
+        config=SimConfig(),
+    )
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+        b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    (tmp_path / "telescope.png").write_bytes(png_bytes)
+    (tmp_path / "uvcoverage.png").write_bytes(png_bytes)
+    manifest.add_output("plot", "telescope.png", role="telescope")
+    manifest.add_output("plot", "uvcoverage.png", role="uv_coverage")
+
+    html = render_weblog(manifest, tmp_path)
+
+    assert "Telescope Layout" in html
+    assert "UV Coverage" in html
+    assert html.index("Telescope Layout") < html.index("UV Coverage")
+    assert "<h2>Supporting Plots</h2>" not in html
 
 
 def test_weblog_uses_known_antenna_count_for_older_meerkat_manifests(tmp_path):
@@ -288,3 +315,95 @@ def test_weblog_renders_software_versions(tmp_path):
     assert "Software Versions" in html
     for name, _ in _software_versions():
         assert name in html
+
+
+def test_sky_model_summary_typed_models(tmp_path):
+    """_sky_model_summary describes typed model entries with clear labels."""
+    from skasim.weblog import _sky_model_summary
+
+    stokes_i = tmp_path / "stokes_i.fits"
+    alpha_f = tmp_path / "alpha.fits"
+    tt0 = tmp_path / "tt0.image"
+    tt1 = tmp_path / "tt1.image"
+    for p in (stokes_i, alpha_f, tt0, tt1):
+        p.touch()
+
+    config = SimConfig(
+        models=[
+            {"type": "component_sky_model", "catalog": "MIGHTEE"},
+            {
+                "type": "continuum_i_alpha",
+                "stokes_i": str(stokes_i),
+                "alpha": str(alpha_f),
+                "reference_frequency_hz": 1.4e9,
+            },
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0),
+                "tt1": str(tt1),
+                "reference_frequency_hz": 1.5e9,
+            },
+        ]
+    )
+    manifest = RunManifest(
+        run_id="test",
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        config=config,
+    )
+    summary = _sky_model_summary(manifest)
+
+    assert len(summary) == 3
+    assert summary[0]["label"] == "Catalog"
+    assert summary[0]["source"] == "MIGHTEE"
+    assert summary[1]["label"] == "Continuum I+α"
+    assert str(stokes_i) in summary[1]["source"]
+    assert summary[2]["label"] == "Taylor terms (nterms=2)"
+    assert summary[2]["nterms"] == 2
+
+
+def test_sky_model_summary_legacy_catalog():
+    """_sky_model_summary falls back to legacy catalog info."""
+    from skasim.weblog import _sky_model_summary
+
+    config = SimConfig(catalog="GLEAM")
+    manifest = RunManifest(
+        run_id="test",
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        config=config,
+    )
+    manifest.add_milestone(
+        "sky_model_loaded", "completed", details={"format": "GLEAM", "n_sources": 42}
+    )
+    summary = _sky_model_summary(manifest)
+
+    assert len(summary) == 1
+    assert summary[0]["label"] == "Built-in catalog"
+    assert summary[0]["source"] == "GLEAM"
+    assert summary[0]["n_sources"] == 42
+
+
+def test_sky_model_summary_weblog_renders_typed_labels(tmp_path):
+    """The weblog HTML contains rendered labels for each typed model entry."""
+    tt0_path = tmp_path / "tt0"
+    tt0_path.touch()
+
+    config = SimConfig(
+        models=[
+            {"type": "component_sky_model", "catalog": "MIGHTEE"},
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0_path),
+                "reference_frequency_hz": 1.5e9,
+            },
+        ]
+    )
+    manifest = RunManifest(
+        run_id="typed-labels",
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        config=config,
+    )
+
+    html = render_weblog(manifest, tmp_path)
+
+    assert "Catalog" in html
+    assert "Taylor terms" in html

@@ -39,7 +39,12 @@ def _find_image_outputs(manifest: RunManifest, work_dir: Path) -> list[dict]:
         output_path = o.path if hasattr(o, "path") else o
         if "telescope" in output_path.lower() or o.role == "telescope":
             continue
-        if "sky_model" in output_path.lower() or o.role in ("sky_model", "sky_model_fov"):
+        if o.role == "uv_coverage":
+            continue
+        if "sky_model" in output_path.lower() or o.role in (
+            "sky_model",
+            "sky_model_fov",
+        ):
             continue
         if not output_path.endswith((".png", ".jpg", ".jpeg")):
             continue
@@ -62,10 +67,12 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
             continue
 
         product_id = output.image_product_id or "imaging"
+        tag = (output.metadata or {}).get("tag", "default")
         product = products.setdefault(
             product_id,
             {
                 "product_id": product_id,
+                "tag": tag,
                 "imager": output.imager,
                 "model": None,
                 "clean": None,
@@ -114,7 +121,11 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
             )
         product["beam"] = _science_product_beam(product)
 
-    return [product for product in products.values() if any(product.get(k) for k in ("model", "clean", "residual", "dirty"))]
+    return [
+        product
+        for product in products.values()
+        if any(product.get(k) for k in ("model", "clean", "residual", "dirty"))
+    ]
 
 
 def _science_product_beam(product: dict) -> dict | None:
@@ -192,23 +203,24 @@ def _observation_summary(manifest: RunManifest) -> dict:
     }
 
 
-def _imaging_summary(
-    manifest: RunManifest,
+def _imaging_summary_for_block(
+    img_config,
     fov_deg: float | None,
     beam: dict | None,
 ) -> dict:
-    """Build display rows for imaging geometry and pixelization."""
-    imaging = manifest.config.imaging
+    """Build display rows for imaging geometry and pixelization for a single ImgConfig block."""
     pixel_size_arcsec = None
     if fov_deg is not None:
-        pixel_size_arcsec = fov_deg * 3600.0 / imaging.pixels
+        pixel_size_arcsec = fov_deg * 3600.0 / img_config.pixels
     return {
-        "imager": imaging.imager,
-        "pixels": imaging.pixels,
-        "image_size": f"{imaging.pixels} x {imaging.pixels}",
+        "imager": img_config.imager,
+        "pixels": img_config.pixels,
+        "image_size": f"{img_config.pixels} x {img_config.pixels}",
         "fov_deg": _format_float(fov_deg, 4) if fov_deg is not None else None,
         "pixel_size_arcsec": (
-            _format_float(pixel_size_arcsec, 4) if pixel_size_arcsec is not None else None
+            _format_float(pixel_size_arcsec, 4)
+            if pixel_size_arcsec is not None
+            else None
         ),
         "beam": _format_beam(beam),
     }
@@ -228,36 +240,36 @@ def _format_beam(beam: dict | None) -> str | None:
     return " · ".join(parts) if parts else None
 
 
-def _imager_parameter_rows(
+def _imager_parameter_rows_for_block(
+    img_config,
     manifest: RunManifest,
     fov_deg: float | None,
     center: tuple[float, float] | None,
 ) -> list[tuple[str, str]]:
-    """Return the effective OSKAR or WSClean parameters shown in the weblog."""
+    """Return the effective OSKAR or WSClean parameters for a single ImgConfig block."""
     config = manifest.config
-    imaging = config.imaging
     n_channels = int(config.observation.n_channels or 1)
     channels_out = min(n_channels, 8)
-    output_prefix = _first_image_product_id(manifest, imaging.imager)
+    output_prefix = _first_image_product_id(manifest, img_config.imager)
     visibility_input = _first_output_path(manifest, "visibility")
     pixel_size_arcsec = None
     if fov_deg is not None:
-        pixel_size_arcsec = fov_deg * 3600.0 / imaging.pixels
+        pixel_size_arcsec = fov_deg * 3600.0 / img_config.pixels
 
-    if imaging.imager == "wsclean":
+    if img_config.imager == "wsclean":
         rows = [
             ("Imager", "WSClean"),
-            ("Command", imaging.wsclean_command),
-            ("Weighting", f"Briggs robust {_format_float(imaging.robust)}"),
+            ("Command", img_config.wsclean_command),
+            ("Weighting", f"Briggs robust {_format_float(img_config.robust)}"),
             ("Multiscale", "enabled"),
-            ("Image size", f"{imaging.pixels} x {imaging.pixels} pixels"),
+            ("Image size", f"{img_config.pixels} x {img_config.pixels} pixels"),
             (
                 "Pixel scale",
                 f"{_format_float(pixel_size_arcsec, 4)} arcsec"
                 if pixel_size_arcsec is not None
                 else "unknown",
             ),
-            ("Clean iterations", str(config.clean_iterations)),
+            ("Clean iterations", str(img_config.clean_iterations)),
             ("Major-cycle gain", "0.8"),
             ("Auto threshold", "0.3"),
             ("Auto mask", "3"),
@@ -273,7 +285,7 @@ def _imager_parameter_rows(
 
     rows = [
         ("Imager", "OSKAR dirty"),
-        ("Image size", f"{imaging.pixels} x {imaging.pixels} pixels"),
+        ("Image size", f"{img_config.pixels} x {img_config.pixels} pixels"),
         (
             "Pixel scale",
             f"{_format_float(pixel_size_arcsec, 4)} arcsec"
@@ -293,6 +305,54 @@ def _imager_parameter_rows(
     if visibility_input is not None:
         rows.append(("Visibility input", visibility_input))
     return rows
+
+
+def _build_imaging_tabs(
+    manifest: RunManifest,
+    science_products: list[dict],
+    fov_deg_default: float | None,
+    center: tuple[float, float] | None,
+) -> list[dict]:
+    """Build one tab dict per imaging block with config summary, parameters, and products."""
+    config = manifest.config
+    if not config.imaging:
+        return []
+
+    tabs: list[dict] = []
+
+    for img_config in config.imaging:
+        tag = img_config.tag
+
+        # Compute FoV for this block
+        fov_deg = img_config.fov_deg
+        if fov_deg is None:
+            fov_deg = fov_deg_default
+
+        # Find beam from this tag's products
+        tag_products = [p for p in science_products if p.get("tag") == tag]
+        beam = None
+        for p in tag_products:
+            if p.get("beam"):
+                beam = p["beam"]
+                break
+
+        tabs.append(
+            {
+                "tag": tag,
+                "imaging_summary": _imaging_summary_for_block(
+                    img_config, fov_deg, beam
+                ),
+                "imager_parameter_rows": _imager_parameter_rows_for_block(
+                    img_config,
+                    manifest,
+                    fov_deg,
+                    center,
+                ),
+                "products": tag_products,
+            }
+        )
+
+    return tabs
 
 
 def _first_image_product_id(manifest: RunManifest, imager: str) -> str | None:
@@ -330,13 +390,17 @@ def _antenna_count(manifest: RunManifest) -> int | None:
 
 def _software_versions() -> list[tuple[str, str]]:
     """Return concise runtime software versions for weblog reproducibility."""
-    return [
+    versions = [
         ("skasim", _package_version("skasim")),
         ("Karabo", _package_version("karabo-pipeline")),
         ("OSKAR", _conda_package_version("oskarpy") or _package_version("oskarpy")),
         ("WSClean", _conda_package_version("wsclean") or _package_version("wsclean")),
-        ("Python", sys.version.split()[0]),
     ]
+    casa_ver = _casa_version()
+    if casa_ver:
+        versions.append(("CASA", casa_ver))
+    versions.append(("Python", sys.version.split()[0]))
+    return versions
 
 
 def _package_version(package_name: str) -> str:
@@ -345,6 +409,34 @@ def _package_version(package_name: str) -> str:
         return version(package_name)
     except PackageNotFoundError:
         return "unknown"
+
+
+def _casa_version() -> str | None:
+    """Detect CASA version from casatasks, python-casacore, or casa binary.
+
+    Returns None when no CASA installation is found (skips the entry entirely).
+    """
+    # casatasks ships with the CASA monolithic distribution
+    try:
+        from casatasks import __version__ as casa_ver
+
+        return str(casa_ver)
+    except Exception:
+        pass
+    # python-casacore is the lightweight bindings package
+    try:
+        import casacore
+
+        return f"casacore {casacore.__version__}"
+    except Exception:
+        pass
+    # fallback: check for casa binary in PATH and scrape version
+    import shutil
+
+    casa_bin = shutil.which("casa")
+    if casa_bin:
+        return "casa (binary)"
+    return None
 
 
 def _conda_package_version(package_name: str) -> str | None:
@@ -442,6 +534,114 @@ def _infer_image_caption(filename: str) -> str:
     return fname  # fallback to filename
 
 
+def _sky_model_summary(manifest: RunManifest) -> list[dict]:
+    """Build a list of sky-model input descriptors for the weblog.
+
+    Each dict has at least 'label' and 'color' (CSS class for the badge),
+    and may include 'source' (file path or catalog name), 'n_sources',
+    'nterms', 'ref_freq_hz', 'stokes'.
+    """
+    config = manifest.config
+    entries: list[dict] = []
+
+    # typed models first
+    for model in config.models:
+        mtype = model.type
+        if mtype == "component_sky_model":
+            if model.catalog:
+                entries.append(
+                    {
+                        "label": "Catalog",
+                        "color": "catalog",
+                        "source": model.catalog,
+                    }
+                )
+            elif model.path:
+                entries.append(
+                    {
+                        "label": "FITS catalog",
+                        "color": "fits-catalog",
+                        "source": model.path,
+                    }
+                )
+        elif mtype == "continuum_i_alpha":
+            entries.append(
+                {
+                    "label": "Continuum I+α",
+                    "color": "continuum",
+                    "source": model.stokes_i,
+                }
+            )
+        elif mtype == "casa_taylor_terms":
+            nterms = 2 if model.tt1 else 1
+            entries.append(
+                {
+                    "label": f"Taylor terms (nterms={nterms})",
+                    "color": "taylor",
+                    "source": model.tt0,
+                    "nterms": nterms,
+                    "ref_freq_hz": model.reference_frequency_hz,
+                }
+            )
+        elif mtype == "static_stokes_maps":
+            stokes = [
+                k.upper()
+                for k in ("i", "q", "u", "v")
+                if getattr(model, f"stokes_{k}") is not None
+            ]
+            entries.append(
+                {
+                    "label": "Static Stokes maps",
+                    "color": "stokes-maps",
+                    "stokes": stokes,
+                }
+            )
+
+    # legacy paths
+    if not config.models:
+        milestone = _find_milestone_details(manifest, "sky_model_loaded")
+        fmt = milestone.get("format", "?")
+        n_sources = milestone.get("n_sources")
+        if config.sky_file:
+            entries.append(
+                {
+                    "label": f"FITS file ({fmt})",
+                    "color": "fits-file",
+                    "source": str(milestone.get("path", config.sky_file)),
+                    "n_sources": n_sources,
+                }
+            )
+        elif config.catalog:
+            entries.append(
+                {
+                    "label": "Built-in catalog",
+                    "color": "catalog",
+                    "source": config.catalog,
+                    "n_sources": n_sources,
+                }
+            )
+        elif config.fits_image:
+            entries.append(
+                {
+                    "label": "FITS image",
+                    "color": "fits-file",
+                    "source": config.fits_image,
+                    "n_sources": n_sources,
+                }
+            )
+        elif fmt == "random":
+            entries.append(
+                {
+                    "label": "Random sources",
+                    "color": "random",
+                    "n_sources": n_sources,
+                    "reference": milestone.get("reference"),
+                }
+            )
+
+    return entries
+
+
 def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
     """generate weblog.html content and write it to disk. returns the html string."""
     env = Environment(
@@ -466,24 +666,32 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             - milestone_lookup["simulation_started"].timestamp_utc
         ).total_seconds()
 
+    # aggregate imaging duration across all tags
+    imaging_starts = [
+        m.timestamp_utc
+        for m in manifest.milestones
+        if m.name.endswith("_started") and m.name.startswith("imaging_")
+    ]
+    imaging_ends = [
+        m.timestamp_utc
+        for m in manifest.milestones
+        if m.name.endswith("_completed") and m.name.startswith("imaging_")
+    ]
     imaging_duration = None
-    if (
-        "imaging_started" in milestone_lookup
-        and "imaging_completed" in milestone_lookup
-    ):
-        imaging_duration = (
-            milestone_lookup["imaging_completed"].timestamp_utc
-            - milestone_lookup["imaging_started"].timestamp_utc
-        ).total_seconds()
+    if imaging_starts and imaging_ends:
+        imaging_duration = (max(imaging_ends) - min(imaging_starts)).total_seconds()
 
     # Derived telescope properties
     from .utils import get_diameter
+
     dish_diameter = None
     derived_fov = None
-    fov_deg_value = manifest.config.imaging.fov_deg
+    fov_deg_value = (
+        manifest.config.imaging[0].fov_deg if manifest.config.imaging else None
+    )
     telescope_name = manifest.config.telescope
     freq_mhz = manifest.config.observation.frequency_mhz
-    
+
     try:
         diam = get_diameter(telescope_name)
         dish_diameter = f"{diam.value:.1f} {diam.unit}"
@@ -496,7 +704,7 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             derived_fov = f"{fov_deg_val:.2f}°"
     except Exception:
         pass
-        
+
     n_stations = _antenna_count(manifest)
 
     # Resolve telescope plot if present
@@ -508,21 +716,37 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             if fpath.exists():
                 telescope_plot = {
                     "path": output_path,
-                    "data": _file_to_base64_data_uri(fpath)
+                    "data": _file_to_base64_data_uri(fpath),
                 }
             break
+
+    # Resolve UV coverage plot if present
+    uv_coverage_plot = None
+    for o in manifest.outputs:
+        output_path = o.path if hasattr(o, "path") else o
+        role = getattr(o, "role", None)
+        if role == "uv_coverage" or "uvcoverage" in output_path.lower():
+            fpath = work_dir / output_path
+            if fpath.exists() and output_path.endswith((".png", ".jpg", ".jpeg")):
+                uv_coverage_plot = {
+                    "path": output_path,
+                    "data": _file_to_base64_data_uri(fpath),
+                }
+                break
 
     # Resolve sky model plot if present
     sky_model_plot = None
     for o in manifest.outputs:
         output_path = o.path if hasattr(o, "path") else o
         role = getattr(o, "role", None)
-        if role == "sky_model" or ("sky_model" in output_path.lower() and "_fov" not in output_path.lower()):
+        if role == "sky_model" or (
+            "sky_model" in output_path.lower() and "_fov" not in output_path.lower()
+        ):
             fpath = work_dir / output_path
             if fpath.exists():
                 sky_model_plot = {
                     "path": output_path,
-                    "data": _file_to_base64_data_uri(fpath)
+                    "data": _file_to_base64_data_uri(fpath),
                 }
             break
 
@@ -531,14 +755,35 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
     for o in manifest.outputs:
         output_path = o.path if hasattr(o, "path") else o
         role = getattr(o, "role", None)
-        if role == "sky_model_fov" or ("sky_model" in output_path.lower() and "_fov" in output_path.lower()):
+        if role == "sky_model_fov" or (
+            "sky_model" in output_path.lower() and "_fov" in output_path.lower()
+        ):
             fpath = work_dir / output_path
             if fpath.exists():
                 sky_model_fov_plot = {
                     "path": output_path,
-                    "data": _file_to_base64_data_uri(fpath)
+                    "data": _file_to_base64_data_uri(fpath),
                 }
             break
+
+    # Resolve FITS image-model preview if present
+    fits_model_plots = []
+    for o in manifest.outputs:
+        output_path = o.path if hasattr(o, "path") else o
+        role = getattr(o, "role", None)
+        if role != "fits_model":
+            continue
+        fpath = work_dir / output_path
+        if fpath.exists() and output_path.endswith((".png", ".jpg", ".jpeg")):
+            fits_model_plots.append(
+                {
+                    "path": output_path,
+                    "data": _file_to_base64_data_uri(fpath),
+                    "model_type": o.metadata.get("model_type")
+                    if hasattr(o, "metadata")
+                    else None,
+                }
+            )
 
     observation_details = _find_milestone_details(manifest, "observation_configured")
     center = None
@@ -551,12 +796,14 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             float(observation_details["phase_center_dec_deg"]),
         )
 
+    sky_model_summary = _sky_model_summary(manifest)
     science_products = _find_science_products(manifest, work_dir)
-    representative_beam = None
-    for product in science_products:
-        if product.get("beam"):
-            representative_beam = product["beam"]
-            break
+    imaging_tabs = _build_imaging_tabs(
+        manifest,
+        science_products,
+        fov_deg_value,
+        center,
+    )
 
     html = template.render(
         manifest=manifest,
@@ -568,13 +815,14 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             _humanize_seconds(imaging_duration) if imaging_duration else None
         ),
         images=_find_image_outputs(manifest, work_dir),
-        science_products=science_products,
+        imaging_tabs=imaging_tabs,
         telescope_plot=telescope_plot,
+        uv_coverage_plot=uv_coverage_plot,
         sky_model_plot=sky_model_plot,
         sky_model_fov_plot=sky_model_fov_plot,
+        sky_model_summary=sky_model_summary,
+        fits_model_plots=fits_model_plots,
         observation_summary=_observation_summary(manifest),
-        imaging_summary=_imaging_summary(manifest, fov_deg_value, representative_beam),
-        imager_parameter_rows=_imager_parameter_rows(manifest, fov_deg_value, center),
         software_versions=_software_versions(),
         dish_diameter=dish_diameter,
         derived_fov=derived_fov,

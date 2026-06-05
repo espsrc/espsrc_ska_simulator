@@ -1,0 +1,30 @@
+{
+    "description": "LSR J1835 Taylor-term model (nterms=2) observed with LOFAR at 144 MHz",
+    "telescope": "LOFAR",
+    "models": [
+        {
+            "type": "casa_taylor_terms",
+            "tt0": "models_for_testing/Target_LSR_J1835_EVLA_L_inf_1_post.model.tt0",
+            "tt1": "models_for_testing/Target_LSR_J1835_EVLA_L_inf_1_post.model.tt1",
+            "reference_frequency_hz": 1575010361.7577474
+        }
+    ],
+    "center": "18h35m37.87998253s +32d59m53.29986768s",
+    "observation": {
+        "frequency_mhz": 144.0,
+        "bandwidth_mhz": 24.0,
+        "n_channels": 1024,
+        "observation_time_s": 600
+    },
+    "uv_coverage": false,
+    "imaging": [
+        {
+            "tag": "dirty",
+            "pixels": 256,
+            "fov_deg": 0.6,
+            "imager": "oskar-dirty"
+        }
+    ],
+    "output_dir": "demo_output/casa_taylor_lsr_j1835_lofar_144mhz",
+    "overwrite": true
+}

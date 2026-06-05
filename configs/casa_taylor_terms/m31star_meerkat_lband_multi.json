@@ -1,0 +1,42 @@
+{
+    "description": "M31 MeerKAT L-band test: frequency extrapolation from tt0/tt1, with multi-imaging",
+    "telescope": "MeerKAT",
+    "models": [
+        {
+            "type": "casa_taylor_terms",
+            "tt0": "models_for_testing/Target_M31STAR_EVLA_C_inf_1.model.tt0",
+            "tt1": "models_for_testing/Target_M31STAR_EVLA_C_inf_1.model.tt1",
+            "reference_frequency_hz": 5991892258.150883
+        }
+    ],
+    "center": "00h42m44.32903699s +41d16m08.4208316s",
+    "observation": {
+        "frequency_mhz": 1284.0,
+        "bandwidth_mhz": 856.0,
+        "n_channels": 1024,
+        "observation_time_s": 600
+    },
+    "imaging": [
+        {
+            "tag": "oskar-dirty",
+            "pixels": 256,
+            "fov_deg": 0.2,
+            "imager": "oskar-dirty"
+        },
+        {
+            "tag": "wsclean-1024",
+            "pixels": 1024,
+            "fov_deg": 0.4,
+            "imager": "wsclean"
+        },
+        {
+            "tag": "wsclean-1024",
+            "pixels": 1024,
+            "fov_deg": 0.4,
+            "imager": "wsclean",
+            "robust": -1.5
+        }
+    ],
+    "output_dir": "demo_output/casa_taylor_m31star_meerkat_lband",
+    "overwrite": true
+}

@@ -1,9 +1,95 @@
 """CLI configuration behavior."""
 
-from skasim import cli
-import skasim.pipeline
-from pydantic import ValidationError
+import json
+import tempfile
+
 import pytest
+from pydantic import ValidationError
+
+import skasim.pipeline
+from skasim import cli
+from skasim.config import ImgConfig, ObsConfig, SimConfig
+
+
+def _make_config_json(tmp_path, flux=None):
+    """Write a minimal SimConfig JSON to a temp file."""
+    config = SimConfig(
+        source_flux_jy=[1.0],
+        observation=ObsConfig(frequency_mhz=800.0),
+        imaging=[ImgConfig(imager="oskar-dirty")],
+    )
+    if flux is not None:
+        config.source_flux_jy = flux
+    path = tmp_path / "run.json"
+    path.write_text(config.model_dump_json(), encoding="utf-8")
+    return str(path)
+
+
+def test_config_file_loads_simconfig(monkeypatch, tmp_path):
+    """--config <json> deserialises the SimConfig and runs the pipeline."""
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    config_path = _make_config_json(tmp_path, flux=[2.5, 5.0])
+    cli.main(["--config", config_path])
+
+    assert captured[0].source_flux_jy == [2.5, 5.0]
+    assert captured[0].observation.frequency_mhz == 800.0
+    assert captured[0].imaging[0].imager == "oskar-dirty"
+
+
+def test_config_file_overrides_output_dir_and_overwrite(monkeypatch, tmp_path):
+    """--output-dir and --overwrite are permitted alongside --config."""
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    config_path = _make_config_json(tmp_path)
+    cli.main(
+        [
+            "--config",
+            config_path,
+            "--output-dir",
+            str(tmp_path / "custom"),
+            "--overwrite",
+        ]
+    )
+
+    assert captured[0].output_dir == str(tmp_path / "custom")
+    assert captured[0].overwrite is True
+
+
+def test_config_file_blocks_content_flags(monkeypatch, tmp_path, capsys):
+    """--config rejects content arguments such as --frequency-mhz."""
+    config_path = _make_config_json(tmp_path)
+    with pytest.raises(SystemExit):
+        cli.main(["--config", config_path, "--frequency-mhz", "900"])
+
+    captured = capsys.readouterr()
+    assert "--config is exclusive with content arguments" in captured.err
+
+
+def test_config_file_blocks_content_flags_equals_syntax(monkeypatch, tmp_path, capsys):
+    """--config catches content arguments even with --flag=value syntax."""
+    config_path = _make_config_json(tmp_path)
+    with pytest.raises(SystemExit):
+        cli.main(["--config", config_path, "--frequency-mhz=900"])
+
+    captured = capsys.readouterr()
+    assert "--config is exclusive with content arguments" in captured.err
+
+
+def test_config_file_missing_file(monkeypatch, tmp_path, capsys):
+    """--config with a nonexistent path errors cleanly."""
+    with pytest.raises(SystemExit):
+        cli.main(["--config", str(tmp_path / "nonexistent.json")])
+
+    captured = capsys.readouterr()
+    assert "Config file not found" in captured.err
+
+
+# --------------------------------------------------------------------------- #
+# existing tests below
+# --------------------------------------------------------------------------- #
 
 
 def test_catalog_sets_named_catalog(monkeypatch):
@@ -13,7 +99,8 @@ def test_catalog_sets_named_catalog(monkeypatch):
 
     cli.main(["--catalog", "GLEAM"])
 
-    assert captured[0].catalog == "GLEAM"
+    assert captured[0].catalog is None
+    assert captured[0].models[0].catalog == "GLEAM"
 
 
 def test_numeric_catalog_cli_value_has_migration_message():
@@ -85,7 +172,7 @@ def test_default_imager_is_oskar_dirty(monkeypatch):
 
     cli.main([])
 
-    assert captured[0].imaging.imager == "oskar-dirty"
+    assert captured[0].imaging[0].imager == "oskar-dirty"
 
 
 def test_wsclean_imager_is_selected_explicitly(monkeypatch):
@@ -95,7 +182,7 @@ def test_wsclean_imager_is_selected_explicitly(monkeypatch):
 
     cli.main(["--imager", "wsclean"])
 
-    assert captured[0].imaging.imager == "wsclean"
+    assert captured[0].imaging[0].imager == "wsclean"
 
 
 def test_cleaning_flag_has_migration_message(capsys):
@@ -115,13 +202,72 @@ def test_wsclean_command_cli_override(monkeypatch):
 
     cli.main(["--imager", "wsclean", "--wsclean-command", command])
 
-    assert captured[0].imaging.wsclean_command == command
+    assert captured[0].imaging[0].wsclean_command == command
 
 
 def test_cli_rejects_source_flux_jy_with_catalog():
     """CLI users cannot combine generated-source intensities with a catalog."""
-    with pytest.raises(ValidationError, match="generated source mode"):
+    with pytest.raises(ValidationError, match="typed models"):
         cli.main(["--catalog", "MIGHTEE", "--flux-density", "1.0"])
+
+
+def test_cli_accepts_catalog_plus_continuum_image_model(tmp_path, monkeypatch):
+    """A catalog contribution can be combined with a continuum image model."""
+    stokes_i = tmp_path / "stokes_i.fits"
+    alpha = tmp_path / "alpha.fits"
+    stokes_i.write_text("placeholder", encoding="utf-8")
+    alpha.write_text("placeholder", encoding="utf-8")
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    cli.main(
+        [
+            "--catalog",
+            "MIGHTEE",
+            "--continuum-stokes-i",
+            str(stokes_i),
+            "--continuum-alpha",
+            str(alpha),
+            "--reference-frequency-hz",
+            "1400000000",
+        ]
+    )
+
+    assert [entry.type for entry in captured[0].models] == [
+        "component_sky_model",
+        "continuum_i_alpha",
+    ]
+    assert captured[0].models[0].catalog == "MIGHTEE"
+
+
+def test_cli_runs_json_config_file(tmp_path, monkeypatch):
+    """--config loads a JSON SimConfig and runs it directly."""
+    config_path = tmp_path / "run.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "telescope": "VLA",
+                "telescope_version": "C",
+                "catalog": "GLEAM",
+                "observation": {
+                    "frequency_mhz": 1400.0,
+                    "bandwidth_mhz": 8.0,
+                    "n_channels": 2,
+                },
+                "output_dir": str(tmp_path / "out"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    cli.main(["--config", str(config_path)])
+
+    assert captured[0].telescope == "VLA"
+    assert captured[0].telescope_version == "C"
+    assert captured[0].catalog == "GLEAM"
+    assert captured[0].observation.n_channels == 2
 
 
 def test_cli_help_has_single_canonical_surface(capsys):
@@ -140,6 +286,9 @@ def test_cli_help_has_single_canonical_surface(capsys):
     assert "--stokes-u" in help_text
     assert "--stokes-v" in help_text
     assert "--catalog" in help_text
+    assert "--continuum-stokes-i" in help_text
+    assert "--continuum-alpha" in help_text
+    assert "--reference-frequency-hz" in help_text
 
     for removed in (
         "--stokes-i",

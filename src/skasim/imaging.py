@@ -14,10 +14,10 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from loguru import logger
 
-from .config import SimConfig
+from .config import ImgConfig
 from .manifest import RunContext
 from .runtime import require_karabo_module
-from .utils import show_exc
+from .utils import mapping_unit
 
 SKY_MODEL_CMAP = "viridis_r"
 
@@ -31,25 +31,26 @@ def run_dirty_imaging(
     visibility_path: Path,
     fov: u.Quantity,
     center: SkyCoord,
+    img_config: ImgConfig,  # << NEW
+    sub_dir: Path,  # << NEW — work_dir/{tag}
 ) -> None:
     """produce dirty image via OSKAR."""
     imager_module = require_karabo_module("karabo.imaging.imager_oskar")
     visibility_module = require_karabo_module("karabo.simulation.visibility")
-    config = ctx.config
-    work_dir = ctx.work_dir
+    work_dir = sub_dir
     vis = visibility_module.Visibility(str(visibility_path))
-    imaging_cellsize = fov / config.imaging.pixels
+    imaging_cellsize = fov / img_config.pixels
     cfg = imager_module.OskarDirtyImagerConfig(
-        imaging_npixel=config.imaging.pixels,
+        imaging_npixel=img_config.pixels,
         imaging_cellsize=imaging_cellsize.to(u.rad).value,
         combine_across_frequencies=True,
-        imaging_phase_centre=center,
+        imaging_phase_centre=center.icrs,
     )
     imager = imager_module.OskarDirtyImager(config=cfg)
     dirty_image = imager.create_dirty_image(vis)
 
-    dirty_png = work_dir / f"{work_dir.name}_dirty.png"
-    dirty_fits = work_dir / f"{work_dir.name}_dirty.fits"
+    dirty_png = work_dir / f"{img_config.tag}_dirty.png"
+    dirty_fits = work_dir / f"{img_config.tag}_dirty.fits"
     dirty_image.write_to_file(str(dirty_fits), overwrite=True)
     try:
         write_fits_preview(dirty_fits, dirty_png, "OSKAR Dirty Image")
@@ -59,20 +60,22 @@ def run_dirty_imaging(
     logger.debug(f"Dirty PNG: {dirty_png}")
     logger.debug(f"Dirty FITS: {dirty_fits}")
 
-    image_product_id = f"{work_dir.name}_dirty"
+    image_product_id = f"{img_config.tag}_dirty"
     ctx.manifest.add_output(
         "image_product",
-        str(dirty_png.relative_to(work_dir)),
+        str(dirty_png.relative_to(ctx.work_dir)),
         image_product_id=image_product_id,
         imager="oskar-dirty",
         role="preview",
+        metadata={"tag": img_config.tag},
     )
     ctx.manifest.add_output(
         "image_product",
-        str(dirty_fits.relative_to(work_dir)),
+        str(dirty_fits.relative_to(ctx.work_dir)),
         image_product_id=image_product_id,
         imager="oskar-dirty",
         role="dirty",
+        metadata={"tag": img_config.tag},
     )
 
 
@@ -82,26 +85,27 @@ def run_dirty_imaging(
 
 
 def build_wsclean_argv(
-    config: SimConfig,
+    img_config: ImgConfig,
     visibility_path: Path,
     fov: u.Quantity,
     output_prefix: str,
+    n_channels: int = 1,
 ) -> list[str]:
     """Build a shell-free WSClean argv list from the resolved imaging config."""
-    imaging_cellsize = fov / config.imaging.pixels
-    channels_out = min(config.observation.n_channels or 1, 8)
-    return shlex.split(config.imaging.wsclean_command) + [
+    imaging_cellsize = fov / img_config.pixels
+    channels_out = min(n_channels or 1, 8)
+    return shlex.split(img_config.wsclean_command) + [
         "-weight",
         "briggs",
-        str(config.imaging.robust),
+        str(img_config.robust),
         "-multiscale",
         "-size",
-        str(config.imaging.pixels),
-        str(config.imaging.pixels),
+        str(img_config.pixels),
+        str(img_config.pixels),
         "-scale",
         f"{imaging_cellsize.to(u.arcsec).value:.6f}asec",
         "-niter",
-        str(config.clean_iterations),
+        str(img_config.clean_iterations),
         "-mgain",
         "0.8",
         "-auto-threshold",
@@ -133,14 +137,19 @@ def run_wsclean_command(argv: list[str], work_dir: Path):
     )
 
 
+def wsclean_output_prefix(ctx: RunContext) -> str:
+    """Return the stable WSClean output prefix for this run."""
+    return f"{ctx.work_dir.name}_wsclean"
+
+
 def collect_wsclean_outputs(work_dir: Path, output_prefix: str) -> list[Path]:
     """Collect WSClean FITS outputs for one configured output prefix."""
     return sorted(work_dir.glob(f"{output_prefix}*.fits"))
 
 
-def wsclean_output_prefix(ctx: RunContext) -> str:
-    """Return the stable WSClean output prefix for this run."""
-    return f"{ctx.work_dir.name}_wsclean"
+# --------------------------------------------------------------------------- #
+# image previews (FITS -> PNG via APLpy)
+# --------------------------------------------------------------------------- #
 
 
 def write_fits_preview(
@@ -148,14 +157,17 @@ def write_fits_preview(
     png_path: Path,
     title: str,
     recenter: tuple[float, float, float] | None = None,
+    scale_factor: float = 1000.0,
+    bunit: str = "mJy/beam",
+    colorbar_label: str = "mJy/beam",
 ) -> None:
     """Write a publication-style PNG preview for a WSClean FITS image, optionally recentered."""
     import matplotlib
 
     matplotlib.use("Agg", force=True)
-    import matplotlib.pyplot as plt
     import aplpy
     import cmasher as cmr
+    import matplotlib.pyplot as plt
 
     with fits.open(img_path) as source_hdul:
         source_hdu = source_hdul[0]
@@ -163,7 +175,7 @@ def write_fits_preview(
         while data.ndim > 2:
             data = data[0]
 
-        display_data = data * 1000.0
+        display_data = data * scale_factor
         finite = display_data[np.isfinite(display_data)]
         if finite.size:
             rms = float(np.nanstd(finite))
@@ -176,11 +188,11 @@ def write_fits_preview(
             rms = 0.0
             vmin = vmax = None
 
-        hdu = _make_2d_preview_hdu(display_data, source_hdu.header, bunit="mJy/beam")
+        hdu = _make_2d_preview_hdu(display_data, source_hdu.header, bunit=bunit)
         hdul = fits.HDUList([hdu])
         fig = plt.figure(figsize=(8, 7))
         ffig = aplpy.FITSFigure(hdul, figure=fig)
-        
+
         if recenter:
             ra_deg, dec_deg, fov_deg = recenter
             ffig.recenter(ra_deg, dec_deg, width=fov_deg, height=fov_deg)
@@ -191,12 +203,15 @@ def write_fits_preview(
             levels = 5.0 * rms * np.sqrt(3.0) ** np.arange(1, 25)
             drawable_levels = levels[levels <= np.nanmax(finite)]
             if drawable_levels.size:
-                ffig.show_contour(
-                    hdul,
-                    levels=drawable_levels,
-                    colors="white",
-                    linewidths=0.45,
-                )
+                try:
+                    ffig.show_contour(
+                        hdul,
+                        levels=drawable_levels,
+                        colors="white",
+                        linewidths=0.45,
+                    )
+                except AttributeError as exc:
+                    logger.warning(f"Skipping FITS preview contours: {exc}")
         if "BMAJ" in hdu.header and "BMIN" in hdu.header:
             ffig.add_beam()
             ffig.beam.set_color("white")
@@ -204,9 +219,10 @@ def write_fits_preview(
         ffig.axis_labels.set_xtext("RA")
         ffig.axis_labels.set_ytext("Dec")
         ffig.add_colorbar()
-        ffig.colorbar.set_axis_label_text("mJy/beam")
+        ffig.colorbar.set_axis_label_text(colorbar_label)
         ffig.savefig(str(png_path), dpi=150)
         plt.close(fig)
+
 
 def _make_2d_preview_hdu(
     data: np.ndarray,
@@ -255,11 +271,15 @@ def write_sky_model_previews(
         [src.get("minor_axis", 0.0) or 0.0 for src in sources],
         dtype=float,
     )
-    position_angle = np.asarray([src.get("pa", 0.0) or 0.0 for src in sources], dtype=float)
+    position_angle = np.asarray(
+        [src.get("pa", 0.0) or 0.0 for src in sources], dtype=float
+    )
     positive_flux = flux[flux > 0]
     norm = None
     if positive_flux.size:
-        norm = LogNorm(vmin=float(np.nanmin(positive_flux)), vmax=float(np.nanmax(positive_flux)))
+        norm = LogNorm(
+            vmin=float(np.nanmin(positive_flux)), vmax=float(np.nanmax(positive_flux))
+        )
 
     full_name = f"{run_id}_sky_model.png"
     fov_name = f"{run_id}_sky_model_fov.png"
@@ -327,6 +347,8 @@ def _plot_sky_model_sources(
         ax.set_ylim(*ylim)
     else:
         ax.set_ylim(*_padded_limits(dec))
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_box_aspect(1)
 
     compact = _compact_source_mask(major_axis, plot_width_deg)
     resolved = ~compact
@@ -382,7 +404,9 @@ def _plot_sky_model_sources(
     plt.close(fig)
 
 
-def _padded_limits(values: np.ndarray, pad_fraction: float = 0.05) -> tuple[float, float]:
+def _padded_limits(
+    values: np.ndarray, pad_fraction: float = 0.05
+) -> tuple[float, float]:
     """Return finite min/max limits with a small visual padding."""
     finite = values[np.isfinite(values)]
     if finite.size == 0:
@@ -461,15 +485,23 @@ def run_wsclean_imaging(
     ctx: RunContext,
     visibility_path: Path,
     fov: u.Quantity,
+    img_config: ImgConfig,  # << NEW
+    sub_dir: Path,  # << NEW — work_dir/{tag}
+    n_channels: int = 1,
 ) -> None:
     """produce cleaned image via external WSClean binary."""
     wsclean_module = require_karabo_module("karabo.imaging.imager_wsclean")
     file_handler_module = require_karabo_module("karabo.util.file_handler")
-    config = ctx.config
-    work_dir = ctx.work_dir
+    work_dir = sub_dir
 
-    output_prefix = wsclean_output_prefix(ctx)
-    argv = build_wsclean_argv(config, visibility_path, fov, output_prefix=output_prefix)
+    output_prefix = f"{img_config.tag}_wsclean"
+    argv = build_wsclean_argv(
+        img_config,
+        visibility_path,
+        fov,
+        output_prefix=output_prefix,
+        n_channels=n_channels,
+    )
     logger.info(f"WSClean command: {argv}")
 
     file_handler_module.FileHandler().get_tmp_dir(
@@ -486,7 +518,7 @@ def run_wsclean_imaging(
         try:
             tmp.unlink()
         except Exception as exc:
-            logger.error(show_exc(exc))
+            logger.exception("Failed to clean up temp file %s", tmp)
 
     wsclean_outputs = collect_wsclean_outputs(work_dir, output_prefix)
     mfs_files = [p.name for p in wsclean_outputs if "-MFS-" in p.name]
@@ -522,15 +554,17 @@ def run_wsclean_imaging(
             role = "psf"
         ctx.manifest.add_output(
             "image_product",
-            png_path.name,
+            str(png_path.relative_to(ctx.work_dir)),
             image_product_id=output_prefix,
             imager="wsclean",
             role=f"{role}_preview",
+            metadata={"tag": img_config.tag},
         )
         ctx.manifest.add_output(
             "image_product",
-            img_path.name,
+            str(img_path.relative_to(ctx.work_dir)),
             image_product_id=output_prefix,
             imager="wsclean",
             role=role,
+            metadata={"tag": img_config.tag},
         )

@@ -9,98 +9,123 @@ The Configuration Model
 Every simulation is defined by a single ``SimConfig`` object, which nests:
 
 - :class:`~skasim.config.ObsConfig` for observing setup;
-- :class:`~skasim.config.ImgConfig` for image product settings.
+- :class:`~skasim.config.ImgConfig` for image product settings;
+- A list of :class:`~skasim.config.ModelEntry` objects for sky ingestion.
 
 ``ObsConfig`` validates the spectral grid. If bandwidth, channel count, and
 channel width are all omitted, defaults are applied. If one value is omitted,
 it is derived from the other two.
 
-``ImgConfig`` records the selected imager. The default is ``oskar-dirty``.
-Use ``wsclean`` for cleaned imaging::
+``ImgConfig`` records the selected imager. Multiple imaging passes are 
+supported by supplying a list of ``ImgConfig`` entries, each with a unique 
+``tag``::
 
-    skasim --imager wsclean --wsclean-command "wsclean"
+    "imaging": [
+        {"tag": "dirty", "imager": "oskar-dirty"},
+        {"tag": "clean", "imager": "wsclean", "clean_iterations": 1000}
+    ]
 
-Version 0.2 is a strict configuration boundary. Deprecated 0.1 Python fields
-such as ``SimConfig.I``, ``SimConfig.Q``, ``SimConfig.U``, ``SimConfig.V``,
-``SimConfig.cleaning``, ``SimConfig.source_names``, ``SimConfig.ref_freq_hz``,
-``SimConfig.json_fg``, ``SimConfig.output_prefix``, ``SimConfig.niter``,
-``SimConfig.scale_I``, and ``ImgConfig.algorithm`` are not accepted. Use
-``source_flux_jy`` plus optional ``stokes_q_jy``, ``stokes_u_jy``, and
-``stokes_v_jy`` for generated source fluxes and ``ImgConfig.imager`` for image
-product selection.
+The ``--imager`` CLI flag overrides only the first entry. The default 
+for a single pass is ``oskar-dirty``.
 
-Sky Model Sources
------------------
+Sky Ingestion Models
+--------------------
 
-Version 0.2 accepts one explicit sky model source per run:
+Version 0.2 introduced a typed models API. A run can include multiple model
+entries of different types (though currently limited to one component-based
+model per run).
 
-1. a file-backed sky model supplied with ``--model``;
-2. a named built-in catalog supplied with ``--catalog``;
-3. generated source flux densities when no file or catalog is supplied.
+Component Models
+~~~~~~~~~~~~~~~~
 
-File-backed sky model
-~~~~~~~~~~~~~~~~~~~~~
+**Type**: ``component_sky_model``
 
-Supply a FITS, JSON, pickle, or Karabo model file::
+Used for component-based catalogs (Point sources, Gaussians).
 
-    skasim --model my_sources.fits --center "05h00m00s -45d00m00s"
+Attributes:
+- ``path``: Path to a FITS, JSON, pickle, or Karabo model file.
+- ``catalog``: Named built-in catalog (e.g., ``MIGHTEE``, ``GLEAM``).
+- ``flux_scale``: Global multiplier for source fluxes.
 
-Named built-in catalog
-~~~~~~~~~~~~~~~~~~~~~~~~
+Example (JSON config)::
 
-Use catalog names, not numeric IDs::
+    "models": [
+        {
+            "type": "component_sky_model",
+            "catalog": "MIGHTEE"
+        }
+    ]
 
-    skasim --catalog MIGHTEE --center "05h00m00s -45d00m00s"
+Image Models
+~~~~~~~~~~~~
 
-Generated source fluxes
-~~~~~~~~~~~~~~~~~~~~~~~
+Image-based models are injected via CASA ``ft`` into the ``MODEL_DATA`` column.
 
-If no file or catalog is provided, ``skasim`` generates point sources around
-the reference position. Each value in ``--flux-density`` creates one generated
-source::
+**1. Continuum I + Alpha** (``continuum_i_alpha``)
 
-    skasim --flux-density 1.0 0.5 0.2 --observation-time 120
+Injects a spatially extended source with a varying spectral index.
 
-Optional Stokes Q/U/V values can be supplied for generated sources. Each list
-must match the ``--flux-density`` list length::
+Attributes:
+- ``stokes_i``: FITS image in Jy/pixel.
+- ``alpha``: FITS image (spectral index map) on the same grid.
+- ``reference_frequency_hz``: The frequency at which the ``stokes_i`` map is defined.
 
-    skasim --flux-density 1.0 0.5 \
-      --stokes-q 0.1 0.0 \
-      --stokes-u 0.0 0.1 \
-      --stokes-v 0.0 -0.1
+Semantics: :math:`I(\nu) = I_0 \cdot (\nu/\nu_0)^\alpha`.
 
-Generated-source flux and polarization flags are valid only in generated-source mode.
-If no generated-source intensity is supplied, the default generated source has
-``10.0 Jy`` Stokes I flux density.
+**2. CASA Taylor Terms** (``casa_taylor_terms``)
+
+Direct usage of existing CASA Taylor-term images (e.g., from a previous ``wsclean`` run).
+
+Attributes:
+- ``tt0``: Path to the CASA image table for Taylor term 0.
+- ``tt1``: (Optional) Path to Taylor term 1.
+- ``reference_frequency_hz``: The Taylor expansion reference frequency.
+
+**3. Static Stokes Maps** (``static_stokes_maps``)
+
+Injects static polarization maps.
+
+Attributes:
+- ``stokes_i``, ``stokes_q``, ``stokes_u``, ``stokes_v``: Paths to FITS images.
+
+Spectral Reference Policy
+-------------------------
+
+When using image models, ``skasim`` automatically adjusts the model's spectral 
+reference to the center of the observed band.
+
+- **Idempotency**: The original model files are never modified. The pipeline 
+  works on local copies in the ``work_dir``.
+- **Correction**: If a spectral index is provided (via ``alpha`` map or ``tt1``), 
+  pixel values are scaled using the power-law convention: 
+  :math:`tt0' = tt0 \cdot (\nu_{new} / \nu_{old})^\alpha`.
+- **Metadata**: The single-channel spectral coordinate (CRVAL4) of the local 
+  CASA images is updated to the observation's center frequency.
+
+Generated Source Fluxes (Legacy Mode)
+--------------------------------------
+
+If no typed models are provided, ``skasim`` can generate point sources using 
+legacy CLI flags::
+
+    skasim --flux-density 1.0 0.5 --observation-time 120
+
+.. warning::
+   Generated source flags are ignored if the ``models`` list is used.
 
 WSClean Command
 ---------------
 
-The WSClean command defaults to ``wsclean``. On systems where WSClean is
-provided through a wrapper or container, pass the command explicitly::
+The WSClean command defaults to ``wsclean``. For containerized environments, 
+pass the command explicitly::
 
     skasim --imager wsclean \
-      --wsclean-command "singularity exec /mnt/software/containers/wsclean-3.10-dysco.sif wsclean"
-
-``--clean-iterations`` controls WSClean ``-niter``. The wrapper caps
-WSClean ``-channels-out`` to the available simulated channel count, up to 8,
-so small smoke runs can use fewer channels without invalid WSClean arguments.
+      --wsclean-command "singularity exec wsclean-3.10.sif wsclean"
 
 Run Records
 -----------
 
-Each run writes a manifest and an always-on weblog. The manifest contains
-structured output records for logs, the manifest, visibility data, image
-products, plots, and the weblog.
+Each run writes a **Manifest** and an **Always-on Weblog**. 
 
-Output directories use the run id. By default, run ids use second precision::
-
-    YYYYMMDD_HHMMSS_<telescope>
-
-Use ``--output-dir`` to choose the exact output directory name. Unlike the old
-``--prefix`` behavior, the telescope name is not appended when ``--output-dir``
-is supplied.
-
-If an existing visibility output directory is present, ``skasim`` raises an
-error unless ``--overwrite`` is supplied. There is no interactive overwrite
-prompt in the run pipeline.
+.. note::
+   See the :doc:`outputs` section for detailed information on run records.

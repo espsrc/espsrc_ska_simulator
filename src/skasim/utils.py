@@ -1,9 +1,14 @@
 """helpers extracted from legacy scripts/utils.py."""
 
+from __future__ import annotations
+
 import json
 import os
+import shlex
+import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import astropy.units as u
@@ -62,19 +67,6 @@ class NpEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, obj)
 
 
-def show_exc(exception: Exception) -> str:
-    exc_type, exc_obj, tb = sys.exc_info()
-    f = tb.tb_frame
-    lineno = tb.tb_lineno
-    filename = f.f_code.co_filename
-    filename_rel = os.path.relpath(filename, os.path.dirname(__file__))
-    app_folder = os.path.basename(os.path.dirname(__file__))
-    return (
-        f"EXCEPTION IN ({filename_rel}:{lineno}): {exc_type} {exception} "
-        f"(APP: {app_folder})"
-    )
-
-
 # TODO: define elsewhere or check if karabo provides
 DIAMETERS = {
     "ALMA": 25 * u.m,
@@ -116,4 +108,70 @@ def get_diameter(telescope_name: str):
     raise ValueError(
         f"Telescope {telescope_name} not found. "
         f"Available: {', '.join(DIAMETERS.keys())}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# shadeMS UV coverage helpers                                                 #
+# --------------------------------------------------------------------------- #
+
+
+def build_shadems_uv_coverage_argv(
+    shadems_command: str,
+    visibility_path: Path,
+    output_dir: Path,
+    png_name: str,
+    title: str,
+    canvas_size: int = 600,
+) -> list[str]:
+    """Build a shell-free shadeMS argv list for a U/V coverage plot."""
+    return shlex.split(shadems_command) + [
+        str(visibility_path),
+        "--xaxis",
+        "u",
+        "--yaxis",
+        "v",
+        "--dir",
+        str(output_dir),
+        "--png",
+        png_name,
+        "--title",
+        title,
+        "--xlabel",
+        "u",
+        "--ylabel",
+        "v",
+        "--xcanvas",
+        str(canvas_size),
+        "--ycanvas",
+        str(canvas_size),
+        "--spread-pix",
+        "2",
+        "--no-lim-save",
+    ]
+
+
+def shadems_uv_coverage_env(work_dir: Path) -> dict[str, str]:
+    """Return an environment with writable cache directories for shadeMS imports."""
+    env = os.environ.copy()
+    cache_dir = work_dir / ".cache"
+    mpl_dir = cache_dir / "matplotlib"
+    numba_dir = cache_dir / "numba"
+    mpl_dir.mkdir(parents=True, exist_ok=True)
+    numba_dir.mkdir(parents=True, exist_ok=True)
+    env["MPLCONFIGDIR"] = str(mpl_dir)
+    env["NUMBA_CACHE_DIR"] = str(numba_dir)
+    return env
+
+
+def run_shadems_command(argv: list[str], work_dir: Path):
+    """Run shadeMS with argv, an explicit cwd, and writable cache directories."""
+    return subprocess.run(
+        argv,
+        shell=False,
+        cwd=str(work_dir),
+        env=shadems_uv_coverage_env(work_dir),
+        capture_output=True,
+        text=True,
+        check=True,
     )

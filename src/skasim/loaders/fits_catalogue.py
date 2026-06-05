@@ -1,4 +1,4 @@
-"""fits_helper.py — FITS catalogue loading helpers.
+"""loaders/fits_catalogue.py — FITS catalogue loading helpers.
 
 Loads FITS table sky models using an explicit column mapping.
 """
@@ -12,12 +12,11 @@ import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 from astropy.units import UnitBase
-from .sky import SkyModel, Source
-
 from loguru import logger
 
-from .runtime import require_karabo_module
-from .utils import mapping_unit
+from ..runtime import require_karabo_module
+from ..sky import SkyModel, Source
+from ..utils import mapping_unit
 
 
 class FitsCatalogLoader:

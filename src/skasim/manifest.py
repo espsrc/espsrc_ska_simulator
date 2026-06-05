@@ -105,6 +105,7 @@ class RunManifest(BaseModel):
     def mark_failed(self, error: str) -> None:
         """mark the run as failed and record the error."""
         self.status = "failed"
+        self.completed_at = datetime.now(timezone.utc)
         self.errors.append(error)
 
     def model_dump_json(self, **kwargs) -> str:

@@ -1,0 +1,50 @@
+[
+  {
+    "ra": 232.8556667,
+    "dec": 35.5611667,
+    "I": 0.02,
+    "Q": 0.0,
+    "U": 0.0,
+    "V": 0.0,
+    "ref_freq": 1455500000.0,
+    "spec_index": -0.5,
+    "rot_meas": 0.0,
+    "major_axis": 3.0,
+    "minor_axis": 1.8,
+    "pa": 35.0,
+    "true_redshift": 0.0,
+    "obs_redshift": 0.0
+  },
+  {
+    "ra": 232.863,
+    "dec": 35.556,
+    "I": 0.008,
+    "Q": 0.0,
+    "U": 0.0,
+    "V": 0.0,
+    "ref_freq": 1455500000.0,
+    "spec_index": -0.7,
+    "rot_meas": 0.0,
+    "major_axis": 1.2,
+    "minor_axis": 1.2,
+    "pa": 0.0,
+    "true_redshift": 0.0,
+    "obs_redshift": 0.0
+  },
+  {
+    "ra": 232.847,
+    "dec": 35.568,
+    "I": 0.004,
+    "Q": 0.0,
+    "U": 0.0,
+    "V": 0.0,
+    "ref_freq": 1455500000.0,
+    "spec_index": -0.3,
+    "rot_meas": 0.0,
+    "major_axis": 8.0,
+    "minor_axis": 3.5,
+    "pa": 110.0,
+    "true_redshift": 0.0,
+    "obs_redshift": 0.0
+  }
+]

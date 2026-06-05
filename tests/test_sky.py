@@ -96,6 +96,19 @@ def test_source_defaults():
 # -----------------------------------------------------------------------------
 
 
+def test_skymodel_empty_get_center_raises_valueerror():
+    """SkyModel() without sources should raise ValueError on get_center, not AttributeError."""
+    model = SkyModel()
+    with pytest.raises(ValueError) as exc_info:
+        model.get_center()
+    assert "no sources" in str(exc_info.value).lower()
+
+
+# -----------------------------------------------------------------------------
+# obj_id
+# -----------------------------------------------------------------------------
+
+
 def test_source_auto_obj_id():
     """obj_id autogeneration from coords."""
     s = Source(ra=10.5, dec=20.5, I=1.0)
@@ -399,9 +412,9 @@ def test_skymodel_get_center_cached():
 
 
 def test_skymodel_get_center_no_sources_raises():
-    """get_center raises AttributeError when there is nothing to centre on."""
+    """get_center raises ValueError when there is no data to centre on."""
     sm = SkyModel()
-    with pytest.raises(AttributeError):
+    with pytest.raises(ValueError):
         sm.get_center()
 
 

@@ -1,0 +1,23 @@
+{
+    "telescope": "MeerKAT",
+    "description": "MeerKAT L-band catalogue from the MIGHTEE survey (input FITS)",
+    "models": [
+        {
+            "type": "component_sky_model",
+            "path": "mightee_sources.fits"
+        }
+    ],
+    "observation": {
+        "frequency_mhz": 1300,
+        "observation_time_s": 60
+    },
+    "imaging": [
+        {
+            "tag": "default",
+            "fov_deg": 0.3,
+            "pixels": 1024,
+            "imager": "wsclean",
+            "clean_iterations": 6000
+        }
+    ]
+}
