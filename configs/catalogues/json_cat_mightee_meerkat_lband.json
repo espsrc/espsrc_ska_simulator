@@ -1,6 +1,6 @@
 {
     "telescope": "MeerKAT",
-    "description": "MeerKAT L-band catalogue from the MIGHTEE survey (input FITS)",
+    "description": "MeerKAT L-band catalogue from the MIGHTEE survey (input JSON)",
     "models": [
         {
             "type": "component_sky_model",
@@ -14,7 +14,7 @@
     "imaging": [
         {
             "tag": "default",
-            "fov_deg": 0.3,
+            "fov_deg": 0.05,
             "pixels": 1024,
             "imager": "wsclean",
             "clean_iterations": 6000
