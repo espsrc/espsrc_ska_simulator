@@ -524,6 +524,124 @@ def run_simulation(
     return visibility_path
 
 
+def _run_uv_coverage(ctx: RunContext, visibility_path: Path) -> None:
+    """Run shadeMS UV-coverage plot; record milestone on success or failure."""
+    config = ctx.config
+    ctx.add_milestone("uv_coverage_started", "started")
+    try:
+        run_id = ctx.work_dir.name
+        png_name = f"{run_id}_uvcoverage.png"
+        log_name = f"{run_id}_uvcoverage_shadems.log"
+        png_path = ctx.work_dir / png_name
+        log_path = ctx.work_dir / log_name
+
+        argv = build_shadems_uv_coverage_argv(
+            shadems_command=config.shadems_command,
+            visibility_path=visibility_path,
+            output_dir=ctx.work_dir,
+            png_name=png_name,
+            title=f"{run_id} uv coverage",
+            canvas_size=config.uv_coverage_canvas_size,
+        )
+        try:
+            result = run_shadems_command(argv, ctx.work_dir)
+        except subprocess.CalledProcessError as exc:
+            output = (exc.stdout or "") + (exc.stderr or "")
+            log_path.write_text(output, encoding="utf-8")
+            ctx.manifest.add_output(
+                "log",
+                log_name,
+                role="uv_coverage",
+                metadata={"tool": "shadems", "returncode": exc.returncode},
+            )
+            raise
+        log_path.write_text(
+            (result.stdout or "") + (result.stderr or ""), encoding="utf-8"
+        )
+        if not png_path.exists():
+            raise FileNotFoundError(f"shadeMS did not produce {png_path}")
+        ctx.manifest.add_output(
+            "plot",
+            png_name,
+            role="uv_coverage",
+            metadata={
+                "tool": "shadems",
+                "xaxis": "u",
+                "yaxis": "v",
+                "canvas_size": config.uv_coverage_canvas_size,
+            },
+        )
+        ctx.manifest.add_output(
+            "log",
+            log_name,
+            role="uv_coverage",
+            metadata={"tool": "shadems"},
+        )
+        ctx.add_milestone(
+            "uv_coverage_completed",
+            "completed",
+            details={"path": str(png_path.relative_to(ctx.work_dir))},
+        )
+    except Exception:
+        ctx.add_milestone("uv_coverage_failed", "failed")
+        logger.exception("UV coverage plot failed")
+
+
+def _run_simulation_phase(
+    ctx: RunContext,
+    telescope,
+    observation,
+    sky_model: SkyModel,
+    center: SkyCoord,
+) -> Path:
+    """Run OSKAR simulation + image-model injection.
+
+    Falls back to a zero-flux placeholder source if the initial simulation
+    fails and the config only has image models (no component sources).
+    Returns the visibility path on success.
+    """
+    config = ctx.config
+    ctx.add_milestone("simulation_started", "started")
+    t_phase_a = time.time()
+    try:
+        try:
+            visibility_path = run_simulation(ctx, telescope, observation, sky_model)
+        except Exception:
+            if image_model_entries(config) and not component_model_entries(config):
+                logger.warning(
+                    "Empty base-MS creation failed; retrying with a zero-flux "
+                    "placeholder source."
+                )
+                if ctx.visibility_path.exists():
+                    shutil.rmtree(ctx.visibility_path)
+                ctx.add_milestone(
+                    "base_ms_fallback",
+                    "completed",
+                    details={"strategy": "zero_flux_placeholder_source"},
+                )
+                visibility_path = run_simulation(
+                    ctx,
+                    telescope,
+                    observation,
+                    build_zero_flux_sky_model(center),
+                )
+            else:
+                raise
+        inject_image_models(ctx, visibility_path)
+        ctx.add_milestone(
+            "simulation_completed", "completed", elapsed_s=time.time() - t_phase_a
+        )
+    except Exception as exc:
+        ctx.add_milestone(
+            "simulation_failed",
+            "failed",
+            elapsed_s=time.time() - t_phase_a,
+            details={"error": str(exc)},
+        )
+        raise
+    return visibility_path
+
+
 def build_zero_flux_sky_model(center: SkyCoord) -> SkyModel:
     """Build a one-source zero-flux sky model for base-MS fallback creation."""
     sky_model = SkyModel()
@@ -536,6 +654,55 @@ def build_zero_flux_sky_model(center: SkyCoord) -> SkyModel:
 # --------------------------------------------------------------------------- #
 # top-level orchestrator
 # --------------------------------------------------------------------------- #
+
+
+def _run_imaging_pass(
+    ctx: RunContext,
+    visibility_path: Path,
+    img_config,
+    freq: u.Quantity,
+    center: SkyCoord,
+) -> None:
+    """Run one imaging pass (dirty or wsclean) with milestone tracking."""
+    config = ctx.config
+    tag = img_config.tag
+    sub_dir = ctx.work_dir / tag
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    fov_i = compute_fov(config.telescope, img_config.fov_deg, freq)
+
+    milestone_prefix = f"imaging_{tag}"
+    ctx.add_milestone(f"{milestone_prefix}_started", "started")
+    t_b = time.time()
+    try:
+        if img_config.imager == "oskar-dirty":
+            run_dirty_imaging(ctx, visibility_path, fov_i, center, img_config, sub_dir)
+        else:
+            run_wsclean_imaging(
+                ctx,
+                visibility_path,
+                fov_i,
+                img_config,
+                sub_dir,
+                n_channels=config.observation.n_channels or 1,
+            )
+        ctx.add_milestone(
+            f"{milestone_prefix}_completed",
+            "completed",
+            elapsed_s=time.time() - t_b,
+            details={"imager": img_config.imager, "tag": tag},
+        )
+    except Exception as exc:
+        ctx.add_milestone(
+            f"{milestone_prefix}_failed",
+            "failed",
+            elapsed_s=time.time() - t_b,
+            details={
+                "error": str(exc),
+                "tag": tag,
+                "imager": img_config.imager,
+            },
+        )
+        raise
 
 
 def run(config: SimConfig) -> None:
@@ -606,151 +773,17 @@ def run(config: SimConfig) -> None:
         logger.info(f"N channels: {n_channels}")
 
         # phase 1: simulation
-        ctx.add_milestone("simulation_started", "started")
-        t_phase_a = time.time()
-        try:
-            try:
-                visibility_path = run_simulation(ctx, telescope, observation, sky_model)
-            except Exception:
-                if image_model_entries(config) and not component_model_entries(config):
-                    logger.warning(
-                        "Empty base-MS creation failed; retrying with a zero-flux "
-                        "placeholder source."
-                    )
-                    if ctx.visibility_path.exists():
-                        shutil.rmtree(ctx.visibility_path)
-                    ctx.add_milestone(
-                        "base_ms_fallback",
-                        "completed",
-                        details={"strategy": "zero_flux_placeholder_source"},
-                    )
-                    visibility_path = run_simulation(
-                        ctx,
-                        telescope,
-                        observation,
-                        build_zero_flux_sky_model(center),
-                    )
-                else:
-                    raise
-            inject_image_models(ctx, visibility_path)
-            ctx.add_milestone(
-                "simulation_completed", "completed", elapsed_s=time.time() - t_phase_a
-            )
-        except Exception as exc:
-            ctx.add_milestone(
-                "simulation_failed",
-                "failed",
-                elapsed_s=time.time() - t_phase_a,
-                details={"error": str(exc)},
-            )
-            raise
+        visibility_path = _run_simulation_phase(
+            ctx, telescope, observation, sky_model, center
+        )
 
         # UV coverage (shadeMS) — once per run, before imaging
         if config.uv_coverage:
-            ctx.add_milestone("uv_coverage_started", "started")
-            try:
-                run_id = ctx.work_dir.name
-                png_name = f"{run_id}_uvcoverage.png"
-                log_name = f"{run_id}_uvcoverage_shadems.log"
-                png_path = ctx.work_dir / png_name
-                log_path = ctx.work_dir / log_name
-                argv = build_shadems_uv_coverage_argv(
-                    shadems_command=config.shadems_command,
-                    visibility_path=visibility_path,
-                    output_dir=ctx.work_dir,
-                    png_name=png_name,
-                    title=f"{run_id} uv coverage",
-                    canvas_size=config.uv_coverage_canvas_size,
-                )
-                try:
-                    result = run_shadems_command(argv, ctx.work_dir)
-                except subprocess.CalledProcessError as exc:
-                    output = (exc.stdout or "") + (exc.stderr or "")
-                    log_path.write_text(output, encoding="utf-8")
-                    ctx.manifest.add_output(
-                        "log",
-                        log_name,
-                        role="uv_coverage",
-                        metadata={"tool": "shadems", "returncode": exc.returncode},
-                    )
-                    raise
-                log_path.write_text(
-                    (result.stdout or "") + (result.stderr or ""), encoding="utf-8"
-                )
-                if not png_path.exists():
-                    raise FileNotFoundError(f"shadeMS did not produce {png_path}")
-                ctx.manifest.add_output(
-                    "plot",
-                    png_name,
-                    role="uv_coverage",
-                    metadata={
-                        "tool": "shadems",
-                        "xaxis": "u",
-                        "yaxis": "v",
-                        "canvas_size": config.uv_coverage_canvas_size,
-                    },
-                )
-                ctx.manifest.add_output(
-                    "log",
-                    log_name,
-                    role="uv_coverage",
-                    metadata={"tool": "shadems"},
-                )
-                uv_coverage_path = png_path
-                ctx.add_milestone(
-                    "uv_coverage_completed",
-                    "completed",
-                    details={"path": str(uv_coverage_path.relative_to(ctx.work_dir))},
-                )
-            except Exception:
-                ctx.add_milestone(
-                    "uv_coverage_failed",
-                    "failed",
-                )
-                logger.exception("UV coverage plot failed")
+            _run_uv_coverage(ctx, visibility_path)
 
         # phase 2: batch imaging
         for img_config in config.imaging:
-            tag = img_config.tag
-            sub_dir = ctx.work_dir / tag
-            sub_dir.mkdir(parents=True, exist_ok=True)
-            fov_i = compute_fov(config.telescope, img_config.fov_deg, freq)
-
-            milestone_prefix = f"imaging_{tag}"
-            ctx.add_milestone(f"{milestone_prefix}_started", "started")
-            t_b = time.time()
-            try:
-                if img_config.imager == "oskar-dirty":
-                    run_dirty_imaging(
-                        ctx, visibility_path, fov_i, center, img_config, sub_dir
-                    )
-                else:
-                    run_wsclean_imaging(
-                        ctx,
-                        visibility_path,
-                        fov_i,
-                        img_config,
-                        sub_dir,
-                        n_channels=config.observation.n_channels or 1,
-                    )
-                ctx.add_milestone(
-                    f"{milestone_prefix}_completed",
-                    "completed",
-                    elapsed_s=time.time() - t_b,
-                    details={"imager": img_config.imager, "tag": tag},
-                )
-            except Exception as exc:
-                ctx.add_milestone(
-                    f"{milestone_prefix}_failed",
-                    "failed",
-                    elapsed_s=time.time() - t_b,
-                    details={
-                        "error": str(exc),
-                        "tag": tag,
-                        "imager": img_config.imager,
-                    },
-                )
-                raise
+            _run_imaging_pass(ctx, visibility_path, img_config, freq, center)
 
         ctx.manifest.mark_completed()
         ctx.manifest.add_output("weblog", ctx.weblog_path.name)
