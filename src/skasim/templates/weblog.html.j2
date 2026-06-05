@@ -28,6 +28,14 @@
     .badge.success { background: rgba(63,185,80,0.15); color: var(--success); }
     .badge.danger  { background: rgba(248,81,73,0.15); color: var(--danger); }
     .badge.running { background: rgba(88,166,255,0.15); color: var(--accent); }
+    /* sky model input type badges */
+    .badge.catalog { background: rgba(26,127,55,0.13); color: #1a7f37; }
+    .badge.fits-catalog { background: rgba(45,164,78,0.13); color: #2da44e; }
+    .badge.continuum { background: rgba(9,105,218,0.13); color: #0969da; }
+    .badge.taylor { background: rgba(130,80,223,0.13); color: #8250df; }
+    .badge.stokes-maps { background: rgba(188,76,0,0.13); color: #bc4c00; }
+    .badge.fits-file { background: rgba(0,129,138,0.13); color: #00818a; }
+    .badge.random { background: rgba(101,109,118,0.13); color: var(--muted); }
 
     /* durations summary */
     .durations-summary { display: flex; gap: 2rem; margin: 1.5rem 0; font-size: 0.85rem; color: var(--muted); }
@@ -167,11 +175,24 @@
 
     <!-- Sky Model configuration -->
     {% set sky_ms = manifest.milestones | selectattr("name", "equalto", "sky_model_loaded") | list | first | default(none) %}
-    {% if (sky_ms and sky_ms.details) or fits_model_plots %}
+    {% if (sky_ms and sky_ms.details) or fits_model_plots or sky_model_summary %}
     <h2>Sky Model</h2>
     <div class="config-row">
-      {% if sky_ms and sky_ms.details %}
       <table>
+        {% if sky_model_summary %}
+        <tr><th>Inputs</th><td>
+          {% for entry in sky_model_summary %}
+            <span class="badge {{ entry.color }}" style="margin-right:0.3rem;">{{ entry.label }}</span>
+            {%- if entry.source %} <code style="font-size:0.75rem;">{{ entry.source }}</code>{% endif %}
+            {%- if entry.n_sources %} · {{ entry.n_sources }} sources{% endif %}
+            {%- if entry.nterms %} · nterms={{ entry.nterms }}{% endif %}
+            {%- if entry.ref_freq_hz %} · ref={{ (entry.ref_freq_hz / 1e6) | round(1) }} MHz{% endif %}
+            {%- if entry.stokes %} · {{ entry.stokes | join(', ') }}{% endif %}
+            {%- if entry.reference %} · ref={{ entry.reference }}{% endif %}
+            <br>
+          {% endfor %}
+        </td></tr>
+        {% elif sky_ms and sky_ms.details %}
         <tr><th>Format</th><td>{{ sky_ms.details.get("format", "?") }}</td></tr>
         <tr><th>Sources</th><td>{{ sky_ms.details.get("n_sources", "?") }} sources</td></tr>
         {% if sky_ms.details.get("model_entries") %}
@@ -180,8 +201,8 @@
         {% if sky_ms.details.get("path") %}
         <tr><th>Path</th><td style="word-break: break-all; font-size: 0.78rem; font-family: monospace;">{{ sky_ms.details.get("path") }}</td></tr>
         {% endif %}
+        {% endif %}
       </table>
-      {% endif %}
       {% for plot in fits_model_plots %}
       <div class="plot-container">
         <div class="plot-title">FITS Model{% if plot.model_type %} ({{ plot.model_type }}){% endif %}</div>

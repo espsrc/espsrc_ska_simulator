@@ -314,3 +314,95 @@ def test_weblog_renders_software_versions(tmp_path):
     assert "Software Versions" in html
     for name, _ in _software_versions():
         assert name in html
+
+
+def test_sky_model_summary_typed_models(tmp_path):
+    """_sky_model_summary describes typed model entries with clear labels."""
+    from skasim.weblog import _sky_model_summary
+
+    stokes_i = tmp_path / "stokes_i.fits"
+    alpha_f = tmp_path / "alpha.fits"
+    tt0 = tmp_path / "tt0.image"
+    tt1 = tmp_path / "tt1.image"
+    for p in (stokes_i, alpha_f, tt0, tt1):
+        p.touch()
+
+    config = SimConfig(
+        models=[
+            {"type": "component_sky_model", "catalog": "MIGHTEE"},
+            {
+                "type": "continuum_i_alpha",
+                "stokes_i": str(stokes_i),
+                "alpha": str(alpha_f),
+                "reference_frequency_hz": 1.4e9,
+            },
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0),
+                "tt1": str(tt1),
+                "reference_frequency_hz": 1.5e9,
+            },
+        ]
+    )
+    manifest = RunManifest(
+        run_id="test",
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        config=config,
+    )
+    summary = _sky_model_summary(manifest)
+
+    assert len(summary) == 3
+    assert summary[0]["label"] == "Catalog"
+    assert summary[0]["source"] == "MIGHTEE"
+    assert summary[1]["label"] == "Continuum I+α"
+    assert str(stokes_i) in summary[1]["source"]
+    assert summary[2]["label"] == "Taylor terms (nterms=2)"
+    assert summary[2]["nterms"] == 2
+
+
+def test_sky_model_summary_legacy_catalog():
+    """_sky_model_summary falls back to legacy catalog info."""
+    from skasim.weblog import _sky_model_summary
+
+    config = SimConfig(catalog="GLEAM")
+    manifest = RunManifest(
+        run_id="test",
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        config=config,
+    )
+    manifest.add_milestone(
+        "sky_model_loaded", "completed", details={"format": "GLEAM", "n_sources": 42}
+    )
+    summary = _sky_model_summary(manifest)
+
+    assert len(summary) == 1
+    assert summary[0]["label"] == "Built-in catalog"
+    assert summary[0]["source"] == "GLEAM"
+    assert summary[0]["n_sources"] == 42
+
+
+def test_sky_model_summary_weblog_renders_typed_labels(tmp_path):
+    """The weblog HTML contains rendered labels for each typed model entry."""
+    tt0_path = tmp_path / "tt0"
+    tt0_path.touch()
+
+    config = SimConfig(
+        models=[
+            {"type": "component_sky_model", "catalog": "MIGHTEE"},
+            {
+                "type": "casa_taylor_terms",
+                "tt0": str(tt0_path),
+                "reference_frequency_hz": 1.5e9,
+            },
+        ]
+    )
+    manifest = RunManifest(
+        run_id="typed-labels",
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        config=config,
+    )
+
+    html = render_weblog(manifest, tmp_path)
+
+    assert "Catalog" in html
+    assert "Taylor terms" in html

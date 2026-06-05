@@ -502,6 +502,114 @@ def _infer_image_caption(filename: str) -> str:
     return fname  # fallback to filename
 
 
+def _sky_model_summary(manifest: RunManifest) -> list[dict]:
+    """Build a list of sky-model input descriptors for the weblog.
+
+    Each dict has at least 'label' and 'color' (CSS class for the badge),
+    and may include 'source' (file path or catalog name), 'n_sources',
+    'nterms', 'ref_freq_hz', 'stokes'.
+    """
+    config = manifest.config
+    entries: list[dict] = []
+
+    # typed models first
+    for model in config.models:
+        mtype = model.type
+        if mtype == "component_sky_model":
+            if model.catalog:
+                entries.append(
+                    {
+                        "label": "Catalog",
+                        "color": "catalog",
+                        "source": model.catalog,
+                    }
+                )
+            elif model.path:
+                entries.append(
+                    {
+                        "label": "FITS catalog",
+                        "color": "fits-catalog",
+                        "source": model.path,
+                    }
+                )
+        elif mtype == "continuum_i_alpha":
+            entries.append(
+                {
+                    "label": "Continuum I+α",
+                    "color": "continuum",
+                    "source": model.stokes_i,
+                }
+            )
+        elif mtype == "casa_taylor_terms":
+            nterms = 2 if model.tt1 else 1
+            entries.append(
+                {
+                    "label": f"Taylor terms (nterms={nterms})",
+                    "color": "taylor",
+                    "source": model.tt0,
+                    "nterms": nterms,
+                    "ref_freq_hz": model.reference_frequency_hz,
+                }
+            )
+        elif mtype == "static_stokes_maps":
+            stokes = [
+                k.upper()
+                for k in ("i", "q", "u", "v")
+                if getattr(model, f"stokes_{k}") is not None
+            ]
+            entries.append(
+                {
+                    "label": "Static Stokes maps",
+                    "color": "stokes-maps",
+                    "stokes": stokes,
+                }
+            )
+
+    # legacy paths
+    if not config.models:
+        milestone = _find_milestone_details(manifest, "sky_model_loaded")
+        fmt = milestone.get("format", "?")
+        n_sources = milestone.get("n_sources")
+        if config.sky_file:
+            entries.append(
+                {
+                    "label": f"FITS file ({fmt})",
+                    "color": "fits-file",
+                    "source": str(milestone.get("path", config.sky_file)),
+                    "n_sources": n_sources,
+                }
+            )
+        elif config.catalog:
+            entries.append(
+                {
+                    "label": "Built-in catalog",
+                    "color": "catalog",
+                    "source": config.catalog,
+                    "n_sources": n_sources,
+                }
+            )
+        elif config.fits_image:
+            entries.append(
+                {
+                    "label": "FITS image",
+                    "color": "fits-file",
+                    "source": config.fits_image,
+                    "n_sources": n_sources,
+                }
+            )
+        elif fmt == "random":
+            entries.append(
+                {
+                    "label": "Random sources",
+                    "color": "random",
+                    "n_sources": n_sources,
+                    "reference": milestone.get("reference"),
+                }
+            )
+
+    return entries
+
+
 def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
     """generate weblog.html content and write it to disk. returns the html string."""
     env = Environment(
@@ -656,6 +764,7 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             float(observation_details["phase_center_dec_deg"]),
         )
 
+    sky_model_summary = _sky_model_summary(manifest)
     science_products = _find_science_products(manifest, work_dir)
     imaging_tabs = _build_imaging_tabs(
         manifest,
@@ -679,6 +788,7 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
         uv_coverage_plot=uv_coverage_plot,
         sky_model_plot=sky_model_plot,
         sky_model_fov_plot=sky_model_fov_plot,
+        sky_model_summary=sky_model_summary,
         fits_model_plots=fits_model_plots,
         observation_summary=_observation_summary(manifest),
         software_versions=_software_versions(),
