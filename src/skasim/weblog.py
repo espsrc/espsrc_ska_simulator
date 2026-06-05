@@ -390,13 +390,17 @@ def _antenna_count(manifest: RunManifest) -> int | None:
 
 def _software_versions() -> list[tuple[str, str]]:
     """Return concise runtime software versions for weblog reproducibility."""
-    return [
+    versions = [
         ("skasim", _package_version("skasim")),
         ("Karabo", _package_version("karabo-pipeline")),
         ("OSKAR", _conda_package_version("oskarpy") or _package_version("oskarpy")),
         ("WSClean", _conda_package_version("wsclean") or _package_version("wsclean")),
-        ("Python", sys.version.split()[0]),
     ]
+    casa_ver = _casa_version()
+    if casa_ver:
+        versions.append(("CASA", casa_ver))
+    versions.append(("Python", sys.version.split()[0]))
+    return versions
 
 
 def _package_version(package_name: str) -> str:
@@ -405,6 +409,34 @@ def _package_version(package_name: str) -> str:
         return version(package_name)
     except PackageNotFoundError:
         return "unknown"
+
+
+def _casa_version() -> str | None:
+    """Detect CASA version from casatasks, python-casacore, or casa binary.
+
+    Returns None when no CASA installation is found (skips the entry entirely).
+    """
+    # casatasks ships with the CASA monolithic distribution
+    try:
+        from casatasks import __version__ as casa_ver
+
+        return str(casa_ver)
+    except Exception:
+        pass
+    # python-casacore is the lightweight bindings package
+    try:
+        import casacore
+
+        return f"casacore {casacore.__version__}"
+    except Exception:
+        pass
+    # fallback: check for casa binary in PATH and scrape version
+    import shutil
+
+    casa_bin = shutil.which("casa")
+    if casa_bin:
+        return "casa (binary)"
+    return None
 
 
 def _conda_package_version(package_name: str) -> str | None:
