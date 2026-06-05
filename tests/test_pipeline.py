@@ -306,6 +306,18 @@ def test_load_sky_from_file_empty_json_raises():
         _load_sky_from_file("empty.json")
 
 
+def test_load_sky_from_jsonl_file():
+    """JSONL (one source object per line) loads like a regular JSON array."""
+    src = _single_source_json()
+    src2 = {**src, "ra": 150.1}
+    jsonl_content = json.dumps(src) + "\n" + json.dumps(src2) + "\n"
+    mopen = mock_open(read_data=jsonl_content)
+    with patch("builtins.open", mopen):
+        sky = _load_sky_from_file("catalog.json")
+    assert sky.sources is not None
+    assert len(sky.sources) == 2
+
+
 # --------------------------------------------------------------------------- #
 # build_sky_model — random source generation
 # --------------------------------------------------------------------------- #

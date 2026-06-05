@@ -154,10 +154,15 @@ def _load_sky_from_file(
         logger.info(f"Loaded pickle model from {fpath}")
         return sky_model
 
-    # json catalog
+    # json catalog (supports both single JSON array and JSONL: one object per line)
     if ext == ".json":
         with open(fpath, "r") as fh:
-            data = json.load(fh)
+            raw = fh.read().strip()
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            # JSONL: one JSON object per line
+            data = [json.loads(line) for line in raw.splitlines() if line.strip()]
         sources: List[Source] = []
         for item in data:
             src = Source.from_json(item)
