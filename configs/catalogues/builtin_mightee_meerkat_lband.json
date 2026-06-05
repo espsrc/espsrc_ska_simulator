@@ -1,0 +1,30 @@
+{
+    "title": "MIGHTEE deep-field test",
+    "description": "Three imaging strategies on a single MIGHTEE observation with MeerKAT: two WSClean Briggs weights and one OSKAR dirty image.",
+    "telescope": "MeerKAT",
+    "catalog": "MIGHTEE",
+    "observation": {
+        "frequency_mhz": 1284.0,
+        "bandwidth_mhz": 856.0,
+        "n_channels": 8,
+        "observation_time_s": 600
+    },
+    "imaging": [
+        {
+            "tag": "briggs-2",
+            "imager": "wsclean",
+            "robust": -2.0,
+            "clean_iterations": 5000
+        },
+        {
+            "tag": "briggs0",
+            "imager": "wsclean",
+            "robust": 0.0,
+            "clean_iterations": 5000
+        },
+        {
+            "tag": "dirty",
+            "imager": "oskar-dirty"
+        }
+    ]
+}

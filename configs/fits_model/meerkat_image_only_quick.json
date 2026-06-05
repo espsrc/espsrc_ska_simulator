@@ -1,0 +1,29 @@
+{
+    "description": "Quick continuum I+α image-only test with MeerKAT L-band (dirty image, 60 s)",
+    "telescope": "MeerKAT",
+    "models": [
+        {
+            "type": "continuum_i_alpha",
+            "stokes_i": "models_for_testing/CY4223_L_004_20180322_avg_target_3C320_vla_loop_01-0003-model.fits",
+            "alpha": "configs/fits_model/generated/3c320_flat_alpha.fits",
+            "reference_frequency_hz": 1455500000.0
+        }
+    ],
+    "observation": {
+        "frequency_mhz": 1455.5,
+        "bandwidth_mhz": 8.0,
+        "n_channels": 128,
+        "observation_time_s": 60
+    },
+    "uv_coverage": false,
+    "imaging": [
+        {
+            "tag": "dirty",
+            "pixels": 256,
+            "fov_deg": 0.04,
+            "imager": "oskar-dirty"
+        }
+    ],
+    "output_dir": "demo_output/fits_model_meerkat_image_only_quick",
+    "overwrite": true
+}
