@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import astropy.units as u
 import numpy as np
@@ -12,9 +13,11 @@ import pytest
 from skasim.utils import (
     DIAMETERS,
     NpEncoder,
+    build_shadems_uv_coverage_argv,
     define_extra_units,
     get_diameter,
     mapping_unit,
+    shadems_uv_coverage_env,
     # printlog,
     # show_exc,
 )
@@ -111,3 +114,101 @@ def test_define_extra_units_idempotent():
     define_extra_units()
     # TODO: verify behavior
     assert u.Unit("JY").is_equivalent(u.Jy)
+
+
+# -----------------------------------------------------------------------------
+# shadeMS UV coverage helpers
+# -----------------------------------------------------------------------------
+
+
+def test_build_shadems_uv_coverage_argv_uses_verified_configuration(tmp_path):
+    """shadeMS argv is built with verified config values."""
+    argv = build_shadems_uv_coverage_argv(
+        shadems_command="python -m shade_ms",
+        visibility_path=tmp_path / "visibilities.MS",
+        output_dir=tmp_path / "plots",
+        png_name="uv.png",
+        title="UVCoverage",
+        canvas_size=800,
+    )
+    assert argv[:3] == ["python", "-m", "shade_ms"]
+    assert "--xaxis" in argv
+    assert "--yaxis" in argv
+    assert "--png" in argv
+    assert "uv.png" in argv
+    assert "--title" in argv
+    assert "UVCoverage" in argv
+    assert "--xcanvas" in argv
+    assert "800" in argv
+
+
+def test_shadems_uv_coverage_env_uses_writable_cache_dirs(tmp_path):
+    """shadeMS env sets writable MPL and Numba cache directories."""
+    env = shadems_uv_coverage_env(tmp_path)
+    assert env["MPLCONFIGDIR"] is not None
+    assert env["NUMBA_CACHE_DIR"] is not None
+    assert Path(env["MPLCONFIGDIR"]).is_dir()
+    assert Path(env["NUMBA_CACHE_DIR"]).is_dir()
+    assert Path(env["MPLCONFIGDIR"]).parent.parent == tmp_path
+    assert Path(env["NUMBA_CACHE_DIR"]).parent.parent == tmp_path
+
+
+def test_run_shadems_command_records_manifest_outputs(tmp_path, monkeypatch):
+    """shadeMS plot generation records both PNG and command log outputs."""
+    import skasim.utils as utils_mod
+    from skasim.config import SimConfig
+    from skasim.manifest import create_run_context
+
+    config = SimConfig(output_dir=str(tmp_path / "run"))
+    ctx = create_run_context(config)
+    visibility_path = ctx.work_dir / "visibilities.MS"
+    visibility_path.mkdir()
+
+    def fake_run(argv, work_dir):
+        (work_dir / "run_uvcoverage.png").write_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+            b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+            b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        return SimpleNamespace(stdout="shadeMS ok\n", stderr="")
+
+    monkeypatch.setattr("skasim.utils.run_shadems_command", fake_run)
+
+    run_id = ctx.work_dir.name
+    png_name = f"{run_id}_uvcoverage.png"
+    log_name = f"{run_id}_uvcoverage_shadems.log"
+    png_path = ctx.work_dir / png_name
+    log_path = ctx.work_dir / log_name
+    argv = build_shadems_uv_coverage_argv(
+        shadems_command="shadems",
+        visibility_path=visibility_path,
+        output_dir=ctx.work_dir,
+        png_name=png_name,
+        title=f"{run_id} uv coverage",
+        canvas_size=600,
+    )
+    result = utils_mod.run_shadems_command(argv, ctx.work_dir)
+    log_path.write_text((result.stdout or "") + (result.stderr or ""), encoding="utf-8")
+    assert png_path.exists()
+    ctx.manifest.add_output(
+        "plot",
+        png_name,
+        role="uv_coverage",
+        metadata={"tool": "shadems", "xaxis": "u", "yaxis": "v", "canvas_size": 600},
+    )
+    ctx.manifest.add_output(
+        "log",
+        log_name,
+        role="uv_coverage",
+        metadata={"tool": "shadems"},
+    )
+
+    uv_outputs = [
+        output for output in ctx.manifest.outputs if output.role == "uv_coverage"
+    ]
+    assert [output.kind for output in uv_outputs] == ["plot", "log"]
+    assert uv_outputs[0].path == "run_uvcoverage.png"
+    assert uv_outputs[0].metadata["tool"] == "shadems"
+    assert (ctx.work_dir / "run_uvcoverage_shadems.log").read_text(
+        encoding="utf-8"
+    ) == "shadeMS ok\n"

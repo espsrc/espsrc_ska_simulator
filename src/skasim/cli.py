@@ -201,20 +201,21 @@ def main(argv: Optional[List[str]] = None) -> None:
     imaging.add_argument(
         "--clean-iterations", type=int, default=5000, help="WSClean CLEAN iterations"
     )
-    imaging.add_argument(
+
+    coverage = p.add_argument_group("uv coverage")
+    coverage.add_argument(
         "--no-uv-coverage",
         dest="uv_coverage",
         action="store_false",
         default=True,
         help="Skip shadeMS UV-coverage plot generation",
     )
-    imaging.add_argument(
+    coverage.add_argument(
         "--shadems-command",
         default="shadems",
         help="Command used for shadeMS UV-coverage plotting (default: shadems; set to a full path or conda run wrapper if shadeMS is installed in a separate environment)",
     )
-
-    imaging.add_argument(
+    coverage.add_argument(
         "--uv-coverage-canvas-size",
         type=int,
         default=600,
@@ -448,9 +449,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         imager=args.imager,
         wsclean_command=args.wsclean_command,
         clean_iterations=args.clean_iterations,
-        uv_coverage=args.uv_coverage,
-        shadems_command=args.shadems_command,
-        uv_coverage_canvas_size=args.uv_coverage_canvas_size,
     )
 
     # Build typed model entries from legacy CLI flags
@@ -506,6 +504,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         "imaging": [img],
         "output_dir": args.output_dir,
         "overwrite": args.overwrite,
+        "uv_coverage": args.uv_coverage,
+        "shadems_command": args.shadems_command,
+        "uv_coverage_canvas_size": args.uv_coverage_canvas_size,
     }
     if model_entries:
         config_kwargs["models"] = model_entries

@@ -477,9 +477,11 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
         )
         monkeypatch.setattr(
             pipeline,
-            "write_uv_coverage_plot",
-            lambda ctx, visibility_path, img_config: (
-                called.append("uv") or (ctx.work_dir / "uv.png")
+            "run_shadems_command",
+            lambda argv, work_dir: (
+                called.append("uv")
+                or (work_dir / "run_uvcoverage.png").write_bytes(b"\x89PNG")
+                or type("R", (), {"stdout": "", "stderr": ""})()
             ),
         )
 

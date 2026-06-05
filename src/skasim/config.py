@@ -231,11 +231,6 @@ class ImgConfig(BaseModel):
     wsclean_command: str = "wsclean"
     clean_iterations: int = 5000
 
-    # shadeMS UV coverage
-    uv_coverage: bool = True
-    shadems_command: str = "shadems"
-    uv_coverage_canvas_size: int = 600
-
     @field_validator("pixels")
     @classmethod
     def _min_pixels(cls, v: int) -> int:
@@ -251,13 +246,6 @@ class ImgConfig(BaseModel):
             raise ValueError("tag must not be empty")
         if any(c in v for c in [" ", "/", "\\", ":", "*", "?", '"', "<", ">", "|"]):
             raise ValueError("tag must not contain whitespace or path-special chars")
-        return v
-
-    @field_validator("uv_coverage_canvas_size")
-    @classmethod
-    def _positive_uv_coverage_canvas_size(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError("uv_coverage_canvas_size must be >= 1")
         return v
 
 
@@ -300,6 +288,11 @@ class SimConfig(BaseModel):
     # nested configs
     observation: ObsConfig = ObsConfig()
     imaging: List[ImgConfig] = Field(default_factory=lambda: [ImgConfig()])
+
+    # UV coverage (shadeMS) identical for any imaging pass
+    uv_coverage: bool = True
+    shadems_command: str = "shadems"
+    uv_coverage_canvas_size: int = 600
 
     output_dir: Optional[str] = None
     overwrite: bool = False
@@ -427,3 +420,10 @@ class SimConfig(BaseModel):
         if not self.imaging:
             raise ValueError("at least one imaging block is required")
         return self
+
+    @field_validator("uv_coverage_canvas_size")
+    @classmethod
+    def _positive_uv_coverage_canvas_size(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("uv_coverage_canvas_size must be >= 1")
+        return v

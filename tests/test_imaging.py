@@ -18,15 +18,12 @@ from skasim.imaging import (
     _padded_limits,
     _sky_model_ellipses,
     _sky_model_position_angle,
-    build_shadems_uv_coverage_argv,
     build_wsclean_argv,
     collect_wsclean_outputs,
     run_dirty_imaging,
     run_wsclean_command,
-    shadems_uv_coverage_env,
     write_fits_preview,
     write_sky_model_previews,
-    write_uv_coverage_plot,
     wsclean_output_prefix,
 )
 from skasim.manifest import create_run_context
@@ -569,71 +566,3 @@ def test_run_wsclean_imaging_cleanup_keeps_run_scoped_outputs(tmp_path, monkeypa
     output_paths = [output.path for output in ctx.manifest.outputs]
     assert f"default/{prefix}-MFS-image.fits" in output_paths
     assert not (ctx.work_dir / "default" / "wsclean-0000-temp.fits").exists()
-
-
-def test_build_shadems_uv_coverage_argv_uses_verified_configuration(tmp_path):
-    """shadeMS UV coverage uses U/V axes and a square canvas."""
-    img_config = ImgConfig(
-        shadems_command="python -m shade_ms",
-        uv_coverage_canvas_size=600,
-    )
-
-    argv = build_shadems_uv_coverage_argv(
-        img_config=img_config,
-        visibility_path=tmp_path / "visibilities.MS",
-        output_dir=tmp_path,
-        png_name="run_uvcoverage.png",
-        title="run uv coverage",
-    )
-
-    assert argv[:3] == ["python", "-m", "shade_ms"]
-    assert "--xaxis" in argv
-    assert argv[argv.index("--xaxis") + 1] == "u"
-    assert "--yaxis" in argv
-    assert argv[argv.index("--yaxis") + 1] == "v"
-    assert argv[argv.index("--xcanvas") + 1] == "600"
-    assert argv[argv.index("--ycanvas") + 1] == "600"
-    assert argv[argv.index("--spread-pix") + 1] == "2"
-    assert "--no-lim-save" in argv
-
-
-def test_shadems_uv_coverage_env_uses_writable_cache_dirs(tmp_path):
-    """shadeMS receives writable Matplotlib and Numba cache directories."""
-    env = shadems_uv_coverage_env(tmp_path)
-
-    assert Path(env["MPLCONFIGDIR"]).is_dir()
-    assert Path(env["NUMBA_CACHE_DIR"]).is_dir()
-    assert Path(env["MPLCONFIGDIR"]).parent.parent == tmp_path
-    assert Path(env["NUMBA_CACHE_DIR"]).parent.parent == tmp_path
-
-
-def test_write_uv_coverage_plot_records_manifest_outputs(tmp_path, monkeypatch):
-    """shadeMS plot generation records both PNG and command log outputs."""
-    config = SimConfig(output_dir=str(tmp_path / "run"))
-    ctx = create_run_context(config)
-    visibility_path = ctx.work_dir / "visibilities.MS"
-    visibility_path.mkdir()
-
-    def fake_run(argv, work_dir):
-        (work_dir / "run_uvcoverage.png").write_bytes(
-            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-            b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
-            b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x00IEND\xaeB`\x82"
-        )
-
-        return SimpleNamespace(stdout="shadeMS ok\n", stderr="")
-
-    monkeypatch.setattr("skasim.imaging.run_shadems_command", fake_run)
-
-    png_path = write_uv_coverage_plot(ctx, visibility_path, config.imaging[0])
-
-    assert png_path == ctx.work_dir / "run_uvcoverage.png"
-    uv_outputs = [
-        output for output in ctx.manifest.outputs if output.role == "uv_coverage"
-    ]
-    assert [output.kind for output in uv_outputs] == ["plot", "log"]
-    assert uv_outputs[0].path == "run_uvcoverage.png"
-    assert uv_outputs[0].metadata["tool"] == "shadems"
-    assert (ctx.work_dir / "run_uvcoverage_shadems.log").read_text(
-        encoding="utf-8"
-    ) == "shadeMS ok\n"

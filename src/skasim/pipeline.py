@@ -6,6 +6,7 @@ import json
 import os
 import pickle
 import shutil
+import subprocess
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -17,7 +18,7 @@ from astropy.coordinates import SkyCoord
 from loguru import logger
 
 from .config import SimConfig
-from .imaging import run_dirty_imaging, run_wsclean_imaging, write_uv_coverage_plot
+from .imaging import run_dirty_imaging, run_wsclean_imaging
 from .loaders import (
     FitsCatalogLoader,
     component_model_entries,
@@ -29,7 +30,7 @@ from .loaders import (
 from .manifest import RunContext, create_run_context
 from .runtime import require_karabo_module
 from .sky import SkyModel, Source
-from .utils import get_diameter
+from .utils import build_shadems_uv_coverage_argv, get_diameter, run_shadems_command
 
 # --------------------------------------------------------------------------- #
 # workdir + logging
@@ -644,13 +645,58 @@ def run(config: SimConfig) -> None:
             )
             raise
 
-        # UV coverage (shadeMS) — once per run, using first imaging config
-        if config.imaging[0].uv_coverage:
+        # UV coverage (shadeMS) — once per run, before imaging
+        if config.uv_coverage:
             ctx.add_milestone("uv_coverage_started", "started")
             try:
-                uv_coverage_path = write_uv_coverage_plot(
-                    ctx, visibility_path, config.imaging[0]
+                run_id = ctx.work_dir.name
+                png_name = f"{run_id}_uvcoverage.png"
+                log_name = f"{run_id}_uvcoverage_shadems.log"
+                png_path = ctx.work_dir / png_name
+                log_path = ctx.work_dir / log_name
+                argv = build_shadems_uv_coverage_argv(
+                    shadems_command=config.shadems_command,
+                    visibility_path=visibility_path,
+                    output_dir=ctx.work_dir,
+                    png_name=png_name,
+                    title=f"{run_id} uv coverage",
+                    canvas_size=config.uv_coverage_canvas_size,
                 )
+                try:
+                    result = run_shadems_command(argv, ctx.work_dir)
+                except subprocess.CalledProcessError as exc:
+                    output = (exc.stdout or "") + (exc.stderr or "")
+                    log_path.write_text(output, encoding="utf-8")
+                    ctx.manifest.add_output(
+                        "log",
+                        log_name,
+                        role="uv_coverage",
+                        metadata={"tool": "shadems", "returncode": exc.returncode},
+                    )
+                    raise
+                log_path.write_text(
+                    (result.stdout or "") + (result.stderr or ""), encoding="utf-8"
+                )
+                if not png_path.exists():
+                    raise FileNotFoundError(f"shadeMS did not produce {png_path}")
+                ctx.manifest.add_output(
+                    "plot",
+                    png_name,
+                    role="uv_coverage",
+                    metadata={
+                        "tool": "shadems",
+                        "xaxis": "u",
+                        "yaxis": "v",
+                        "canvas_size": config.uv_coverage_canvas_size,
+                    },
+                )
+                ctx.manifest.add_output(
+                    "log",
+                    log_name,
+                    role="uv_coverage",
+                    metadata={"tool": "shadems"},
+                )
+                uv_coverage_path = png_path
                 ctx.add_milestone(
                     "uv_coverage_completed",
                     "completed",
