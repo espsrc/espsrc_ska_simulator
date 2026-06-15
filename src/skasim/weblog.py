@@ -106,7 +106,7 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
         preview = fpath.with_suffix(".png")
         product[key] = {
             "fits": output.path,
-            "preview": preview.name if preview.exists() else None,
+            "preview": str(preview.relative_to(work_dir)) if preview.exists() else None,
             "data": _file_to_base64_data_uri(preview) if preview.exists() else None,
             "beam": _read_fits_beam(fpath),
         }

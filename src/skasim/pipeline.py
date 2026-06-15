@@ -69,6 +69,8 @@ def build_telescope(ctx: RunContext):
             details["n_stations"] = telescope.num_antennas
         elif hasattr(telescope, "num_stations"):
             details["n_stations"] = telescope.num_stations
+        elif hasattr(telescope, "stations") and telescope.stations is not None:
+            details["n_stations"] = len(telescope.stations)
     except Exception:
         pass
     ctx.add_milestone(
@@ -510,6 +512,9 @@ def run_simulation(
     }
     if config.rms or (config.noise_rms_start is not None):
         params["noise_enable"] = True
+        # "Observation settings" avoids OSKAR segfault: "Telescope model"
+        # triggers oskar_settings_to_telescope which dereferences a null
+        # ionosphere screen object when noise_rms="Range".
         params["noise_freq"] = "Observation settings"
         if config.noise_rms_start is not None:
             # numeric station RMS override (calibration recipe)
