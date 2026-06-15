@@ -93,7 +93,7 @@ def build_wsclean_argv(
 ) -> list[str]:
     """Build a shell-free WSClean argv list from the resolved imaging config."""
     imaging_cellsize = fov / img_config.pixels
-    channels_out = min(n_channels or 1, 8)
+    channels_out = n_channels  # min(n_channels or 1, 8)
     return shlex.split(img_config.wsclean_command) + [
         "-weight",
         "briggs",
