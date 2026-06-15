@@ -284,6 +284,8 @@ class SimConfig(BaseModel):
     rms: bool = False
     rms_value: float = 0.0
     rms_sigma: float = 3.0
+    noise_rms_start: Optional[float] = None
+    noise_rms_end: Optional[float] = None
 
     # nested configs
     observation: ObsConfig = ObsConfig()

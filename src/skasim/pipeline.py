@@ -508,10 +508,19 @@ def run_simulation(
         "gauss_ref_freq_hz": freq.to(u.Hz).value,
         "use_gpus": False,
     }
-    if config.rms:
+    if config.rms or (config.noise_rms_start is not None):
         params["noise_enable"] = True
-        params["noise_freq"] = "Telescope model"
-        params["noise_rms"] = "Telescope model"
+        params["noise_freq"] = "Observation settings"
+        if config.noise_rms_start is not None:
+            # numeric station RMS override (calibration recipe)
+            start = config.noise_rms_start
+            end = config.noise_rms_end if config.noise_rms_end is not None else start
+            params["noise_rms"] = "Range"
+            params["noise_rms_start"] = start
+            params["noise_rms_end"] = end
+            logger.info(f"noise_rms override: Range {start:.6e} – {end:.6e} Jy")
+        else:
+            params["noise_rms"] = "Telescope model"
 
     simulation = interferometer_module.InterferometerSimulation(**params)
     simulation.run_simulation(
