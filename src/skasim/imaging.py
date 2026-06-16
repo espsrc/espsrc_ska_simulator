@@ -93,12 +93,14 @@ def build_wsclean_argv(
 ) -> list[str]:
     """Build a shell-free WSClean argv list from the resolved imaging config."""
     imaging_cellsize = fov / img_config.pixels
-    channels_out = n_channels  # min(n_channels or 1, 8)
-    return shlex.split(img_config.wsclean_command) + [
+    channels_out = (
+        img_config.channels_out if img_config.channels_out is not None else n_channels
+    )
+
+    argv = shlex.split(img_config.wsclean_command) + [
         "-weight",
         "briggs",
         str(img_config.robust),
-        "-multiscale",
         "-size",
         str(img_config.pixels),
         str(img_config.pixels),
@@ -107,19 +109,37 @@ def build_wsclean_argv(
         "-niter",
         str(img_config.clean_iterations),
         "-mgain",
-        "0.8",
+        str(img_config.mgain if img_config.mgain is not None else 0.8),
         "-auto-threshold",
-        "0.3",
+        str(
+            img_config.auto_threshold if img_config.auto_threshold is not None else 0.3
+        ),
         "-auto-mask",
-        "3",
+        str(img_config.auto_mask if img_config.auto_mask is not None else 3.0),
         "-channels-out",
         str(channels_out),
-        "-join-channels",
-        "-local-rms",
         "-name",
         output_prefix,
-        str(visibility_path),
     ]
+
+    if img_config.multiscale is not False:
+        argv.append("-multiscale")
+        if img_config.multiscale_scales:
+            argv += [
+                "-multiscale-scales",
+                ",".join(str(s) for s in img_config.multiscale_scales),
+            ]
+    if img_config.local_rms is not False:
+        argv.append("-local-rms")
+    if img_config.join_channels is not False:
+        argv.append("-join-channels")
+    if img_config.padding is not None:
+        argv += ["-padding", str(img_config.padding)]
+    if img_config.threads is not None:
+        argv += ["-j", str(img_config.threads)]
+
+    argv.append(str(visibility_path))
+    return argv
 
 
 def run_wsclean_command(argv: list[str], work_dir: Path):

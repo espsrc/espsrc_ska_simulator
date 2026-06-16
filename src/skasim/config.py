@@ -219,7 +219,12 @@ class ObsConfig(BaseModel):
 
 
 class ImgConfig(BaseModel):
-    """imaging parameters passed to OSKAR / WSClean."""
+    """imaging parameters passed to OSKAR / WSClean.
+
+    WSClean-specific flags (mgain, multiscale, auto-threshold, etc.) are
+    ignored when ``imager`` is ``oskar-dirty``; they only affect argv building
+    for ``wsclean``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -230,6 +235,18 @@ class ImgConfig(BaseModel):
     imager: Literal["oskar-dirty", "wsclean"] = "oskar-dirty"
     wsclean_command: str = "wsclean"
     clean_iterations: int = 5000
+
+    # WSClean-only flags.  None means "use the skasim default".
+    mgain: Optional[float] = None
+    multiscale: Optional[bool] = None
+    multiscale_scales: Optional[List[int]] = None
+    auto_threshold: Optional[float] = None
+    auto_mask: Optional[float] = None
+    local_rms: Optional[bool] = None
+    join_channels: Optional[bool] = None
+    channels_out: Optional[int] = None
+    padding: Optional[float] = None
+    threads: Optional[int] = None
 
     @field_validator("pixels")
     @classmethod
