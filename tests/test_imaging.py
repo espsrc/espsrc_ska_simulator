@@ -181,23 +181,29 @@ def test_run_wsclean_command_uses_argv_and_working_directory(tmp_path, monkeypat
     """WSClean execution avoids shell execution and uses an explicit cwd."""
     calls = []
 
-    def fake_run(argv, **kwargs):
-        calls.append((argv, kwargs))
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            calls.append((argv, kwargs))
+            self.stdout = iter(["ok\n"])
+            self.returncode = 0
 
-        class Result:
-            stdout = "ok"
+        def wait(self):
+            pass
 
-        return Result()
+        def __enter__(self):
+            return self
 
-    monkeypatch.setattr("skasim.imaging.subprocess.run", fake_run)
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("skasim.imaging.subprocess.Popen", FakePopen)
 
     result = run_wsclean_command(["wsclean", "-name", "run-clean"], tmp_path)
 
-    assert result.stdout == "ok"
+    assert result.stdout == "ok\n"
     assert calls[0][0] == ["wsclean", "-name", "run-clean"]
     assert calls[0][1]["cwd"] == str(tmp_path)
     assert calls[0][1]["shell"] is False
-    assert calls[0][1]["check"] is True
 
 
 def test_run_dirty_imaging_passes_icrs_phase_centre(tmp_path, monkeypatch):
