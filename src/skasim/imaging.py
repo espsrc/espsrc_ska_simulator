@@ -143,17 +143,39 @@ def build_wsclean_argv(
 
 
 def run_wsclean_command(argv: list[str], work_dir: Path):
-    """Run WSClean with argv and an explicit working directory."""
+    """Run WSClean with argv and an explicit working directory.
+
+    Streams stdout/stderr line-by-line through loguru so that WSClean
+    progress appears in the skasim logs in real time.
+    """
     env = os.environ.copy()
     env["OPENBLAS_NUM_THREADS"] = "1"
-    return subprocess.run(
+    lines: list[str] = []
+    with subprocess.Popen(
         argv,
         shell=False,
         cwd=str(work_dir),
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
-        check=True,
+    ) as proc:
+        assert proc.stdout is not None  # guaranteed by PIPE
+        for line in proc.stdout:
+            stripped = line.rstrip("\n")
+            logger.info("[wsclean] {}", stripped)
+            lines.append(line)
+        proc.wait()
+    combined = "".join(lines)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode,
+            argv,
+            output=combined,
+            stderr=None,
+        )
+    return subprocess.CompletedProcess(
+        argv, proc.returncode, stdout=combined, stderr=""
     )
 
 
@@ -528,8 +550,7 @@ def run_wsclean_imaging(
         prefix=wsclean_module.TMP_PREFIX_CUSTOM,
         purpose=wsclean_module.TMP_PURPOSE_CUSTOM,
     )
-    proc = run_wsclean_command(argv, work_dir)
-    logger.info(f"WSClean stdout: {proc.stdout}")
+    run_wsclean_command(argv, work_dir)
 
     # remove the temporary files created by WSClean
     for tmp in work_dir.glob("wsclean-00*.fits"):
