@@ -42,5 +42,9 @@ autodoc_default_options = {
 
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
+html_logo = "_static/skasim-logo.png"
+html_theme_options = {
+    "logo_only": True,
+}
 
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
