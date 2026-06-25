@@ -49,3 +49,14 @@ OSKAR dirty imager::
       --observation-time 60 \
       --frequency-mhz 1300 \
       --pixels 512
+
+Science Case Gallery
+--------------------
+
+Realistic science demonstrations (polarization studies, extended-source
+showcases, redshift cases, array-assembly comparisons, and more) are collected
+in the public **skasim gallery**:
+
+`https://espsrc.github.io/skasim-gallery/ <https://espsrc.github.io/skasim-gallery/>`_
+
+Use the gallery as an inspiration for your own simulations.

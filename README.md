@@ -1,6 +1,10 @@
+<p align="center">
+  <img src="docs/_static/skasim-logo.png" width="240" alt="skasim logo">
+</p>
+
 # skasim — Spanish SRC SKA Simulator
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Package](https://img.shields.io/badge/pkg-0.4.0-orange)](https://github.com/espsrc/espsrc_ska_simulator)
 
 **skasim** is a Python package for creating synthetic radio-interferometric observations of the SKA (Square Kilometre Array). It bridges user-supplied sky models and simulated imaging data products, supporting feasibility studies, definition of science cases and pipeline validation for the SKA community.
@@ -16,15 +20,16 @@ Sky Model ──> OSKAR simulation ──> visibilities.MS ──> Image (OSKAR 
 ## Key Features
 
 - **Pydantic-validated configuration** — `SimConfig`, `ObsConfig`, `ImgConfig` catch parameter errors and reject deprecated 0.1 fields
-- **Flexible sky-model inputs** — generated source intensities, FITS catalogs, JSON source lists, Pickle/Karabo models, or built-in catalogs (MIGHTEE, GLEAM, SKAMid)
+- **Typed sky-model API** — component catalogs, continuum I+α maps, CASA Taylor-term images, and static Stokes maps
+- **Multi-imaging passes** — run several imager/tag combinations from a single visibility set
 - **Two imaging pathways** — fast dirty imaging via OSKAR, or cleaned imaging via the external WSClean binary
 - **Run records** — every run writes a structured manifest and an always-on weblog, including failed runs
+
 ---
 
 ## Quick Start
 
 ```bash
-
 # Clone the repository
 git clone https://github.com/espsrc/espsrc_ska_simulator.git
 cd espsrc_ska_simulator
@@ -43,17 +48,24 @@ skasim --output-dir smoke_mightee_wsclean \
   --clean-iterations 100
 ```
 
-See [full installation](https://github.com/espsrc/espsrc_ska_simulator/blob/main/docs/installation.rst) for environment setup.
+See the [full installation guide](docs/installation.rst) and the [user guide](docs/guide.rst) for detailed environment setup and configuration options.
 
+---
+
+## Documentation
+
+The full rendered documentation lives at **https://espsrc.github.io/espsrc_ska_simulator/**.
+Realistic science demonstrations are collected in the public **science-case gallery** at https://espsrc.github.io/skasim-gallery/.
 
 ---
 
 ## Dependencies
 
-- **Python** ≥ 3.8
+- **Python** ≥ 3.10 (and < 3.13)
 - **Karabo pipeline** (Conda-installable, includes OSKAR, RASCIL, ska-sdp-datamodels)
 - **OSKAR** simulation backend (included in Karabo)
 - **WSClean** (optional) — for cleaned imaging
+- **python-casacore** / **CASA** (optional) — for Taylor-term and continuum image-model injection
 
 ---
 
@@ -63,22 +75,36 @@ See [full installation](https://github.com/espsrc/espsrc_ska_simulator/blob/main
 skasim --model <sky_model> --telescope <telescope> [options]
 
 Key options:
+  --config PATH               JSON configuration file
   --model PATH                Sky model file: FITS, JSON, pickle, or Karabo model
-  --catalog NAME            Built-in catalog: MIGHTEE, GLEAM, or SKAMid
+  --catalog NAME              Built-in catalog: MIGHTEE, GLEAM, or SKAMid
+  --continuum-stokes-i PATH   Continuum image-model Stokes I FITS
+  --continuum-alpha PATH      Continuum image-model spectral-index FITS
+  --reference-frequency-hz N  Reference frequency for continuum image model
   --flux-density Jy...        Generated source Stokes I flux densities
   --stokes-q Jy...            Generated source Stokes Q values
   --stokes-u Jy...            Generated source Stokes U values
   --stokes-v Jy...            Generated source Stokes V values
+  --telescope-version NAME    Array-assembly version (e.g. AA4, AA*)
+  --show-telescopes           List available telescopes/versions and exit
   --frequency-mhz MHz         Central observing frequency
   --bandwidth-mhz MHz         Bandwidth
   --n-channels N              Number of channels
   --channel-width-mhz MHz     Channel width
   --observation-time SECONDS  Observation duration
+  --center SEXAGESIMAL        Field centre, e.g. "10h01m35.1s 2d41m41s"
   --output-dir PATH           Exact output directory name
   --imager NAME               oskar-dirty (default) or wsclean
-  --clean-iterations N        WSClean CLEAN iterations
   --wsclean-command CMD       WSClean command or container invocation
-  --overwrite                 Replace an existing visibility output directory
+  --clean-iterations N        WSClean CLEAN iterations
+  --no-uv-coverage            Skip shadeMS UV-coverage plot
+  --shadems-command CMD       shadeMS command/path
+  --uv-coverage-canvas-size N Square canvas size for UV-coverage plot
+  --rms                       Enable simple noise model
+  --rms-value JY              RMS noise level (simple model)
+  --noise-rms-start JY        OSKAR station noise RMS start
+  --noise-rms-end JY          OSKAR station noise RMS end
+  --overwrite                 Replace an existing output directory
 ```
 
 Run `skasim --help` for the complete reference, or check the full API documentation.
@@ -88,7 +114,7 @@ Removed or renamed 0.1 options such as `--I`, `--stokes-i`,
 `--scale-I`, `--cleaning`, numeric catalog IDs, and the Python config fields
 `I`, `Q`, `U`, `V`, `cleaning`, `source_names`, `ref_freq_hz`, `json_fg`,
 `output_prefix`, `niter`, `scale_I`, and `ImgConfig.algorithm` fail
-intentionally in 0.2.
+intentionally in 0.2+.
 
 ---
 
@@ -96,13 +122,17 @@ intentionally in 0.2.
 
 ```
 src/skasim/
-├── __init__.py         
-├── cli.py              # argparse CLI
-├── config.py           # Pydantic models: SimConfig, ObsConfig, ImgConfig
-├── pipeline.py         # Orchestrator: sky → simulation → imaging
-├── sky.py              # Source, SkyModel, catalog loaders
-├── imaging.py          # Dirty (OSKAR) / cleaned (WSClean) imaging
-└── utils.py            # Constants, helpers, logger init
+├── __init__.py              # Public API: SimConfig, ObsConfig, ImgConfig
+├── cli.py                   # argparse CLI
+├── config.py                # Pydantic models: SimConfig, ObsConfig, ImgConfig, ModelEntry
+├── pipeline.py              # Orchestrator: sky → simulation → imaging
+├── sky.py                   # Source, SkyModel, catalog loaders
+├── imaging.py               # Dirty (OSKAR) / cleaned (WSClean) imaging
+├── loaders/                 # FITS catalog/image and CASA image-model loaders
+├── manifest.py              # RunManifest, RunContext, milestone tracking
+├── runtime.py               # Lazy Karabo/OSKAR/CASACore importers
+├── weblog.py                # HTML report renderer
+└── utils.py                 # Constants, helpers, logger init, shadeMS wrappers
 ```
 
 ---
