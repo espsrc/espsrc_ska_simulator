@@ -386,6 +386,9 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path, monkey
         def putcol(self, name, value):
             pass
 
+        def getcolkeywords(self, name):
+            return {"dimnames": ["frequency"]}
+
     monkeypatch.setattr(
         "skasim.loaders.image_models.require_casacore",
         lambda: FakeCasacoreTable,
@@ -454,6 +457,9 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
 
         def putcol(self, name, value):
             pass
+
+        def getcolkeywords(self, name):
+            return {"dimnames": ["frequency"]}
 
     monkeypatch.setattr(
         "skasim.loaders.image_models.require_casacore",
