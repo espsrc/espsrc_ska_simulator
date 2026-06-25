@@ -525,12 +525,30 @@ def adjust_spectral_reference(
     return new_ref_hz
 
 
+def _image_has_spectral_axis(image_path: Path) -> bool:
+    """Return True if the CASA image has a frequency/spectral axis."""
+    casacore_table = require_casacore()
+    with casacore_table(str(image_path), readonly=True, ack=False) as tbl:
+        coords = tbl.getcolkeywords("map")
+    dim_names = [str(name).lower() for name in coords.get("dimnames", [])]
+    return "frequency" in dim_names
+
+
 def _set_crval4_via_script(
     work_dir: Path,
     image_paths: list[Path],
     frequency_hz: float,
 ) -> None:
     """Set CRVAL4 on CASA images — subprocess fallback for environments without casatasks."""
+    # 2D images have no spectral axis; CASA ft will treat them as spectrally flat
+    # with the reference frequency passed as reffreq, so CRVAL4 cannot (and need not) be set.
+    image_paths = [p for p in image_paths if _image_has_spectral_axis(p)]
+    if not image_paths:
+        logger.info(
+            "Spectrally flat 2D image(s): skipping CRVAL4 update; ft reffreq carries the reference frequency"
+        )
+        return
+
     try:
         from casatasks import imhead
 
