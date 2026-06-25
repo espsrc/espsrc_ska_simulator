@@ -106,7 +106,7 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
         preview = fpath.with_suffix(".png")
         product[key] = {
             "fits": output.path,
-            "preview": preview.name if preview.exists() else None,
+            "preview": str(preview.relative_to(work_dir)) if preview.exists() else None,
             "data": _file_to_base64_data_uri(preview) if preview.exists() else None,
             "beam": _read_fits_beam(fpath),
         }
@@ -257,11 +257,20 @@ def _imager_parameter_rows_for_block(
         pixel_size_arcsec = fov_deg * 3600.0 / img_config.pixels
 
     if img_config.imager == "wsclean":
+        # reflect any explicit overrides; default values match build_wsclean_argv
+        effective_channels_out = (
+            img_config.channels_out
+            if img_config.channels_out is not None
+            else min(n_channels, 8)
+        )
         rows = [
             ("Imager", "WSClean"),
             ("Command", img_config.wsclean_command),
             ("Weighting", f"Briggs robust {_format_float(img_config.robust)}"),
-            ("Multiscale", "enabled"),
+            (
+                "Multiscale",
+                "enabled" if img_config.multiscale is not False else "disabled",
+            ),
             ("Image size", f"{img_config.pixels} x {img_config.pixels} pixels"),
             (
                 "Pixel scale",
@@ -270,13 +279,43 @@ def _imager_parameter_rows_for_block(
                 else "unknown",
             ),
             ("Clean iterations", str(img_config.clean_iterations)),
-            ("Major-cycle gain", "0.8"),
-            ("Auto threshold", "0.3"),
-            ("Auto mask", "3"),
-            ("Channels out", str(channels_out)),
-            ("Join channels", "enabled"),
-            ("Local RMS", "enabled"),
+            (
+                "Major-cycle gain",
+                str(img_config.mgain if img_config.mgain is not None else 0.8),
+            ),
+            (
+                "Auto threshold",
+                str(
+                    img_config.auto_threshold
+                    if img_config.auto_threshold is not None
+                    else 0.3
+                ),
+            ),
+            (
+                "Auto mask",
+                str(img_config.auto_mask if img_config.auto_mask is not None else 3.0),
+            ),
+            ("Channels out", str(effective_channels_out)),
+            (
+                "Join channels",
+                "enabled" if img_config.join_channels is not False else "disabled",
+            ),
+            (
+                "Local RMS",
+                "enabled" if img_config.local_rms is not False else "disabled",
+            ),
         ]
+        if img_config.multiscale_scales:
+            rows.append(
+                (
+                    "Multiscale scales",
+                    ", ".join(str(s) for s in img_config.multiscale_scales),
+                )
+            )
+        if img_config.padding is not None:
+            rows.append(("Padding", str(img_config.padding)))
+        if img_config.threads is not None:
+            rows.append(("Threads", str(img_config.threads)))
         if output_prefix is not None:
             rows.append(("Output prefix", output_prefix))
         if visibility_input is not None:

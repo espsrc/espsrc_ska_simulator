@@ -244,6 +244,18 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--rms-sigma", type=float, default=3.0, help="RMS sigma multiplier"
     )
     advanced.add_argument(
+        "--noise-rms-start",
+        type=float,
+        default=None,
+        help="OSKAR station noise RMS start (Jy) — overrides telescope model",
+    )
+    advanced.add_argument(
+        "--noise-rms-end",
+        type=float,
+        default=None,
+        help="OSKAR station noise RMS end (Jy) — overrides telescope model",
+    )
+    advanced.add_argument(
         "--flux-scale",
         type=float,
         default=1.0,
@@ -500,6 +512,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         "rms": args.rms,
         "rms_value": args.rms_value,
         "rms_sigma": args.rms_sigma,
+        "noise_rms_start": args.noise_rms_start,
+        "noise_rms_end": args.noise_rms_end,
         "observation": obs,
         "imaging": [img],
         "output_dir": args.output_dir,

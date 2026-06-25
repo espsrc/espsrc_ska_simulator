@@ -242,23 +242,6 @@
     {% endif %}
     {% for tab in imaging_tabs %}
     <div id="panel-{{ tab.tag }}" class="tab-panel{% if loop.first %} active{% endif %}{% if imaging_tabs | length == 1 %} active{% endif %}">
-      <div class="info-grid" style="margin-bottom: 1.5rem;">
-        <table>
-          <tr><th>Image Size</th><td>{{ tab.imaging_summary.image_size }}</td></tr>
-          {% if tab.imaging_summary.fov_deg %}
-          <tr><th>Total FoV</th><td>{{ tab.imaging_summary.fov_deg }} deg</td></tr>
-          {% endif %}
-          {% if tab.imaging_summary.pixel_size_arcsec %}
-          <tr><th>Pixel Size</th><td>{{ tab.imaging_summary.pixel_size_arcsec }} arcsec</td></tr>
-          {% endif %}
-          {% if tab.imaging_summary.beam %}
-          <tr><th>Beam</th><td>{{ tab.imaging_summary.beam }}</td></tr>
-          {% endif %}
-          {% for label, value in tab.imager_parameter_rows %}
-          <tr><th>{{ label }}</th><td>{{ value }}</td></tr>
-          {% endfor %}
-        </table>
-      </div>
       {% for product in tab.products %}
       <div style="margin-bottom: 2rem;">
         <div style="font-size: 0.9rem; margin-bottom: 0.4rem;">
@@ -303,6 +286,23 @@
         </div>
       </div>
       {% endfor %}
+      <div class="info-grid" style="margin-top: 1.5rem;">
+        <table>
+          <tr><th>Image Size</th><td>{{ tab.imaging_summary.image_size }}</td></tr>
+          {% if tab.imaging_summary.fov_deg %}
+          <tr><th>Total FoV</th><td>{{ tab.imaging_summary.fov_deg }} deg</td></tr>
+          {% endif %}
+          {% if tab.imaging_summary.pixel_size_arcsec %}
+          <tr><th>Pixel Size</th><td>{{ tab.imaging_summary.pixel_size_arcsec }} arcsec</td></tr>
+          {% endif %}
+          {% if tab.imaging_summary.beam %}
+          <tr><th>Beam</th><td>{{ tab.imaging_summary.beam }}</td></tr>
+          {% endif %}
+          {% for label, value in tab.imager_parameter_rows %}
+          <tr><th>{{ label }}</th><td>{{ value }}</td></tr>
+          {% endfor %}
+        </table>
+      </div>
     </div>
     {% endfor %}
     {% endif %}

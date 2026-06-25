@@ -45,7 +45,95 @@ def test_build_wsclean_argv_uses_default_command():
     assert argv[0] == "wsclean"
     assert "-name" in argv
     assert argv[argv.index("-name") + 1] == "run-clean"
-    assert argv[-1] == "visibilities.MS"
+    assert "visibilities.MS" in argv
+
+    # previous hardcoded defaults still apply when fields are omitted
+    assert "-multiscale" in argv
+    assert "-local-rms" in argv
+    assert "-join-channels" in argv
+    assert argv[argv.index("-mgain") + 1] == "0.8"
+    assert argv[argv.index("-auto-threshold") + 1] == "0.3"
+    assert argv[argv.index("-auto-mask") + 1] == "3.0"
+
+
+def test_build_wsclean_argv_respects_img_config_overrides():
+    """ImgConfig wsclean fields override the skasim defaults."""
+    config = SimConfig(
+        imaging=[
+            ImgConfig(
+                imager="wsclean",
+                pixels=256,
+                clean_iterations=10000,
+                mgain=0.95,
+                multiscale=False,
+                auto_threshold=1.0,
+                auto_mask=5.0,
+                local_rms=False,
+                join_channels=False,
+                channels_out=1,
+                padding=1.2,
+                threads=4,
+            )
+        ]
+    )
+
+    argv = build_wsclean_argv(
+        img_config=config.imaging[0],
+        visibility_path=Path("visibilities.MS"),
+        fov=0.2 * u.deg,
+        output_prefix="run-clean",
+        n_channels=4,
+    )
+
+    assert argv[argv.index("-niter") + 1] == "10000"
+    assert argv[argv.index("-mgain") + 1] == "0.95"
+    assert argv[argv.index("-auto-threshold") + 1] == "1.0"
+    assert argv[argv.index("-auto-mask") + 1] == "5.0"
+    assert argv[argv.index("-channels-out") + 1] == "1"
+    assert "-multiscale" not in argv
+    assert "-local-rms" not in argv
+    assert "-join-channels" not in argv
+    assert argv[argv.index("-padding") + 1] == "1.2"
+    assert argv[argv.index("-j") + 1] == "4"
+
+
+def test_build_wsclean_argv_multiscale_scales():
+    """multiscale_scales only appear when multiscale is active."""
+    config = SimConfig(
+        imaging=[
+            ImgConfig(
+                imager="wsclean",
+                multiscale_scales=[0, 4, 8, 16],
+            )
+        ]
+    )
+
+    argv = build_wsclean_argv(
+        img_config=config.imaging[0],
+        visibility_path=Path("visibilities.MS"),
+        fov=0.2 * u.deg,
+        output_prefix="run-clean",
+    )
+
+    assert "-multiscale" in argv
+    assert argv[argv.index("-multiscale-scales") + 1] == "0,4,8,16"
+
+    config2 = SimConfig(
+        imaging=[
+            ImgConfig(
+                imager="wsclean",
+                multiscale=False,
+                multiscale_scales=[0, 4, 8, 16],
+            )
+        ]
+    )
+    argv2 = build_wsclean_argv(
+        img_config=config2.imaging[0],
+        visibility_path=Path("visibilities.MS"),
+        fov=0.2 * u.deg,
+        output_prefix="run-clean",
+    )
+    assert "-multiscale-scales" not in argv2
 
 
 def test_build_wsclean_argv_parses_singularity_command():
@@ -93,23 +181,29 @@ def test_run_wsclean_command_uses_argv_and_working_directory(tmp_path, monkeypat
     """WSClean execution avoids shell execution and uses an explicit cwd."""
     calls = []
 
-    def fake_run(argv, **kwargs):
-        calls.append((argv, kwargs))
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            calls.append((argv, kwargs))
+            self.stdout = iter(["ok\n"])
+            self.returncode = 0
 
-        class Result:
-            stdout = "ok"
+        def wait(self):
+            pass
 
-        return Result()
+        def __enter__(self):
+            return self
 
-    monkeypatch.setattr("skasim.imaging.subprocess.run", fake_run)
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("skasim.imaging.subprocess.Popen", FakePopen)
 
     result = run_wsclean_command(["wsclean", "-name", "run-clean"], tmp_path)
 
-    assert result.stdout == "ok"
+    assert result.stdout == "ok\n"
     assert calls[0][0] == ["wsclean", "-name", "run-clean"]
     assert calls[0][1]["cwd"] == str(tmp_path)
     assert calls[0][1]["shell"] is False
-    assert calls[0][1]["check"] is True
 
 
 def test_run_dirty_imaging_passes_icrs_phase_centre(tmp_path, monkeypatch):

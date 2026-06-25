@@ -134,6 +134,37 @@ def test_img_config_defaults():
     assert img.robust == 0.0
     assert img.imager == "oskar-dirty"
     assert img.wsclean_command == "wsclean"
+    # wsclean-only fields default to None -> skasim defaults at argv time
+    assert img.mgain is None
+    assert img.multiscale is None
+    assert img.auto_threshold is None
+
+
+def test_img_config_wsclean_fields():
+    """wsclean flags can be set directly on ImgConfig."""
+    img = ImgConfig(
+        imager="wsclean",
+        mgain=0.95,
+        multiscale=False,
+        multiscale_scales=[0, 4, 8],
+        auto_threshold=1.0,
+        auto_mask=5.0,
+        local_rms=False,
+        join_channels=False,
+        channels_out=4,
+        padding=1.2,
+        threads=8,
+    )
+    assert img.mgain == pytest.approx(0.95)
+    assert img.multiscale is False
+    assert img.multiscale_scales == [0, 4, 8]
+    assert img.auto_threshold == pytest.approx(1.0)
+    assert img.auto_mask == pytest.approx(5.0)
+    assert img.local_rms is False
+    assert img.join_channels is False
+    assert img.channels_out == 4
+    assert img.padding == pytest.approx(1.2)
+    assert img.threads == 8
 
 
 def test_img_config_wsclean_imager():
