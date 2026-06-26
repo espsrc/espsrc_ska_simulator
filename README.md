@@ -6,6 +6,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Package](https://img.shields.io/badge/pkg-0.4.0-orange)](https://github.com/espsrc/espsrc_ska_simulator)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://espsrc.github.io/espsrc_ska_simulator/)
 
 **skasim** is a Python package for creating synthetic radio-interferometric observations of the SKA (Square Kilometre Array). It bridges user-supplied sky models and simulated imaging data products, supporting feasibility studies, definition of science cases and pipeline validation for the SKA community.
 
