@@ -10,8 +10,17 @@ import astropy.units as u
 import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from astropy.wcs import WCS
 
-from skasim.config import ImgConfig, ObsConfig, SimConfig
+from skasim.config import (
+    CasaTaylorTermsModelEntry,
+    ImgConfig,
+    ObsConfig,
+    SimConfig,
+    SpectralCubeModelEntry,
+)
+from skasim.loaders.image_models import CasaModelProduct
 from skasim.manifest import create_run_context
 from skasim.pipeline import (
     _load_sky_from_file,
@@ -26,6 +35,65 @@ from skasim.pipeline import (
 from skasim.sky import SkyModel
 
 
+def _write_minimal_fits_cube(path: Path, n_channels: int = 8, pixels: int = 64) -> Path:
+    """Create a tiny valid FITS cube for spectral-cube model tests."""
+    path = Path(path)
+    data = np.zeros((n_channels, pixels, pixels), dtype=np.float32)
+    header = fits.Header()
+    header["NAXIS"] = 3
+    header["NAXIS1"] = pixels
+    header["NAXIS2"] = pixels
+    header["NAXIS3"] = n_channels
+    header["CRPIX1"] = pixels / 2.0
+    header["CRPIX2"] = pixels / 2.0
+    header["CRPIX3"] = n_channels / 2.0
+    header["CRVAL1"] = 10.0
+    header["CRVAL2"] = 20.0
+    center_hz = 700e6
+    header["CRPIX3"] = 1.0
+    # align the cube exactly with an 8-channel 12.5 MHz observation centred at 700 MHz
+    header["CRVAL3"] = center_hz - (n_channels - 1) / 2.0 * 12.5e6
+    header["CDELT1"] = -0.05
+    header["CDELT2"] = 0.05
+    header["CDELT3"] = 12.5e6
+    header["CTYPE1"] = "GLON-CAR"
+    header["CTYPE2"] = "GLAT-CAR"
+    header["CTYPE3"] = "FREQ"
+    header["CUNIT1"] = "deg"
+    header["CUNIT2"] = "deg"
+    header["CUNIT3"] = "Hz"
+    header["BUNIT"] = "Jy/px"
+    hdu = fits.PrimaryHDU(data, header=header)
+    hdu.writeto(path, overwrite=True)
+    return path
+
+
+def _build_fake_header() -> fits.Header:
+    """Return a minimal WSClean-ready spectral header for pipeline mocking."""
+    header = fits.Header()
+    header["NAXIS"] = 3
+    header["NAXIS1"] = 64
+    header["NAXIS2"] = 64
+    header["NAXIS3"] = 8
+    header["CRPIX1"] = 32.0
+    header["CRPIX2"] = 32.0
+    header["CRVAL1"] = 10.0
+    header["CRVAL2"] = 20.0
+    header["CDELT1"] = -0.05
+    header["CDELT2"] = 0.05
+    header["CTYPE1"] = "RA---SIN"
+    header["CTYPE2"] = "DEC--SIN"
+    header["CUNIT1"] = "deg"
+    header["CUNIT2"] = "deg"
+    header["CRVAL3"] = 650e6
+    header["CDELT3"] = 12.5e6
+    header["CRPIX3"] = 1.0
+    header["CTYPE3"] = "FREQ"
+    header["CUNIT3"] = "Hz"
+    header["BUNIT"] = "Jy/pixel"
+    return header
+
+
 class _FakeTelescope:
     def plot_telescope(self, file):
         Path(file).write_text("plot", encoding="utf-8")
@@ -33,6 +101,154 @@ class _FakeTelescope:
 
 class _FakeVersions(Enum):
     SKA_OST_ARRAY_CONFIG_2_3_1 = "ska-ost-array-config-2.3.1"
+
+
+def test_run_spectral_cube_pipeline_calls_wsclean_and_logs_summary(
+    tmp_path, monkeypatch
+):
+    """A spectral-cube config triggers wsclean and logs a product summary."""
+    import skasim.pipeline as pipeline
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        center = SkyCoord(10 * u.deg, 20 * u.deg)
+        fake_sky = MagicMock()
+        fake_sky.get_center.return_value = center
+
+        monkeypatch.setattr(pipeline, "build_telescope", lambda ctx: _FakeTelescope())
+        monkeypatch.setattr(
+            pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg
+        )
+        monkeypatch.setattr(
+            pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center)
+        )
+        monkeypatch.setattr(
+            pipeline,
+            "build_observation",
+            lambda ctx, center, telescope: (
+                object(),
+                700 * u.MHz,
+                100 * u.MHz,
+                8,
+                12.5 * u.MHz,
+                650 * u.MHz,
+            ),
+        )
+        monkeypatch.setattr(
+            pipeline,
+            "run_simulation",
+            lambda ctx, telescope, observation, sky_model: ctx.visibility_path,
+        )
+
+        captured = []
+
+        def fake_wsclean(ctx, vis_path, fov, img_config, sub_dir, n_channels=1):
+            captured.append(("wsclean", img_config.tag, n_channels))
+            ctx.manifest.add_output(
+                "image_product",
+                f"{img_config.tag}_wsclean-0000-image.fits",
+                image_product_id=f"{img_config.tag}_wsclean",
+                imager="wsclean",
+                role="cube_image",
+                metadata={"tag": img_config.tag},
+            )
+            ctx.manifest.add_output(
+                "image_product",
+                f"mom0_{img_config.tag}.fits",
+                image_product_id=f"{img_config.tag}_wsclean_mom0",
+                imager="casa-immoments",
+                role="mom0",
+                metadata={"tag": img_config.tag},
+            )
+
+        monkeypatch.setattr(pipeline, "run_wsclean_imaging", fake_wsclean)
+        monkeypatch.setattr(
+            pipeline,
+            "write_image_model_previews",
+            lambda ctx, center, fov: None,
+        )
+        monkeypatch.setattr(
+            "skasim.loaders.image_models.prepare_spectral_cube_for_casa",
+            lambda ctx, entry, index, report: CasaModelProduct(
+                model_paths=[Path("/tmp/fake_cube.image")],
+                nterms=1,
+                reffreq=f"{ctx.config.observation.frequency_mhz * 1e6}Hz",
+                intermediates=[],
+                cube_data=np.zeros((8, 64, 64), dtype=np.float32),
+                header=_build_fake_header(),
+                freq_axis=3,
+            ),
+        )
+        monkeypatch.setattr(
+            "skasim.loaders.wsclean_predict.run_wsclean_predict",
+            lambda **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "skasim.loaders.image_models.run_casa_ft",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "skasim.loaders.image_models.merge_model_data_into_data",
+            lambda visibility_path: None,
+        )
+
+        cube_path = tmp_path / "cube.fits"
+        _write_minimal_fits_cube(cube_path, n_channels=8)
+        config = SimConfig(
+            output_dir="spectral_run",
+            models=[
+                SpectralCubeModelEntry(
+                    type="spectral_cube",
+                    cube=str(cube_path),
+                    reference_frequency_hz=700e6,
+                    channel_width_hz=12.5e6,
+                    n_channels=8,
+                )
+            ],
+            imaging=[ImgConfig(tag="line", imager="wsclean", pixels=64)],
+            observation=ObsConfig(
+                observation_time_s=1,
+                frequency_mhz=700.0,
+                bandwidth_mhz=100.0,
+                n_channels=8,
+                channel_width_mhz=12.5,
+            ),
+        )
+
+        pipeline.run(config)
+
+        assert captured == [("wsclean", "line", 8)]
+        work_dir = tmp_path / "spectral_run"
+        manifest = json.loads(
+            (work_dir / "run_manifest.json").read_text(encoding="utf-8")
+        )
+        milestone_names = {m["name"] for m in manifest["milestones"]}
+        assert "imaging_line_completed" in milestone_names
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_run_rejects_mixed_spectral_cube_and_component_models(tmp_path):
+    """Spectral-cube model entries cannot coexist with other model types."""
+    cube_path = tmp_path / "cube.fits"
+    _write_minimal_fits_cube(cube_path, n_channels=8)
+    tt0 = tmp_path / "tt0.fits"
+    tt1 = tmp_path / "tt1.fits"
+    _write_minimal_fits_cube(tt0, n_channels=1)
+    _write_minimal_fits_cube(tt1, n_channels=1)
+    with pytest.raises(ValueError, match="spectral_cube mode is exclusive"):
+        SimConfig(
+            models=[
+                SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path)),
+                CasaTaylorTermsModelEntry(
+                    type="casa_taylor_terms",
+                    tt0=str(tt0),
+                    tt1=str(tt1),
+                    reference_frequency_hz=700e6,
+                ),
+            ]
+        )
 
 
 # --------------------------------------------------------------------------- #

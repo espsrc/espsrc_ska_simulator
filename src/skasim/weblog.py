@@ -12,6 +12,7 @@ import numpy as np
 from astropy.io import fits
 from jinja2 import Environment, PackageLoader, select_autoescape
 
+from .loaders.image_models import read_fits_cube_info
 from .manifest import RunManifest
 
 KNOWN_ANTENNA_COUNTS = {
@@ -58,13 +59,17 @@ def _find_image_outputs(manifest: RunManifest, work_dir: Path) -> list[dict]:
 
 
 def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
-    """group MFS and dirty image products into model, clean, residual, PSF, and dirty entries."""
+    """Group MFS/dirty products plus spectral-cube stack and moment8 into display entries."""
     products: dict[str, dict] = {}
     for output in manifest.outputs:
         if output.kind != "image_product":
             continue
+
+        role = output.role or ""
+        # Ignore per-channel WSClean outputs; keep MFS, cube_image, and moment8.
         if output.imager == "wsclean" and "-MFS-" not in output.path:
-            continue
+            if role not in ("cube_image", "moment8"):
+                continue
 
         product_id = output.image_product_id or "imaging"
         tag = (output.metadata or {}).get("tag", "default")
@@ -79,26 +84,27 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
                 "residual": None,
                 "psf": None,
                 "dirty": None,
+                "cube": None,
+                "moment8": None,
                 "stats": None,
             },
         )
-        role = output.role or ""
-        key = None
-        if role == "model":
-            key = "model"
-        elif role == "image":
-            if output.imager == "oskar-dirty":
-                key = "dirty"
-            else:
-                key = "clean"
-        elif role == "dirty":
-            key = "dirty"
-        elif role == "residual":
-            key = "residual"
-        elif role == "psf":
-            key = "psf"
-        elif role.endswith("_preview"):
+        if role.endswith("_preview"):
             continue
+
+        key = None
+        if role in ("model",):
+            key = "model"
+        elif role in ("image",):
+            key = "dirty" if output.imager == "oskar-dirty" else "clean"
+        elif role in ("dirty", "residual", "psf"):
+            key = role
+        elif role == "cube_image":
+            key = "cube"
+        elif role == "moment8":
+            key = "moment8"
+        elif role == "avg_spectrum_plot":
+            key = "avg_spectrum"
 
         if key is None:
             continue
@@ -108,7 +114,7 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
             "fits": output.path,
             "preview": str(preview.relative_to(work_dir)) if preview.exists() else None,
             "data": _file_to_base64_data_uri(preview) if preview.exists() else None,
-            "beam": _read_fits_beam(fpath),
+            "beam": _read_fits_beam(fpath) if key in ("model", "clean", "residual", "dirty", "psf") else None,
         }
 
     for product in products.values():
@@ -124,7 +130,10 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
     return [
         product
         for product in products.values()
-        if any(product.get(k) for k in ("model", "clean", "residual", "dirty"))
+        if any(
+            product.get(k)
+            for k in ("model", "clean", "residual", "dirty", "cube", "moment8", "avg_spectrum")
+        )
     ]
 
 
@@ -580,6 +589,8 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
     and may include 'source' (file path or catalog name), 'n_sources',
     'nterms', 'ref_freq_hz', 'stokes'.
     """
+    from .config import SpectralCubeModelEntry
+
     config = manifest.config
     entries: list[dict] = []
 
@@ -635,6 +646,24 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
                     "stokes": stokes,
                 }
             )
+        elif mtype == "spectral_cube":
+            info: dict | None = None
+            if isinstance(model, SpectralCubeModelEntry):
+                try:
+                    info = read_fits_cube_info(Path(model.cube).expanduser().resolve())
+                except Exception:
+                    pass
+            entry: dict = {
+                "label": "Spectral cube",
+                "color": "spectral-cube",
+                "source": getattr(model, "cube", None),
+            }
+            if info:
+                entry["n_channels"] = info.get("n_channels")
+                entry["channel_width_khz"] = info.get("channel_width_hz", 0.0) / 1e3
+                entry["central_frequency_mhz"] = info.get("reference_frequency_hz", 0.0) / 1e6
+                entry["spatial_shape"] = info.get("spatial_shape")
+            entries.append(entry)
 
     # legacy paths
     if not config.models:
@@ -805,6 +834,23 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
                 }
             break
 
+    # Resolve input-cube moment8 plot if present
+    input_cube_moment8_plot = None
+    for o in manifest.outputs:
+        output_path = o.path if hasattr(o, "path") else o
+        role = getattr(o, "role", None)
+        if role != "input_cube_moment8":
+            continue
+        if not str(output_path).lower().endswith((".png", ".jpg", ".jpeg")):
+            continue
+        fpath = work_dir / str(output_path)
+        if fpath.exists():
+            input_cube_moment8_plot = {
+                "path": str(output_path),
+                "data": _file_to_base64_data_uri(fpath),
+            }
+        break
+
     # Resolve FITS image-model preview if present
     fits_model_plots = []
     for o in manifest.outputs:
@@ -859,6 +905,7 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
         uv_coverage_plot=uv_coverage_plot,
         sky_model_plot=sky_model_plot,
         sky_model_fov_plot=sky_model_fov_plot,
+        input_cube_moment8_plot=input_cube_moment8_plot,
         sky_model_summary=sky_model_summary,
         fits_model_plots=fits_model_plots,
         observation_summary=_observation_summary(manifest),

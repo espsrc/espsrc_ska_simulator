@@ -12,20 +12,33 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from skasim.config import SimConfig
+from skasim.config import (
+    ImgConfig,
+    ObsConfig,
+    SimConfig,
+    SpectralCubeModelEntry,
+)
 from skasim.loaders.image_models import (
+    _resample_spectral_axis_to_ms_channels,
     image_model_center,
     import_casa_tasks,
     inject_image_models,
     merge_model_data_into_data,
     prepare_casa_taylor_terms,
+    prepare_spectral_cube_for_casa,
+    read_fits_cube_info,
     run_casa_exportfits,
     run_casa_ft,
     run_casa_importfits,
     run_casa_set_spectral_coordinate,
     validate_casa_taylor_terms,
     validate_continuum_i_alpha,
+    validate_spectral_cube,
     write_image_model_previews,
+)
+from skasim.loaders.wsclean_predict import (
+    inject_spectral_cube_with_wsclean_predict,
+    run_wsclean_predict,
 )
 from skasim.manifest import RunManifest, create_run_context
 from skasim.weblog import render_weblog
@@ -546,6 +559,62 @@ def test_run_casa_importfits_uses_batch_fallback(tmp_path, monkeypatch):
     assert calls[0][1]["cwd"] == str(tmp_path)
 
 
+def test_run_casa_predict_uses_batch_fallback(tmp_path, monkeypatch):
+    """CASA sm.predict now raises because the path has been deprecated."""
+    from skasim.loaders.image_models import run_casa_predict
+
+    with pytest.raises(RuntimeError, match="deprecated"):
+        run_casa_predict(
+            visibility_path=tmp_path / "visibilities.MS",
+            model_paths=[tmp_path / "model.image"],
+            incremental=True,
+        )
+
+
+def test_inject_image_models_runs_spectral_cube_with_wsclean_predict(
+    tmp_path, monkeypatch
+):
+    """Spectral-cube entries use wsclean -predict; ft is not called."""
+    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=64, freq_mhz=700.0)
+    cfg = SimConfig(
+        output_dir=str(tmp_path / "run"),
+        models=[
+            {
+                "type": "spectral_cube",
+                "cube": str(cube_path),
+            },
+        ],
+        observation=ObsConfig(
+            frequency_mhz=700.0,
+            bandwidth_mhz=100.0,
+            n_channels=8,
+            observation_time_s=1,
+        ),
+        imaging=[ImgConfig(pixels=64, imager="wsclean")],
+    )
+    ctx = create_run_context(cfg)
+    calls = []
+
+    monkeypatch.setattr(
+        "skasim.loaders.wsclean_predict.run_wsclean_predict",
+        lambda **kwargs: calls.append({"wsclean_predict": kwargs}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": visibility_path}),
+    )
+
+    inject_image_models(ctx, tmp_path / "visibilities.MS")
+
+    wsclean_calls = [c["wsclean_predict"] for c in calls if "wsclean_predict" in c]
+    merge_calls = [c["merged"] for c in calls if "merged" in c]
+
+    assert len(wsclean_calls) == 1
+    assert wsclean_calls[0]["n_channels"] == 8
+    assert len(merge_calls) == 1
+    assert ctx.manifest.milestones[-1].name == "image_injection_completed"
+
+
 def test_run_casa_ft_uses_batch_fallback(tmp_path, monkeypatch):
     """CASA ft falls back to a batch CASA process when casatasks is absent."""
     import sys
@@ -636,3 +705,282 @@ def test_merge_model_data_into_data_adds_model_column(monkeypatch, tmp_path):
     merge_model_data_into_data(tmp_path / "visibilities.MS")
 
     assert np.array_equal(written["DATA"], data + model)
+
+
+# ---------------------------------------------------------------------------
+# spectral cube validation
+# ---------------------------------------------------------------------------
+
+
+def _write_spectral_cube(tmp_path, n_channels=8, pixels=64, freq_mhz=700.0, df_mhz=12.5):
+    """Create a minimal 3D FITS spectral cube with valid WCS."""
+    cube_path = tmp_path / "cube.fits"
+    data = np.zeros((n_channels, pixels, pixels), dtype=np.float32)
+    wcs = WCS(naxis=3)
+    wcs.wcs.ctype = ["RA---SIN", "DEC--SIN", "FREQ"]
+    wcs.wcs.crval = [10.0, 2.0, freq_mhz * 1e6]
+    wcs.wcs.crpix = [pixels / 2.0 + 0.5, pixels / 2.0 + 0.5, n_channels / 2.0 + 0.5]
+    wcs.wcs.cdelt = [-0.001, 0.001, df_mhz * 1e6]
+    wcs.wcs.cunit = ["deg", "deg", "Hz"]
+    header = wcs.to_header()
+    header["BUNIT"] = "Jy/px"
+    header["RESTFRQ"] = freq_mhz * 1e6
+    fits.writeto(cube_path, data, header, overwrite=True)
+    return cube_path
+
+
+def test_read_fits_cube_info_returns_expected_shape(tmp_path):
+    """read_fits_cube_info extracts spatial/spectral metadata from a 3D FITS cube."""
+    cube_path = _write_spectral_cube(tmp_path, n_channels=16, pixels=32)
+    info = read_fits_cube_info(cube_path)
+
+    assert info["shape"] == (16, 32, 32)
+    assert info["spatial_shape"] == (32, 32)
+    assert info["n_channels"] == 16
+    assert info["channel_width_hz"] == pytest.approx(12.5e6)
+    assert info["unit"] == "jy/px"
+
+
+def test_validate_spectral_cube_accepts_matching_config(tmp_path):
+    """Matching cube/config passes validation and returns metadata."""
+    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=64, freq_mhz=700.0, df_mhz=12.5)
+    obs = ObsConfig(bandwidth_mhz=100.0, n_channels=8)
+    img = ImgConfig(pixels=64)
+    entry = SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path))
+
+    report = validate_spectral_cube(entry, obs, img)
+
+    assert report["cube"] == str(cube_path)
+    assert report["n_channels"] == 8
+    assert report["channel_width_hz"] == pytest.approx(12.5e6)
+    assert report["unit"] == "jy/px"
+
+
+def test_validate_spectral_cube_accepts_mismatched_grid_when_cube_is_inside_observation(tmp_path):
+    """Cube spectral sampling may differ from observation; it only needs to lie within the observation band."""
+    # cube: 4 channels x 12.5 MHz, centred at 700 MHz -> 668.75-731.25 MHz
+    cube_path = _write_spectral_cube(tmp_path, n_channels=4, pixels=64, freq_mhz=700.0, df_mhz=12.5)
+    # observation: 8 channels x 12.5 MHz, centred at 700 MHz -> 643.75-756.25 MHz
+    obs = ObsConfig(frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8)
+    img = ImgConfig(pixels=64)
+    entry = SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path))
+
+    report = validate_spectral_cube(entry, obs, img)
+
+    assert report["cube"] == str(cube_path)
+    assert report["n_channels"] == 4
+    assert report["channel_width_hz"] == pytest.approx(12.5e6)
+    assert report["unit"] == "jy/px"
+
+
+def test_validate_spectral_cube_rejects_when_cube_exceeds_observation(tmp_path):
+    """Cube frequency range must not extend beyond the observation band."""
+    # cube: 16 channels x 12.5 MHz, centred at 900 MHz -> 806.25-993.75 MHz
+    cube_path = _write_spectral_cube(tmp_path, n_channels=16, pixels=64, freq_mhz=900.0, df_mhz=12.5)
+    # observation: 8 channels x 12.5 MHz, centred at 700 MHz -> 643.75-756.25 MHz
+    obs = ObsConfig(frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8)
+    img = ImgConfig(pixels=64)
+    entry = SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path))
+
+    with pytest.raises(ValueError, match="extends beyond the observation band"):
+        validate_spectral_cube(entry, obs, img)
+
+
+def test_validate_spectral_cube_accepts_narrow_cube_inside_wide_observation(tmp_path):
+    """A narrow cube is valid inside a much wider observation band."""
+    # cube: 8 channels x 0.925 kHz, centred at 1420.4 MHz (HI line cube)
+    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=64, freq_mhz=1420.4, df_mhz=0.000925)
+    # observation: 8 channels x 12.5 MHz, centred at 1420.4 MHz -> much wider
+    obs = ObsConfig(frequency_mhz=1420.4, bandwidth_mhz=100.0, n_channels=8)
+    img = ImgConfig(pixels=64)
+    entry = SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path))
+
+    report = validate_spectral_cube(entry, obs, img)
+
+    assert report["cube"] == str(cube_path)
+    assert report["n_channels"] == 8
+
+
+def test_validate_spectral_cube_rejects_spatial_shape_mismatch(tmp_path):
+    """Cube spatial dimensions must match imaging pixels."""
+    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=32)
+    obs = ObsConfig(frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8)
+    img = ImgConfig(pixels=64)
+    entry = SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path))
+
+    with pytest.raises(ValueError, match="spatial dimensions"):
+        validate_spectral_cube(entry, obs, img)
+
+
+def test_validate_spectral_cube_rejects_bad_bunit(tmp_path):
+    """Cube BUNIT must be Jy/pixel-compatible."""
+    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=64)
+    with fits.open(cube_path, mode="update") as hdul:
+        hdul[0].header["BUNIT"] = "K"
+    obs = ObsConfig(frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8)
+    img = ImgConfig(pixels=64)
+    entry = SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path))
+
+    with pytest.raises(ValueError, match="Jy/pixel-compatible"):
+        validate_spectral_cube(entry, obs, img)
+
+
+def test_validate_spectral_cube_config_overrides_are_ignored(tmp_path):
+    """Config spectral overrides are ignored; the cube header is authoritative."""
+    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=64, freq_mhz=700.0)
+    obs = ObsConfig(frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8)
+    img = ImgConfig(pixels=64)
+    entry = SpectralCubeModelEntry(
+        type="spectral_cube",
+        cube=str(cube_path),
+        reference_frequency_hz=750e6,
+        channel_width_hz=12.5e6,
+        n_channels=8,
+    )
+
+    report = validate_spectral_cube(entry, obs, img)
+
+    assert report["reference_frequency_hz"] == pytest.approx(700e6)
+    assert report["channel_width_hz"] == pytest.approx(12.5e6)
+    assert report["n_channels"] == 8
+
+
+def test_prepare_spectral_cube_for_casa_writes_3d_fits_for_wsclean_predict(
+    tmp_path, monkeypatch
+):
+    """The resampled spectral cube is now a 3D FITS ready for WSClean -predict."""
+    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=64, freq_mhz=700.0)
+    config = SimConfig(
+        output_dir=str(tmp_path / "run"),
+        models=[SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path))],
+        observation=ObsConfig(
+            frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8, observation_time_s=1
+        ),
+        imaging=[ImgConfig(pixels=64, imager="wsclean")],
+    )
+    ctx = create_run_context(config)
+
+    report = validate_spectral_cube(
+        config.models[0], config.observation, config.imaging[0]
+    )
+    entry = config.models[0]
+    assert entry.type == "spectral_cube"
+    product = prepare_spectral_cube_for_casa(ctx, entry, 0, report)
+
+    fits_out = product.model_paths[0]
+    assert fits_out.exists()
+
+    with fits.open(fits_out) as hdul:
+        data = hdul[0].data
+        header = hdul[0].header
+
+    assert data.ndim == 3
+    assert data.shape == (8, 64, 64)
+    assert header["NAXIS"] == 3
+    assert header["NAXIS1"] == 64
+    assert header["NAXIS2"] == 64
+    assert header["NAXIS3"] == 8
+    assert header["CTYPE1"] == "RA---SIN"
+    assert header["CTYPE2"] == "DEC--SIN"
+    assert header["CTYPE3"] == "FREQ"
+    assert header["CUNIT3"] == "Hz"
+    assert product.nterms == 1
+    assert product.reffreq == "700000000.0Hz"
+    assert np.array_equal(product.cube_data, data)
+    assert product.freq_axis == 3
+
+
+def test_resample_spectral_axis_conserves_line_flux():
+    """A narrow line in a fine cube must survive resampling to coarse MS channels.
+
+    Regression test for the ``np.interp`` dilution bug: when the input cube has
+    many more (narrower) channels than the output MS, evaluating the input only at
+    the output channel centres can drop the line almost entirely if the line does
+    not coincide with a channel centre.  Band-limited integration must preserve
+    the *integrated* flux.
+    """
+    # 128 fine channels of 0.1 MHz, centred at 700 MHz
+    n_in = 128
+    df_in = 0.1e6
+    freq0 = 700.0e6 - (n_in - 1) * df_in / 2.0
+    freqs_in = freq0 + np.arange(n_in) * df_in
+
+    # a single 1 Jy/px line in the central pixel, Gaussian profile,
+    # FWHM = 2.0 MHz, sampled on the fine grid
+    data_in = np.zeros((n_in, 1, 1), dtype=np.float32)
+    fwhm_hz = 2.0e6
+    sigma_hz = fwhm_hz / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    centre_idx = n_in // 2
+    line_flux = 1.0  # Jy peak
+    profile = np.exp(-0.5 * ((freqs_in - freqs_in[centre_idx]) / sigma_hz) ** 2)
+    data_in[:, 0, 0] = profile * line_flux
+
+    # 8 coarse output channels of 12.5 MHz, also centred at 700 MHz
+    n_out = 8
+    df_out = 12.5e6
+    freq_out0 = 700.0e6 - (n_out - 1) * df_out / 2.0
+    freqs_out = freq_out0 + np.arange(n_out) * df_out
+
+    data_out = _resample_spectral_axis_to_ms_channels(
+        freqs_in, data_in, freqs_out, df_out
+    )
+
+    # With np.interp, a 2 MHz line evaluated at the centre of a 12.5 MHz channel
+    # gives ~1 Jy if centred, but ~0 Jy if it falls between channels.  Integration
+    # should instead capture the total flux regardless of where the line sits.
+    # Compare integrated flux using the same units: sum(data_i * channel_width_i).
+    total_in = float(np.sum(data_in[:, 0, 0]) * df_in)
+    total_out = float(np.sum(data_out[:, 0, 0]) * df_out)
+    assert total_out == pytest.approx(total_in, rel=0.05), (
+        f"integrated flux changed from {total_in:.3f} to {total_out:.3f}"
+    )
+
+    # All the flux should be contained in the output cube (the line is inside
+    # the MS band).  We don't pin the peak to a single channel because a narrow
+    # line centred between two coarse channels is split between them.
+    assert data_out.max() > 0.0, "resampled cube is empty"
+
+
+def test_resample_spectral_axis_beats_naive_interp_for_offcentre_line():
+    """An off-centre narrow line is invisible to point sampling but not to integration."""
+    n_in = 128
+    df_in = 0.1e6
+    freq0 = 700.0e6 - (n_in - 1) * df_in / 2.0
+    freqs_in = freq0 + np.arange(n_in) * df_in
+
+    # 8 coarse output channels of 12.5 MHz, centred at 700 MHz
+    n_out = 8
+    df_out = 12.5e6
+    freq_out0 = 700.0e6 - (n_out - 1) * df_out / 2.0
+    freqs_out = freq_out0 + np.arange(n_out) * df_out
+    # place the line a quarter of the way into channel 3, away from any channel centre
+    line_centre = freqs_out[3] + 0.25 * df_out
+
+    data_in = np.zeros((n_in, 1, 1), dtype=np.float64)
+    # line is much narrower than an output channel so it falls between the
+    # coarse channel centres used by np.interp
+    fwhm_hz = 2.0e6
+    sigma_hz = fwhm_hz / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    profile = np.exp(-0.5 * ((freqs_in - line_centre) / sigma_hz) ** 2)
+    data_in[:, 0, 0] = 1.0 * profile
+
+    data_out = _resample_spectral_axis_to_ms_channels(
+        freqs_in, data_in.astype(np.float32), freqs_out, df_out
+    )
+
+    total_in = float(np.sum(data_in[:, 0, 0]) * df_in)
+    total_out = float(np.sum(data_out[:, 0, 0]) * df_out)
+    assert total_out == pytest.approx(total_in, rel=0.05)
+
+    # np.interp at output channel centres would see almost nothing because the
+    # line sits away from the centres; integration still captures it.
+    naive_interp = np.interp(freqs_out, freqs_in, data_in[:, 0, 0])
+    # if the naive interpolation is essentially zero, the resampler must be
+    # strictly better; otherwise require it to capture much more flux.
+    if float(np.max(np.abs(naive_interp))) < 1e-6:
+        assert data_out.max() > 0.0, "resampler lost an off-centre line entirely"
+    else:
+        total_interp = float(np.sum(naive_interp) * df_out)
+        assert total_out > 10 * total_interp, (
+            f"resampler {total_out:.3f} not better than interp {total_interp:.3f}"
+        )

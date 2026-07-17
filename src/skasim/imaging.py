@@ -14,12 +14,36 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from loguru import logger
 
-from .config import ImgConfig
+from .config import ImgConfig, has_spectral_cube_model
 from .manifest import RunContext
 from .runtime import require_karabo_module
 from .utils import mapping_unit
 
 SKY_MODEL_CMAP = "viridis_r"
+
+# --------------------------------------------------------------------------- #
+# spectral-cube imaging helpers
+# --------------------------------------------------------------------------- #
+
+
+def _resolve_spectral_cube_wsclean_config(
+    img_config: ImgConfig,
+    n_channels: int,
+) -> ImgConfig:
+    """Return an imaging config adjusted for per-channel cube output.
+
+    - join_channels forced to False
+    - channels_out forced to n_channels if the user did not explicitly set it
+    - multiscale disabled (line cubes rarely benefit from multiscale)
+    """
+    kwargs = img_config.model_dump()
+    kwargs["join_channels"] = False
+    kwargs["multiscale"] = False
+    kwargs["multiscale_scales"] = None
+    if img_config.channels_out is None:
+        kwargs["channels_out"] = n_channels
+    return ImgConfig(**kwargs)
+
 
 # --------------------------------------------------------------------------- #
 # dirty imaging (OSKAR)
@@ -187,6 +211,208 @@ def wsclean_output_prefix(ctx: RunContext) -> str:
 def collect_wsclean_outputs(work_dir: Path, output_prefix: str) -> list[Path]:
     """Collect WSClean FITS outputs for one configured output prefix."""
     return sorted(work_dir.glob(f"{output_prefix}*.fits"))
+
+
+def run_wsclean_imaging(
+    ctx: RunContext,
+    visibility_path: Path,
+    fov: u.Quantity,
+    img_config: ImgConfig,  # << NEW
+    sub_dir: Path,  # << NEW — work_dir/{tag}
+    n_channels: int = 1,
+) -> None:
+    """produce cleaned image via external WSClean binary."""
+    wsclean_module = require_karabo_module("karabo.imaging.imager_wsclean")
+    file_handler_module = require_karabo_module("karabo.util.file_handler")
+    work_dir = sub_dir
+
+    output_prefix = f"{img_config.tag}_wsclean"
+
+    # spectral-cube mode: force per-channel imaging and no joined-channel fit
+    spectral_cube_present = has_spectral_cube_model(ctx.config)
+    if spectral_cube_present:
+        img_config = _resolve_spectral_cube_wsclean_config(
+            img_config,
+            n_channels=n_channels,
+        )
+
+    argv = build_wsclean_argv(
+        img_config,
+        visibility_path,
+        fov,
+        output_prefix=output_prefix,
+        n_channels=n_channels,
+    )
+    logger.info(f"WSClean command: {argv}")
+
+    file_handler_module.FileHandler().get_tmp_dir(
+        prefix=wsclean_module.TMP_PREFIX_CUSTOM,
+        purpose=wsclean_module.TMP_PURPOSE_CUSTOM,
+    )
+    run_wsclean_command(argv, work_dir)
+
+    # remove the temporary files created by WSClean
+    for tmp in work_dir.glob("wsclean-00*.fits"):
+        if tmp.name.startswith(output_prefix):
+            continue
+        try:
+            tmp.unlink()
+        except Exception as exc:
+            logger.exception("Failed to clean up temp file %s", tmp)
+
+    wsclean_outputs = collect_wsclean_outputs(work_dir, output_prefix)
+    mfs_files = [p.name for p in wsclean_outputs if "-MFS-" in p.name]
+    logger.info(f"MFS files: {mfs_files}")
+
+    for img_path in wsclean_outputs:
+        png_name = img_path.with_suffix(".png").name
+        png_path = work_dir / png_name
+
+        # infer image type from filename for correct plot title
+        title = "Imaging output (WSClean)"
+        if "MFS-image" in img_path.name:
+            title = "Cleaned image (WSClean)"
+        elif "MFS-model" in img_path.name:
+            title = "Component model (WSClean)"
+        elif "MFS-residual" in img_path.name:
+            title = "Residual (WSClean)"
+        elif "MFS-dirty" in img_path.name:
+            title = "Dirty image (WSClean)"
+        elif "MFS-psf" in img_path.name:
+            title = "Point spread function (WSClean)"
+
+        write_fits_preview(img_path, png_path, title)
+        role = "image"
+        lower_name = img_path.name.lower()
+        if "model" in lower_name:
+            role = "model"
+        elif "residual" in lower_name:
+            role = "residual"
+        elif "dirty" in lower_name:
+            role = "dirty"
+        elif "psf" in lower_name:
+            role = "psf"
+        ctx.manifest.add_output(
+            "image_product",
+            str(png_path.relative_to(ctx.work_dir)),
+            image_product_id=output_prefix,
+            imager="wsclean",
+            role=f"{role}_preview",
+            metadata={"tag": img_config.tag},
+        )
+        ctx.manifest.add_output(
+            "image_product",
+            str(img_path.relative_to(ctx.work_dir)),
+            image_product_id=output_prefix,
+            imager="wsclean",
+            role=role,
+            metadata={"tag": img_config.tag},
+        )
+
+    # collect per-channel FITS clean images and stack them into a single 3D cube.
+    # WSClean writes per-channel products as <prefix>-<dddd>-<product>.fits.
+    per_channel_images = sorted(work_dir.glob(f"{output_prefix}-????-image.fits"))
+    if per_channel_images:
+        cube_fits = work_dir / f"{output_prefix}-cube-image.fits"
+        if cube_fits.exists():
+            cube_fits.unlink()
+        try:
+            stack_channels(per_channel_images, cube_fits)
+        except Exception as exc:
+            logger.warning(f"Failed to stack clean cube: {exc}")
+        else:
+            png_name = cube_fits.with_suffix(".png").name
+            png_path = work_dir / png_name
+            write_fits_preview(cube_fits, png_path, "Spectral cube (clean)")
+            ctx.manifest.add_output(
+                "image_product",
+                str(png_path.relative_to(ctx.work_dir)),
+                image_product_id=output_prefix,
+                imager="wsclean",
+                role="cube_image_preview",
+                metadata={"tag": img_config.tag},
+            )
+            ctx.manifest.add_output(
+                "image_product",
+                str(cube_fits.relative_to(ctx.work_dir)),
+                image_product_id=output_prefix,
+                imager="wsclean",
+                role="cube_image",
+                metadata={"tag": img_config.tag},
+            )
+
+    # produce only moment 8 for spectral-cube clean outputs
+    if spectral_cube_present and img_config.imager == "wsclean":
+        from .loaders.image_models import run_moment8_for_spectral_cube
+
+        run_moment8_for_spectral_cube(ctx, work_dir, output_prefix, img_config.tag)
+
+
+def stack_channels(channel_paths: list[Path], output_path: Path) -> None:
+    """Stack WSClean per-channel FITS images into a single 3D spectral cube.
+
+    Uses the same logic as ``scripts/wsclean_channels_to_cube.py`` but inlined
+    here so it works without putting ``scripts/`` on ``PYTHONPATH``.
+    """
+    import re
+
+    channels: list[tuple[float, int, np.ndarray, fits.Header]] = []
+    for path in channel_paths:
+        match = re.search(r"-([0-9]{4,})-[a-zA-Z0-9_]+\.fits$", path.name)
+        if not match:
+            continue
+        ch = int(match.group(1))
+        with fits.open(path) as hdul:
+            hdu = hdul[0]
+            data = np.squeeze(np.asarray(hdu.data, dtype=np.float32))
+            if data.ndim != 2:
+                raise ValueError(
+                    f"{path}: expected 2D image after squeezing, got shape {hdu.data.shape}"
+                )
+            header = hdu.header.copy()
+        crpix3 = header.get("CRPIX3", 1.0)
+        crval3 = header.get("CRVAL3")
+        cdelt3 = header.get("CDELT3")
+        cunit3 = (header.get("CUNIT3") or "").strip().lower()
+        if crval3 is None or cdelt3 is None:
+            raise ValueError(f"{path}: missing CRVAL3/CDELT3")
+        freq_hz = crval3 + (crpix3 - 1.0) * cdelt3
+        if cunit3 == "mhz":
+            freq_hz *= 1e6
+        channels.append((float(freq_hz), ch, data, header))
+
+    if not channels:
+        raise ValueError("no valid WSClean per-channel images found")
+
+    channels.sort(key=lambda x: (x[0], x[1]))
+    first_data = channels[0][2]
+    cube = np.empty((len(channels), *first_data.shape), dtype=np.float32)
+    for i, (_, ch, data, _) in enumerate(channels):
+        if data.shape != first_data.shape:
+            raise ValueError(
+                f"channel {ch} has shape {data.shape}, expected {first_data.shape}"
+            )
+        cube[i] = data
+
+    out_header = channels[0][3].copy()
+    # force 3D header
+    for key in list(out_header.keys()):
+        if re.match(r"NAXIS\d+", key):
+            out_header.remove(key, ignore_missing=True)
+    out_header["NAXIS"] = 3
+    out_header["NAXIS1"] = channels[0][3].get("NAXIS1")
+    out_header["NAXIS2"] = channels[0][3].get("NAXIS2")
+    out_header["NAXIS3"] = len(channels)
+    freqs = np.array([c[0] for c in channels])
+    df = freqs[1] - freqs[0] if len(freqs) > 1 else 1.0
+    out_header["CRPIX3"] = 1.0
+    out_header["CRVAL3"] = float(freqs[0])
+    out_header["CDELT3"] = float(df)
+    out_header["CTYPE3"] = "FREQ"
+    out_header["CUNIT3"] = "Hz"
+    out_header["HISTORY"] = "stacked by skasim.imaging.stack_channels"
+
+    fits.writeto(output_path, cube, out_header, overwrite=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -521,91 +747,3 @@ def _sky_model_ellipses(
             )
         )
     return ellipses
-
-
-def run_wsclean_imaging(
-    ctx: RunContext,
-    visibility_path: Path,
-    fov: u.Quantity,
-    img_config: ImgConfig,  # << NEW
-    sub_dir: Path,  # << NEW — work_dir/{tag}
-    n_channels: int = 1,
-) -> None:
-    """produce cleaned image via external WSClean binary."""
-    wsclean_module = require_karabo_module("karabo.imaging.imager_wsclean")
-    file_handler_module = require_karabo_module("karabo.util.file_handler")
-    work_dir = sub_dir
-
-    output_prefix = f"{img_config.tag}_wsclean"
-    argv = build_wsclean_argv(
-        img_config,
-        visibility_path,
-        fov,
-        output_prefix=output_prefix,
-        n_channels=n_channels,
-    )
-    logger.info(f"WSClean command: {argv}")
-
-    file_handler_module.FileHandler().get_tmp_dir(
-        prefix=wsclean_module.TMP_PREFIX_CUSTOM,
-        purpose=wsclean_module.TMP_PURPOSE_CUSTOM,
-    )
-    run_wsclean_command(argv, work_dir)
-
-    # remove the temporary files created by WSClean
-    for tmp in work_dir.glob("wsclean-00*.fits"):
-        if tmp.name.startswith(output_prefix):
-            continue
-        try:
-            tmp.unlink()
-        except Exception as exc:
-            logger.exception("Failed to clean up temp file %s", tmp)
-
-    wsclean_outputs = collect_wsclean_outputs(work_dir, output_prefix)
-    mfs_files = [p.name for p in wsclean_outputs if "-MFS-" in p.name]
-    logger.info(f"MFS files: {mfs_files}")
-
-    for img_path in wsclean_outputs:
-        png_name = img_path.with_suffix(".png").name
-        png_path = work_dir / png_name
-
-        # infer image type from filename for correct plot title
-        title = "Imaging output (WSClean)"
-        if "MFS-image" in img_path.name:
-            title = "Cleaned image (WSClean)"
-        elif "MFS-model" in img_path.name:
-            title = "Component model (WSClean)"
-        elif "MFS-residual" in img_path.name:
-            title = "Residual (WSClean)"
-        elif "MFS-dirty" in img_path.name:
-            title = "Dirty image (WSClean)"
-        elif "MFS-psf" in img_path.name:
-            title = "Point spread function (WSClean)"
-
-        write_fits_preview(img_path, png_path, title)
-        role = "image"
-        lower_name = img_path.name.lower()
-        if "model" in lower_name:
-            role = "model"
-        elif "residual" in lower_name:
-            role = "residual"
-        elif "dirty" in lower_name:
-            role = "dirty"
-        elif "psf" in lower_name:
-            role = "psf"
-        ctx.manifest.add_output(
-            "image_product",
-            str(png_path.relative_to(ctx.work_dir)),
-            image_product_id=output_prefix,
-            imager="wsclean",
-            role=f"{role}_preview",
-            metadata={"tag": img_config.tag},
-        )
-        ctx.manifest.add_output(
-            "image_product",
-            str(img_path.relative_to(ctx.work_dir)),
-            image_product_id=output_prefix,
-            imager="wsclean",
-            role=role,
-            metadata={"tag": img_config.tag},
-        )

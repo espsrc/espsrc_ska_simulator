@@ -119,6 +119,49 @@ class CasaTaylorTermsModelEntry(BaseModel):
         return _require_existing_path(value)
 
 
+class SpectralCubeModelEntry(BaseModel):
+    """3D spectral-line cube (RA, Dec, FREQ) in Stokes I.
+
+    The cube describes the *sky* and may have a much finer spectral grid than
+    the observation. Validation only checks that the observed channel centres
+    lie inside the cube's frequency extent and that the spatial dimensions match
+    the imaging configuration. The optional ``reference_frequency_hz``,
+    ``channel_width_hz`` and ``n_channels`` fields are accepted for backward
+    compatibility but are ignored; the FITS header is authoritative.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["spectral_cube"]
+    cube: str
+    reference_frequency_hz: Optional[float] = None
+    channel_width_hz: Optional[float] = None
+    n_channels: Optional[int] = None
+
+    @field_validator("cube")
+    @classmethod
+    def _path_exists(cls, value: str) -> str:
+        return _require_existing_path(value)
+
+    @field_validator("channel_width_hz")
+    @classmethod
+    def _positive_channel_width_hz(cls, value: Optional[float]) -> Optional[float]:
+        if value is None:
+            return value
+        if value <= 0:
+            raise ValueError("channel_width_hz must be > 0")
+        return value
+
+    @field_validator("n_channels")
+    @classmethod
+    def _positive_n_channels(cls, value: Optional[int]) -> Optional[int]:
+        if value is None:
+            return value
+        if value < 1:
+            raise ValueError("n_channels must be >= 1")
+        return value
+
+
 class StaticStokesMapsModelEntry(BaseModel):
     """Static Stokes map set. Schema-ready for the phase-2 backend path."""
 
@@ -150,6 +193,7 @@ ModelEntry = Annotated[
         ContinuumIAlphaModelEntry,
         CasaTaylorTermsModelEntry,
         StaticStokesMapsModelEntry,
+        SpectralCubeModelEntry,
     ],
     Field(discriminator="type"),
 ]
@@ -389,6 +433,21 @@ class SimConfig(BaseModel):
             )
             if component_count > 1:
                 raise ValueError("Provide at most one component_sky_model entry.")
+
+            # spectral_cube is exclusive; it cannot coexist with other model types
+            cube_count = sum(
+                1
+                for model in self.models
+                if getattr(model, "type", None) == "spectral_cube"
+            )
+            if cube_count > 1:
+                raise ValueError("Provide at most one spectral_cube entry.")
+            if cube_count == 1 and len(self.models) > 1:
+                raise ValueError(
+                    "spectral_cube mode is exclusive and cannot be mixed with other "
+                    "model entries."
+                )
+
             self.source_flux_jy = []
             self.stokes_q_jy = None
             self.stokes_u_jy = None
@@ -446,3 +505,19 @@ class SimConfig(BaseModel):
         if v < 1:
             raise ValueError("uv_coverage_canvas_size must be >= 1")
         return v
+
+
+def has_spectral_cube_model(config: SimConfig) -> bool:
+    """Return True if the simulation contains a spectral_cube model entry."""
+    return any(
+        getattr(model, "type", None) == "spectral_cube" for model in config.models
+    )
+
+
+def spectral_cube_model_entries(config: SimConfig) -> list:
+    """Return all spectral_cube model entries in the config."""
+    return [
+        model
+        for model in config.models
+        if getattr(model, "type", None) == "spectral_cube"
+    ]
