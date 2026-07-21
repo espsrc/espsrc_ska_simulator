@@ -203,9 +203,14 @@ def _find_frequency_axis(header: fits.Header) -> int:
     raise ValueError("spectral cube has no FREQ axis in CTYPE1..CTYPEn")
 
 
-def _fits_axis_to_numpy(axis: int) -> int:
-    """Return the numpy axis index for a 1-based FITS axis number."""
-    return -axis
+def _fits_axis_to_numpy(axis: int, ndim: int = 3) -> int:
+    """Return the NumPy axis index for a 1-based FITS axis number.
+
+    FITS axis ``k`` is stored as the ``ndim - k`` NumPy axis (the ``k``-th axis
+    from the slowest-varying end).  For a 3D cube this means:
+    ``NAXIS1`` -> axis 2, ``NAXIS2`` -> axis 1, ``NAXIS3`` -> axis 0.
+    """
+    return ndim - axis
 
 
 def read_fits_cube_info(path: Path) -> dict:
@@ -269,13 +274,14 @@ def _freq_axis_centres(header: fits.Header, n_channels: int, axis: int = 3) -> n
 def _reorder_cube_axes(data: np.ndarray, header: fits.Header) -> np.ndarray:
     """Reorder a 3D FITS array so its numpy axes become (freq, dec, ra).
 
-    FITS axis ``k`` (CTYPEk/NAXISk) corresponds to numpy axis ``-k`` (the
-    ``k``-th axis from the end).  This function looks at CTYPE1..CTYPE3 and
-    moves the frequency axis to the front, followed by DEC and RA.
+    FITS axis ``k`` (CTYPEk/NAXISk) maps to numpy axis ``ndim - k`` (the
+    ``k``-th axis from the slowest-varying end).  This function looks at
+    CTYPE1..CTYPE3 and moves the frequency axis to the front, followed by DEC
+    and RA.
     """
-    # axis label for each FITS axis k -> numpy axis -k
+    ndim = data.ndim
     axis_map: dict[str, int] = {}
-    for axis in range(1, 4):
+    for axis in range(1, ndim + 1):
         ctype = str(header.get(f"CTYPE{axis}", "")).strip().upper()
         if ctype.startswith("FREQ"):
             label = "freq"
@@ -285,7 +291,7 @@ def _reorder_cube_axes(data: np.ndarray, header: fits.Header) -> np.ndarray:
             label = "dec"
         else:
             raise ValueError(f"spectral cube has unsupported CTYPE{axis}={ctype!r}")
-        axis_map[label] = -axis
+        axis_map[label] = _fits_axis_to_numpy(axis, ndim)
 
     for label in ("freq", "dec", "ra"):
         if label not in axis_map:
@@ -549,7 +555,7 @@ def prepare_spectral_cube_for_casa(
     if cdelt_freq < 0:
         sort_idx = np.argsort(freqs_in_hz)
         slicer = [slice(None)] * 3
-        slicer[-freq_axis] = sort_idx
+        slicer[_fits_axis_to_numpy(freq_axis, data_in.ndim)] = sort_idx
         freqs_in_hz = freqs_in_hz[sort_idx]
         data_in = data_in[tuple(slicer)]
 
@@ -829,7 +835,7 @@ def run_moment8_for_spectral_cube(
         logger.debug(f"Preview for moment8 failed: {exc}")
 
 
-def _write_spectral_cube_input_preview(
+def write_spectral_cube_input_preview(
     ctx: RunContext,
     fov: u.Quantity,
 ) -> None:
@@ -864,7 +870,12 @@ def _write_spectral_cube_input_preview(
             logger.warning(f"spectral_cube preview expects 3D data, got {data.shape}")
             continue
 
-        moment8 = np.nanmax(data, axis=0)
+        # Determine the frequency axis dynamically; the raw FITS may have an
+        # arbitrary axis ordering and ``_reorder_cube_axes`` is designed for
+        # the pipeline's internal (freq, dec, ra) representation, not for raw
+        # preview data.
+        freq_axis = _find_frequency_axis(header)
+        moment8 = np.nanmax(data, axis=_fits_axis_to_numpy(freq_axis))
 
         # Build a minimal 2D header for the preview FITS
         out_header = header.copy()
@@ -920,10 +931,6 @@ def _write_spectral_cube_input_preview(
                 "preview_fits": str(fits_path),
             },
         )
-
-
-# keep a backwards-compatible alias inside image_models for internal callers
-write_spectral_cube_input_preview = _write_spectral_cube_input_preview
 
 
 def write_image_model_previews(
@@ -989,98 +996,6 @@ def write_image_model_previews(
 
     # For spectral-cube inputs, also render a moment-8 (peak) preview of the raw cube.
     write_spectral_cube_input_preview(ctx, fov)
-
-
-def write_spectral_cube_input_preview(
-    ctx: RunContext,
-    fov: u.Quantity,
-) -> None:
-    """Render a peak-intensity (moment-8) PNG preview of the input spectral cube.
-
-    The preview is added to the manifest as a sky-model plot so it appears in
-    the weblog's Sky Model section.
-    """
-    from ..config import SpectralCubeModelEntry
-
-    cube_entries = [
-        m for m in ctx.config.models if isinstance(m, SpectralCubeModelEntry)
-    ]
-    if not cube_entries:
-        return
-
-    for index, entry in enumerate(cube_entries, start=1):
-        cube_path = Path(entry.cube).expanduser().resolve()
-        if not cube_path.exists():
-            logger.warning(f"spectral_cube input not found for preview: {cube_path}")
-            continue
-        try:
-            with fits.open(cube_path) as hdul:
-                data = np.asarray(hdul[0].data, dtype=np.float32)
-                header = hdul[0].header.copy()
-        except Exception as exc:
-            logger.warning(f"Failed to read spectral cube for preview: {exc}")
-            continue
-
-        if data.ndim != 3:
-            logger.warning(f"spectral_cube preview expects 3D data, got {data.shape}")
-            continue
-
-        moment8 = np.nanmax(data, axis=0)
-
-        # Build a minimal 2D header for the preview FITS
-        out_header = header.copy()
-        for key in list(out_header.keys()):
-            if key in ("NAXIS", "NAXIS3") or key.startswith("NAXIS3"):
-                out_header.remove(key, ignore_missing=True)
-            if key in ("CRPIX3", "CRVAL3", "CDELT3", "CTYPE3", "CUNIT3"):
-                out_header.remove(key, ignore_missing=True)
-        out_header["NAXIS"] = 2
-        out_header["NAXIS1"] = header["NAXIS1"]
-        out_header["NAXIS2"] = header["NAXIS2"]
-        out_header["BUNIT"] = header.get("BUNIT") or "Jy/pixel"
-        out_header["MOMENT"] = 8
-
-        suffix = "" if len(cube_entries) == 1 else f"_{index:02d}"
-        fits_name = f"{ctx.work_dir.name}_input_cube_moment8{suffix}.fits"
-        png_name = f"{ctx.work_dir.name}_input_cube_moment8{suffix}.png"
-        fits_path = ctx.work_dir / fits_name
-        png_path = ctx.work_dir / png_name
-        fits.writeto(
-            fits_path,
-            np.asarray(moment8, dtype=np.float32),
-            out_header,
-            overwrite=True,
-        )
-
-        recenter = None
-        try:
-            wcs = WCS(header).celestial
-            pix = np.array([header["NAXIS1"] / 2.0, header["NAXIS2"] / 2.0])
-            sky = wcs.pixel_to_world(*pix)
-            recenter = (sky.ra.deg, sky.dec.deg, fov.to(u.deg).value)
-        except Exception:
-            pass
-
-        write_fits_preview(
-            fits_path,
-            png_path,
-            "Input spectral cube — Moment 8 (peak)",
-            recenter=recenter,
-            scale_factor=1000.0,
-            bunit="mJy/pixel",
-            colorbar_label="mJy/pixel",
-        )
-        ctx.manifest.add_output(
-            "plot",
-            png_name,
-            role="input_cube_moment8",
-            metadata={
-                "model_entry_index": index - 1,
-                "model_type": entry.type,
-                "source_fits": str(cube_path),
-                "preview_fits": str(fits_path),
-            },
-        )
 
 
 def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:

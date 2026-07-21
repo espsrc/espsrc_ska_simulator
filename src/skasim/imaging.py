@@ -376,7 +376,7 @@ def stack_channels(channel_paths: list[Path], output_path: Path) -> None:
         cunit3 = (header.get("CUNIT3") or "").strip().lower()
         if crval3 is None or cdelt3 is None:
             raise ValueError(f"{path}: missing CRVAL3/CDELT3")
-        freq_hz = crval3 + (crpix3 - 1.0) * cdelt3
+        freq_hz = crval3 + (ch - crpix3) * cdelt3
         if cunit3 == "mhz":
             freq_hz *= 1e6
         channels.append((float(freq_hz), ch, data, header))
