@@ -741,6 +741,49 @@ def test_read_fits_cube_info_returns_expected_shape(tmp_path):
     assert info["unit"] == "jy/px"
 
 
+def test_read_fits_cube_info_squeezes_4d_degenerate_stokes(tmp_path):
+    """read_fits_cube_info accepts 4D cubes with a single degenerate Stokes axis."""
+    cube_path = tmp_path / "cube_4d.fits"
+    n_channels, pixels = 8, 64
+    data = np.zeros((n_channels, 1, pixels, pixels), dtype=np.float32)
+    # NAXIS order in the FITS file: NAXIS1=RA, NAXIS2=DEC, NAXIS3=STOKES, NAXIS4=FREQ
+    header = fits.Header()
+    header["NAXIS"] = 4
+    header["NAXIS1"] = pixels
+    header["NAXIS2"] = pixels
+    header["NAXIS3"] = 1
+    header["NAXIS4"] = n_channels
+    header["CTYPE1"] = "RA---SIN"
+    header["CRPIX1"] = pixels / 2.0 + 0.5
+    header["CRVAL1"] = 10.0
+    header["CDELT1"] = -0.001
+    header["CUNIT1"] = "deg"
+    header["CTYPE2"] = "DEC--SIN"
+    header["CRPIX2"] = pixels / 2.0 + 0.5
+    header["CRVAL2"] = 2.0
+    header["CDELT2"] = 0.001
+    header["CUNIT2"] = "deg"
+    header["CTYPE3"] = "STOKES"
+    header["CRPIX3"] = 1.0
+    header["CRVAL3"] = 1.0
+    header["CDELT3"] = 1.0
+    header["CTYPE4"] = "FREQ"
+    header["CRPIX4"] = n_channels / 2.0 + 0.5
+    header["CRVAL4"] = 700e6
+    header["CDELT4"] = 12.5e6
+    header["CUNIT4"] = "Hz"
+    header["BUNIT"] = "Jy/px"
+    fits.writeto(cube_path, data, header, overwrite=True)
+
+    info = read_fits_cube_info(cube_path)
+
+    assert info["shape"] == (8, 64, 64)
+    assert info["spatial_shape"] == (64, 64)
+    assert info["n_channels"] == 8
+    assert info["channel_width_hz"] == pytest.approx(12.5e6)
+    assert info["unit"] == "jy/px"
+
+
 def test_validate_spectral_cube_accepts_matching_config(tmp_path):
     """Matching cube/config passes validation and returns metadata."""
     cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=64, freq_mhz=700.0, df_mhz=12.5)

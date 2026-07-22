@@ -14,6 +14,8 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from loguru import logger
 
+import re
+
 from ..config import (
     CasaTaylorTermsModelEntry,
     ComponentSkyModelEntry,
@@ -213,6 +215,65 @@ def _fits_axis_to_numpy(axis: int, ndim: int = 3) -> int:
     return ndim - axis
 
 
+def _squeeze_degenerate_axes(data: np.ndarray, header: fits.Header) -> tuple[np.ndarray, fits.Header]:
+    """Drop length-1 axes from a FITS cube, keeping the spectral axis intact.
+
+    Spectral cubes are sometimes stored as 4D (RA, DEC, FREQ, STOKES) with a
+    single Stokes axis.  This helper squeezes those degenerate axes and updates
+    the header so downstream code sees a standard 3D cube.
+    """
+    if data.ndim == 3:
+        return data, header
+    if data.ndim < 3 or data.ndim > 4:
+        raise ValueError(f"spectral_cube must be 3D or 4D with a degenerate axis, got ndim={data.ndim}")
+
+    freq_axis = _find_frequency_axis(header)
+    single_axes = [axis for axis in range(1, data.ndim + 1) if header[f"NAXIS{axis}"] == 1]
+
+    if not single_axes:
+        raise ValueError(
+            f"spectral_cube has {data.ndim} dimensions but no degenerate (length-1) axis to squeeze"
+        )
+
+    if len(single_axes) > 1:
+        raise ValueError(
+            f"spectral_cube has multiple degenerate axes {single_axes}; cannot disambiguate"
+        )
+
+    squeeze_axis = single_axes[0]
+    if squeeze_axis == freq_axis:
+        raise ValueError(
+            f"spectral_cube frequency axis (FREQ in FITS axis {freq_axis}) has length 1; "
+            "cannot squeeze the spectral axis"
+        )
+
+    # NumPy axis to drop.
+    np_axis = _fits_axis_to_numpy(squeeze_axis, data.ndim)
+    data = np.squeeze(data, axis=np_axis)
+
+    # Build a clean 3D header preserving the remaining axes in FITS order.
+    new_header = header.copy()
+    new_header["NAXIS"] = 3
+
+    old_axes = [a for a in range(1, data.ndim + 2) if a != squeeze_axis]
+    for new_axis, old_axis in enumerate(old_axes, start=1):
+        for key in ("NAXIS", "CTYPE", "CRPIX", "CRVAL", "CDELT", "CUNIT"):
+            old_key = f"{key}{old_axis}"
+            new_key = f"{key}{new_axis}"
+            if old_key in new_header:
+                new_header[new_key] = new_header[old_key]
+
+    # Remove leftover 4th-axis keys and any dangling higher-axis keys.
+    for key in list(new_header.keys()):
+        match = re.match(r"(NAXIS|CTYPE|CRPIX|CRVAL|CDELT|CUNIT)\d+", key)
+        if match:
+            axis_num = int(match.group(0)[-1])
+            if axis_num > 3:
+                del new_header[key]
+
+    return data, new_header
+
+
 def read_fits_cube_info(path: Path) -> dict:
     """Read metadata from a 3D FITS spectral cube.
 
@@ -224,9 +285,10 @@ def read_fits_cube_info(path: Path) -> dict:
         if hdu.data is None:
             raise ValueError(f"{path} has no image data")
         data = np.asarray(hdu.data)
+        header = hdu.header.copy()
+        data, header = _squeeze_degenerate_axes(data, header)
         if data.ndim != 3:
             raise ValueError(f"spectral_cube must be 3D, got ndim={data.ndim}")
-        header = hdu.header.copy()
         freq_axis = _find_frequency_axis(header)
         n_freq = int(header[f"NAXIS{freq_axis}"])
         freqs = _freq_axis_centres(header, n_freq, axis=freq_axis)
@@ -537,9 +599,10 @@ def prepare_spectral_cube_for_casa(
         if hdu.data is None:
             raise ValueError(f"{source_path} has no image data")
         data_in = np.asarray(hdu.data, dtype=np.float32)
+        header_in = hdu.header.copy()
+        data_in, header_in = _squeeze_degenerate_axes(data_in, header_in)
         if data_in.ndim != 3:
             raise ValueError(f"spectral_cube must be 3D, got ndim={data_in.ndim}")
-        header_in = hdu.header.copy()
 
     freq_axis = _find_frequency_axis(header_in)
     spatial_axes = [i for i in range(1, 4) if i != freq_axis]
@@ -862,6 +925,7 @@ def write_spectral_cube_input_preview(
                 hdu = hdul[0]
                 data = np.asarray(hdu.data, dtype=np.float32)
                 header = hdu.header.copy()
+                data, header = _squeeze_degenerate_axes(data, header)
         except Exception as exc:
             logger.warning(f"Failed to read spectral cube for preview: {exc}")
             continue
