@@ -119,21 +119,37 @@ def build_wsclean_predict_argv(
     img_config: ImgConfig,
     prefix: str,
     n_channels: int,
+    pixel_size_arcsec: float | None = None,
+    n_pixels: int | None = None,
 ) -> list[str]:
-    """Build argv for ``wsclean -predict``."""
-    imaging_cellsize = _imaging_cellsize(img_config.fov_deg, img_config.pixels)
+    """Build argv for ``wsclean -predict``.
 
-    argv = shlex.split(wsclean_command) + [
+    Only the executable from ``wsclean_command`` is kept; imaging/deconvolution
+    flags (``-niter``, ``-mgain``, ``-auto-mask``, etc.) are stripped because
+    they are invalid in predict mode.  Use ``wsclean_predict_command`` if you
+    need custom predict-only flags.
+    """
+    if pixel_size_arcsec is None or n_pixels is None:
+        imaging_cellsize = _imaging_cellsize(img_config.fov_deg, img_config.pixels)
+        pixel_size_arcsec = imaging_cellsize.to(u.arcsec).value
+        n_pixels = img_config.pixels
+
+    # Keep only the executable from the supplied command line; imaging flags
+    # are not applicable to ``wsclean -predict`` and make it fail.
+    tokens = shlex.split(wsclean_command)
+    executable = tokens[0] if tokens else "wsclean"
+
+    argv = [executable] + [
         "-predict",
         "-gridder",
         "wgridder",
         "-wgridder-accuracy",
         "1e-5",
         "-size",
-        str(img_config.pixels),
-        str(img_config.pixels),
+        str(n_pixels),
+        str(n_pixels),
         "-scale",
-        f"{imaging_cellsize.to(u.arcsec).value:.6f}asec",
+        f"{pixel_size_arcsec:.6f}asec",
         "-channels-out",
         str(n_channels),
         "-name",
@@ -152,6 +168,8 @@ def run_wsclean_predict(
     prefix: str,
     n_channels: int,
     work_dir: Path,
+    pixel_size_arcsec: float | None = None,
+    n_pixels: int | None = None,
 ) -> None:
     """Run WSClean in predict mode to fill MODEL_DATA of the MS."""
     argv = build_wsclean_predict_argv(
@@ -160,12 +178,15 @@ def run_wsclean_predict(
         img_config,
         prefix,
         n_channels,
+        pixel_size_arcsec=pixel_size_arcsec,
+        n_pixels=n_pixels,
     )
     logger.info(f"WSClean predict command: {argv}")
 
     env = os.environ.copy()
     env["OPENBLAS_NUM_THREADS"] = "1"
 
+    lines: list[str] = []
     with subprocess.Popen(
         argv,
         shell=False,
@@ -175,37 +196,34 @@ def run_wsclean_predict(
         stderr=subprocess.STDOUT,
         text=True,
     ) as proc:
-        assert proc.stdout is not None
+        if proc.stdout is None:
+            raise RuntimeError("subprocess.Popen returned None stdout with PIPE")
         for line in proc.stdout:
-            logger.info("[wsclean-predict] {}", line.rstrip("\n"))
+            stripped = line.rstrip("\n")
+            logger.info("[wsclean-predict] {}", stripped)
+            lines.append(stripped)
         proc.wait()
+    combined = "\n".join(lines)
     if proc.returncode != 0:
         raise subprocess.CalledProcessError(
             proc.returncode,
             argv,
-            output="",
+            output=combined,
             stderr=None,
         )
 
 
 def merge_model_data_into_data(visibility_path: Path) -> None:
-    """Add MODEL_DATA into the delivered DATA column."""
-    try:
-        from casacore.tables import table
-    except Exception as exc:
-        raise RuntimeError(
-            "python-casacore is required to merge MODEL_DATA into DATA."
-        ) from exc
+    """Add image-model MODEL_DATA into the delivered DATA column.
 
-    with table(str(visibility_path), readonly=False, ack=False) as ms_table:
-        columns = set(ms_table.colnames())
-        if "DATA" not in columns or "MODEL_DATA" not in columns:
-            raise ValueError(
-                f"{visibility_path} must contain DATA and MODEL_DATA columns."
-            )
-        data = ms_table.getcol("DATA")
-        model_data = ms_table.getcol("MODEL_DATA")
-        ms_table.putcol("DATA", data + model_data)
+    This is a thin compatibility wrapper around the canonical implementation in
+    ``src/skasim/loaders/image_models.py``.  It exists so that legacy imports
+    from ``skasim.loaders.wsclean_predict`` keep working; new code should import
+    from ``skasim.loaders`` or ``skasim.loaders.image_models`` instead.
+    """
+    from .image_models import merge_model_data_into_data as _canonical_merge
+
+    return _canonical_merge(visibility_path)
 
 
 def inject_spectral_cube_with_wsclean_predict(
@@ -244,8 +262,161 @@ def inject_spectral_cube_with_wsclean_predict(
         "model_dir": str(model_dir),
     }
 
+
+def inject_continuum_i_alpha_with_wsclean_predict(
+    ctx,
+    entry,
+    index: int,
+    visibility_path: Path,
+    img_config: ImgConfig,
+    product,
+) -> dict:
+    """Inject a continuum I+alpha model using ``wsclean -predict``.
+
+    The CASA Taylor-term images (tt0, tt1) produced for the model are exported to
+    per-channel FITS images following WSClean's ``<prefix>-NNNN-model.fits``
+    convention.  Each channel is computed from the first-order Taylor expansion
+    around the observation reference frequency:
+
+        I(ν) = tt0 + tt1 * (ν - ν0) / ν0
+
+    where ν0 is the observation band centre.  ``wsclean -predict`` then fills
+    the MODEL_DATA column of the visibility MS.
+    """
+    if product.nterms != 2:
+        raise ValueError(
+            "inject_continuum_i_alpha_with_wsclean_predict requires a 2-term "
+            "Taylor product (tt0 and tt1)."
+        )
+
+    prefix = f"model_entry_{index + 1:02d}_continuum_predict"
+    model_dir = ctx.work_dir / f"{prefix}_models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use the intermediate FITS files (4D with degenerate STOKES/FREQ axes) so we
+    # can read tt0/tt1 without requiring a CASA image export step.
+    fits_paths = getattr(product, "intermediates", None)
+    if not fits_paths or len(fits_paths) != 2:
+        raise ValueError(
+            "continuum_i_alpha product must expose two intermediate FITS paths "
+            "(tt0.fits and tt1.fits)."
+        )
+
+    tt0_fits = fits_paths[0]
+    tt1_fits = fits_paths[1]
+
+    with fits.open(tt0_fits) as hdul0, fits.open(tt1_fits) as hdul1:
+        tt0_data = np.asarray(hdul0[0].data, dtype=float).squeeze()
+        tt1_data = np.asarray(hdul1[0].data, dtype=float).squeeze()
+        header_template = hdul0[0].header.copy()
+
+    if tt0_data.ndim != 2 or tt1_data.ndim != 2:
+        raise ValueError(
+            f"intermediate tt0 and tt1 must squeeze to 2D spatial arrays; "
+            f"got tt0 {tt0_data.shape}, tt1 {tt1_data.shape}"
+        )
+
+    if tt0_data.shape != tt1_data.shape:
+        raise ValueError(
+            f"tt0 and tt1 shapes differ: {tt0_data.shape} vs {tt1_data.shape}"
+        )
+
+    # Derive the pixel geometry from the model header so WSClean predict matches.
+    cdelt1 = abs(float(header_template.get("CDELT1", 0.0)))
+    cdelt2 = abs(float(header_template.get("CDELT2", 0.0)))
+    if cdelt1 <= 0.0 or cdelt2 <= 0.0:
+        raise ValueError(
+            f"model header missing CDELT1/CDELT2; cannot determine pixel size"
+        )
+    # Average pixel size in arcseconds (FITS CDELT is in degrees).
+    pixel_size_deg = 0.5 * (cdelt1 + cdelt2)
+    pixel_size_arcsec = pixel_size_deg * 3600.0
+
+    ny, nx = tt0_data.shape
+    if ny != nx:
+        logger.warning(
+            "continuum_i_alpha model image is not square ({}×{}); WSClean predict "
+            "will use {} pixels for both dimensions, which may distort the model.",
+            nx, ny, nx,
+        )
+    n_pixels = nx
+
+    obs = ctx.config.observation
+    n_channels = obs.n_channels
+    center_hz = obs.frequency_mhz * 1e6
+    bandwidth_hz = obs.bandwidth_mhz * 1e6
+    chan_width_hz = bandwidth_hz / n_channels
+    start_hz = center_hz - bandwidth_hz / 2.0
+
+    model_paths: list[Path] = []
+    for i in range(n_channels):
+        freq_hz = start_hz + (i + 0.5) * chan_width_hz
+        # First-order Taylor expansion around the observation reference.
+        relative = (freq_hz - center_hz) / center_hz
+        plane = tt0_data + tt1_data * relative
+
+        hdr = header_template.copy()
+        # Strip old NAXIS* keywords and rebuild a 3D single-plane header.
+        for key in list(hdr.keys()):
+            if key.startswith("NAXIS") and key != "NAXIS":
+                hdr.remove(key)
+        hdr["NAXIS"] = 3
+        hdr["NAXIS1"] = plane.shape[-1]
+        hdr["NAXIS2"] = plane.shape[-2]
+        hdr["NAXIS3"] = 1
+
+        for k in (
+            "CTYPE1", "CRPIX1", "CRVAL1", "CDELT1", "CUNIT1",
+            "CTYPE2", "CRPIX2", "CRVAL2", "CDELT2", "CUNIT2",
+        ):
+            if k in header_template:
+                hdr[k] = header_template[k]
+
+        hdr["CTYPE3"] = "FREQ"
+        hdr["CRPIX3"] = 1.0
+        hdr["CRVAL3"] = freq_hz
+        hdr["CDELT3"] = chan_width_hz
+        hdr["CUNIT3"] = "Hz"
+        hdr["BUNIT"] = header_template.get("BUNIT", "Jy/pixel")
+
+        path = model_dir / f"{prefix}-{i:04d}-model.fits"
+        fits.writeto(path, plane[np.newaxis, :, :], hdr, overwrite=True)
+        model_paths.append(path)
+
+    logger.info(
+        f"wrote {len(model_paths)} per-channel model FITS for continuum I+alpha "
+        f"WSClean predict under {model_dir}"
+    )
+
+    wsclean_command = img_config.wsclean_predict_command or img_config.wsclean_command
+
+    run_wsclean_predict(
+        wsclean_command=wsclean_command,
+        visibility_path=visibility_path,
+        img_config=img_config,
+        prefix=prefix,
+        n_channels=n_channels,
+        work_dir=model_dir,
+        pixel_size_arcsec=pixel_size_arcsec,
+        n_pixels=n_pixels,
+    )
+
+    return {
+        "model_entry_index": index,
+        "model_type": entry.type,
+        "backend": "wsclean_predict",
+        "n_channels": len(model_paths),
+        "prefix": prefix,
+        "model_dir": str(model_dir),
+        "pixel_size_arcsec": pixel_size_arcsec,
+        "n_pixels": n_pixels,
+        "wsclean_command": wsclean_command,
+    }
+
+
 __all__ = [
     "build_wsclean_predict_argv",
+    "inject_continuum_i_alpha_with_wsclean_predict",
     "inject_spectral_cube_with_wsclean_predict",
     "merge_model_data_into_data",
     "run_wsclean_predict",

@@ -1084,17 +1084,44 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
         if isinstance(entry, ContinuumIAlphaModelEntry):
             report = validate_continuum_i_alpha(entry)
             product = prepare_continuum_i_alpha_for_casa(ctx, entry, index)
-            run_casa_ft(
-                visibility_path=visibility_path,
-                model_paths=product.model_paths,
-                nterms=product.nterms,
-                reffreq=product.reffreq,
-                incremental=index > 0,
-            )
-            backend = "casa_ft"
+
+            if entry.injection_backend == "casa_ft":
+                logger.warning(
+                    "continuum_i_alpha injection_backend='casa_ft' is deprecated; "
+                    "prefer 'wsclean_predict'."
+                )
+                run_casa_ft(
+                    visibility_path=visibility_path,
+                    model_paths=product.model_paths,
+                    nterms=product.nterms,
+                    reffreq=product.reffreq,
+                    incremental=index > 0,
+                )
+                backend = "casa_ft"
+            else:
+                img_config = next(
+                    (img for img in ctx.config.imaging if img.imager == "wsclean"),
+                    ctx.config.imaging[0],
+                )
+                from .wsclean_predict import inject_continuum_i_alpha_with_wsclean_predict
+
+                report_predict = inject_continuum_i_alpha_with_wsclean_predict(
+                    ctx,
+                    entry,
+                    index,
+                    visibility_path,
+                    img_config,
+                    product,
+                )
+                backend = "wsclean_predict"
+                report = {**report, **report_predict}
         elif isinstance(entry, CasaTaylorTermsModelEntry):
             report = validate_casa_taylor_terms(entry)
             product = prepare_casa_taylor_terms(ctx, entry, index)
+            logger.warning(
+                "casa_taylor_terms uses the deprecated CASA ft backend; "
+                "consider migrating to continuum_i_alpha with wsclean_predict."
+            )
             run_casa_ft(
                 visibility_path=visibility_path,
                 model_paths=product.model_paths,
@@ -1296,13 +1323,25 @@ def prepare_continuum_i_alpha_for_casa(
     tt0_image = ctx.work_dir / f"{prefix}.tt0.image"
     tt1_image = ctx.work_dir / f"{prefix}.tt1.image"
 
-    shutil.copyfile(stokes_path, tt0_fits)
     with fits.open(stokes_path) as stokes_hdul, fits.open(alpha_path) as alpha_hdul:
         stokes_data = np.asarray(stokes_hdul[0].data, dtype=float)
         alpha_data = np.asarray(alpha_hdul[0].data, dtype=float)
         header = stokes_hdul[0].header.copy()
         header["BUNIT"] = stokes_hdul[0].header.get("BUNIT", "Jy/pixel")
-        fits.writeto(tt1_fits, stokes_data * alpha_data, header=header, overwrite=True)
+
+        # ensure both model FITS have a degenerate 4D shape (STOKES, FREQ)
+        # so CASA importfits creates images with a frequency axis that ft can map.
+        stokes_4d, header_4d = _as_4d_image(stokes_data, header, new_ref_hz)
+        alpha_4d = _broadcast_to_4d(alpha_data)
+
+        # Scale data to the new reference frequency
+        factor = (new_ref_hz / old_ref_hz) ** alpha_4d
+        stokes_4d_scaled = stokes_4d * factor
+        # CASA Taylor terms: tt0 is I(nu_ref), tt1 is I(nu_ref) * alpha
+        tt1_data = stokes_4d_scaled * alpha_4d
+
+        fits.writeto(tt0_fits, stokes_4d_scaled, header=header_4d, overwrite=True)
+        fits.writeto(tt1_fits, tt1_data, header=header_4d, overwrite=True)
 
     for imagename in (tt0_image, tt1_image):
         if imagename.exists():
@@ -1318,16 +1357,15 @@ def prepare_continuum_i_alpha_for_casa(
             [(tt0_fits, tt0_image), (tt1_fits, tt1_image)],
         )
 
-    # adjust spectral reference: tt0 pixel data scaled by (ν_new/ν_old)^α
-    # α is the mean spectral index from the alpha map
+    # Pixel data was already scaled; we just use adjust_spectral_reference
+    # with alpha_map=None to log the new frequency and enforce CRVAL4.
     alpha_mean = float(np.mean(alpha_data))
     adjust_spectral_reference(
         tt0_image,
         old_ref_hz,
         new_ref_hz,
-        alpha_map=alpha_data,
+        alpha_map=None,
     )
-    # tt1: only set CRVAL4, no pixel-data correction
     adjust_spectral_reference(
         tt1_image,
         old_ref_hz,
@@ -1354,6 +1392,45 @@ def prepare_continuum_i_alpha_for_casa(
         intermediates=[tt0_fits, tt1_fits],
     )
 
+
+def _as_4d_image(data: np.ndarray, header: fits.Header, reference_freq_hz: float) -> tuple[np.ndarray, fits.Header]:
+    """Return a 4D view (FREQ, STOKES, Y, X) of a 2D FITS image plus an updated header."""
+    # collapse any leading degenerate axes and validate spatial dimensions
+    flat = np.asarray(data).squeeze()
+    if flat.ndim != 2:
+        raise ValueError(f"continuum_i_alpha expects a 2D spatial image; got shape {data.shape}")
+    ny, nx = flat.shape
+    image_4d = flat.reshape(1, 1, ny, nx)
+
+    new_header = header.copy()
+    new_header["NAXIS"] = 4
+    new_header["NAXIS1"] = nx
+    new_header["NAXIS2"] = ny
+    new_header["NAXIS3"] = 1
+    new_header["NAXIS4"] = 1
+    new_header["CTYPE1"] = header.get("CTYPE1", "RA---SIN")
+    new_header["CTYPE2"] = header.get("CTYPE2", "DEC--SIN")
+    new_header["CTYPE3"] = "STOKES"
+    new_header["CTYPE4"] = "FREQ"
+    new_header["CRPIX1"] = header.get("CRPIX1", nx / 2.0)
+    new_header["CRPIX2"] = header.get("CRPIX2", ny / 2.0)
+    new_header["CRPIX3"] = 1.0
+    new_header["CRPIX4"] = 1.0
+    new_header["CRVAL3"] = 1.0
+    new_header["CRVAL4"] = reference_freq_hz
+    new_header["CDELT3"] = 1.0
+    new_header["CDELT4"] = 1.0
+    new_header["CUNIT3"] = ""
+    new_header["CUNIT4"] = "Hz"
+    return image_4d, new_header
+
+
+def _broadcast_to_4d(data: np.ndarray) -> np.ndarray:
+    """Collapse leading degenerate axes and broadcast a 2D spatial map to 4D."""
+    flat = np.asarray(data).squeeze()
+    if flat.ndim != 2:
+        raise ValueError(f"continuum_i_alpha alpha map must be 2D spatial; got shape {data.shape}")
+    return flat.reshape(1, 1, *flat.shape)
 
 def adjust_spectral_reference(
     image_path: Path,

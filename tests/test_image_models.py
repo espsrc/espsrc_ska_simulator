@@ -263,8 +263,6 @@ def test_weblog_renders_casa_taylor_term_preview(tmp_path, monkeypatch):
 
 def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypatch):
     """Image injection validates entries, predicts with CASA ft, and merges once."""
-    from pathlib import Path
-
     stokes_i, alpha = _write_model_pair(tmp_path)
     cfg = SimConfig(
         models=[
@@ -273,12 +271,14 @@ def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypat
                 "stokes_i": str(stokes_i),
                 "alpha": str(alpha),
                 "reference_frequency_hz": 1.4e9,
+                "injection_backend": "casa_ft",
             },
             {
                 "type": "continuum_i_alpha",
                 "stokes_i": str(stokes_i),
                 "alpha": str(alpha),
                 "reference_frequency_hz": 1.4e9,
+                "injection_backend": "casa_ft",
             },
         ],
         output_dir=str(tmp_path / "run"),
@@ -317,6 +317,72 @@ def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypat
     ft_calls = [c for c in calls if "visibility_path" in c]
     assert ft_calls[0].get("incremental") is False
     assert ft_calls[1].get("incremental") is True
+    assert any(c.get("merged") == "fake.ms" for c in calls)
+
+
+def test_inject_image_models_runs_continuum_entries_with_wsclean_predict(tmp_path, monkeypatch):
+    """Two continuum entries run wsclean-predict in order and merge once."""
+    stokes_i, alpha = _write_model_pair(tmp_path)
+    cfg = SimConfig(
+        models=[
+            {
+                "type": "continuum_i_alpha",
+                "stokes_i": str(stokes_i),
+                "alpha": str(alpha),
+                "reference_frequency_hz": 1.4e9,
+                "injection_backend": "wsclean_predict",
+            },
+            {
+                "type": "continuum_i_alpha",
+                "stokes_i": str(stokes_i),
+                "alpha": str(alpha),
+                "reference_frequency_hz": 1.4e9,
+                "injection_backend": "wsclean_predict",
+            },
+        ],
+        output_dir=str(tmp_path / "run"),
+    )
+    ctx = create_run_context(cfg)
+    calls = []
+
+    class Product:
+        nterms = 2
+        reffreq = "1400000000.0Hz"
+
+        def __init__(self, index):
+            self.model_paths = [ctx.work_dir / f"model-{index}.fits"]
+            self.intermediates = [stokes_i, alpha]
+
+    def fake_prepare(ctx_arg, entry, index):
+        assert ctx_arg is ctx
+        return Product(index)
+
+    def fake_inject(ctx_arg, entry, index, visibility_path, img_config, product):
+        calls.append({
+            "backend": "wsclean_predict",
+            "index": index,
+            "visibility_path": str(visibility_path),
+        })
+        return {"backend": "wsclean_predict"}
+
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.prepare_continuum_i_alpha_for_casa", fake_prepare
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.wsclean_predict.inject_continuum_i_alpha_with_wsclean_predict",
+        fake_inject,
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": str(visibility_path)}),
+    )
+
+    inject_image_models(ctx, visibility_path=Path("fake.ms"))
+
+    assert len(calls) == 3
+    predict_calls = [c for c in calls if c.get("backend") == "wsclean_predict"]
+    assert predict_calls[0]["index"] == 0
+    assert predict_calls[1]["index"] == 1
     assert any(c.get("merged") == "fake.ms" for c in calls)
 
 
