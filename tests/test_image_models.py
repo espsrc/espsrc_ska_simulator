@@ -447,7 +447,7 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path, monkey
     calls = []
 
     # fake casacore table to satisfy require_casacore + pixel reads
-    fake_map_data = np.ones((4, 4), dtype=np.float32)
+    fake_map_data = np.ones((1, 1, 4, 4), dtype=np.float32)
 
     class FakeCasacoreTable:
         def __init__(self, path, readonly=True, ack=False):
@@ -519,7 +519,7 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
     calls = []
 
     # fake casacore table to satisfy require_casacore + pixel reads
-    fake_map_data = np.ones((4, 4), dtype=np.float32)
+    fake_map_data = np.ones((1, 1, 4, 4), dtype=np.float32)
 
     class FakeCasacoreTable:
         def __init__(self, path, readonly=True, ack=False):

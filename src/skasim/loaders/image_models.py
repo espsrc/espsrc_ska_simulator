@@ -6,14 +6,15 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-
+import warnings
 import astropy.units as u
+from astropy.wcs import FITSFixedWarning
+from astropy.utils.iers import conf
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
 from loguru import logger
-
 import re
 
 from ..config import (
@@ -33,6 +34,11 @@ from ..imaging import write_fits_preview
 from ..manifest import RunContext
 from ..runtime import require_casacore
 
+
+# suppress fits formatting fixes
+warnings.simplefilter("ignore", category=FITSFixedWarning)
+# suppress polar motion fallback warnings
+warnings.filterwarnings("ignore", message=".*polar motions.*")
 
 @dataclass(frozen=True)
 class FitsCubeInfo:
@@ -1267,12 +1273,14 @@ def prepare_casa_taylor_terms(
             new_ref_hz,
             alpha_map=alpha_map,
         )
-        # tt1: only set CRVAL4, no pixel-data correction
+        # tt1 must be scaled by the same factor as tt0 so that the ratio
+        # tt1/tt0 (the per-pixel spectral index) is preserved when the
+        # reference frequency changes.
         adjust_spectral_reference(
             model_paths[1],
             old_ref_hz,
             new_ref_hz,
-            alpha_map=None,
+            alpha_map=alpha_map,
         )
     else:
         # nterms=1: spectrally flat, only set CRVAL4
@@ -1475,13 +1483,26 @@ def adjust_spectral_reference(
     return new_ref_hz
 
 
+from pathlib import Path
+from casacore import tables
+
 def _image_has_spectral_axis(image_path: Path) -> bool:
     """Return True if the CASA image has a frequency/spectral axis."""
-    casacore_table = require_casacore()
-    with casacore_table(str(image_path), readonly=True, ack=False) as tbl:
-        coords = tbl.getcolkeywords("map")
-    dim_names = [str(name).lower() for name in coords.get("dimnames", [])]
-    return "frequency" in dim_names
+    with tables.table(str(image_path), readonly=True, ack=False) as tbl:
+        # check primary coordinate system dictionary for a 'spectralN' key
+        if "coords" in tbl.keywordnames():
+            coords = tbl.getkeyword("coords")
+            if any(key.startswith("spectral") for key in coords.keys()):
+                return True
+
+        # fallback to map column dimensional names
+        if "map" in tbl.colnames():
+            map_kws = tbl.getcolkeywords("map")
+            dim_names = [str(n).lower() for n in map_kws.get("dimnames", [])]
+            return any("freq" in name for name in dim_names)
+
+    return False
+
 
 
 def _set_crval4_via_script(
@@ -1494,7 +1515,7 @@ def _set_crval4_via_script(
     # with the reference frequency passed as reffreq, so CRVAL4 cannot (and need not) be set.
     image_paths = [p for p in image_paths if _image_has_spectral_axis(p)]
     if not image_paths:
-        logger.info(
+        logger.warning(
             "Spectrally flat 2D image(s): skipping CRVAL4 update; ft reffreq carries the reference frequency"
         )
         return
