@@ -17,7 +17,7 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 from loguru import logger
 
-from .config import SimConfig
+from .config import SimConfig, has_spectral_cube_model
 from .imaging import run_dirty_imaging, run_wsclean_imaging
 from .loaders import (
     FitsCatalogLoader,
@@ -26,6 +26,7 @@ from .loaders import (
     image_model_entries,
     inject_image_models,
     write_image_model_previews,
+    write_spectral_cube_input_preview,
 )
 from .manifest import RunContext, create_run_context
 from .runtime import require_karabo_module
@@ -780,6 +781,8 @@ def run(config: SimConfig) -> None:
             ):
                 ctx.manifest.add_output("plot", path, role=role)
             write_image_model_previews(ctx, center, fov0)
+            if has_spectral_cube_model(config):
+                write_spectral_cube_input_preview(ctx, fov0)
         except Exception as exc:
             logger.warning(f"Sky model previews failed: {exc}")
             logger.exception("Sky model preview traceback")
@@ -811,6 +814,13 @@ def run(config: SimConfig) -> None:
         render_weblog(ctx.manifest, ctx.work_dir)
         logger.info(f"Weblog written to {ctx.weblog_path}")
 
+        # spectral-cube summary
+        if has_spectral_cube_model(config):
+            _log_spectral_cube_summary(ctx)
+
+        elapsed = time.time() - t0
+        logger.info(f"Done. Elapsed: {elapsed:.1f} s")
+
     except Exception as exc:
         ctx.manifest.mark_failed(str(exc))
         ctx.manifest.add_output("weblog", ctx.weblog_path.name)
@@ -821,3 +831,23 @@ def run(config: SimConfig) -> None:
 
     elapsed = time.time() - t0
     logger.info(f"Done. Elapsed: {elapsed:.1f} s")
+
+
+def _log_spectral_cube_summary(ctx: RunContext) -> None:
+    """Log a concise post-run summary of spectral-cube products."""
+    cube_outputs = [
+        out
+        for out in ctx.manifest.outputs
+        if out.image_product_id is not None
+        and out.role is not None
+        and "cube" in out.role
+    ]
+    mom_outputs = [
+        out
+        for out in ctx.manifest.outputs
+        if out.role is not None and out.role.startswith("mom")
+    ]
+    logger.info(
+        f"Spectral-cube products: {len(cube_outputs)} cube outputs, "
+        f"{len(mom_outputs)} moment maps"
+    )

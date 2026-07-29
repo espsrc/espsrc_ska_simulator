@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath("../src"))
 project = "skasim"
 copyright = "2026, Spanish SRC Team"
 author = "Spanish SRC Team"
-release = "0.4.0"
+release = "0.5.0"
 
 extensions = [
     "sphinx.ext.autodoc",

@@ -10,23 +10,242 @@ import pytest
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 
-from skasim.config import ImgConfig, ObsConfig, SimConfig
+from skasim.config import (
+    CasaTaylorTermsModelEntry,
+    ComponentSkyModelEntry,
+    ContinuumIAlphaModelEntry,
+    ImgConfig,
+    ModelEntry,
+    ObsConfig,
+    SimConfig,
+    SpectralCubeModelEntry,
+    StaticStokesMapsModelEntry,
+    has_spectral_cube_model,
+    spectral_cube_model_entries,
+)
 from skasim.imaging import (
     SKY_MODEL_CMAP,
     _compact_source_mask,
     _flux_marker_sizes,
     _padded_limits,
+    _resolve_spectral_cube_wsclean_config,
     _sky_model_ellipses,
     _sky_model_position_angle,
     build_wsclean_argv,
     collect_wsclean_outputs,
     run_dirty_imaging,
     run_wsclean_command,
+    run_wsclean_imaging,
     write_fits_preview,
     write_sky_model_previews,
     wsclean_output_prefix,
 )
+from skasim.loaders.image_models import run_moment8_for_spectral_cube
 from skasim.manifest import create_run_context
+
+
+def test_resolve_spectral_cube_wsclean_config_forces_defaults():
+    """Spectral-cube mode disables join_channels and multiscale."""
+    config = SimConfig(
+        imaging=[
+            ImgConfig(
+                imager="wsclean",
+                pixels=64,
+                join_channels=True,
+                multiscale=True,
+                multiscale_scales=[0, 4, 8],
+            )
+        ]
+    )
+    resolved = _resolve_spectral_cube_wsclean_config(
+        config.imaging[0], n_channels=8
+    )
+    assert resolved.join_channels is False
+    assert resolved.multiscale is False
+    assert resolved.multiscale_scales is None
+    assert resolved.channels_out == 8
+
+
+def test_resolve_spectral_cube_wsclean_config_keeps_user_channels_out():
+    """A user-supplied channels_out is preserved when present."""
+    config = SimConfig(
+        imaging=[
+            ImgConfig(
+                imager="wsclean",
+                pixels=64,
+                channels_out=4,
+            )
+        ]
+    )
+    resolved = _resolve_spectral_cube_wsclean_config(
+        config.imaging[0], n_channels=16
+    )
+    assert resolved.channels_out == 4
+
+
+def test_build_wsclean_argv_spectral_cube_has_no_join_channels():
+    """Spectral-cube argv never contains -join-channels and matches channels."""
+    config = SimConfig(
+        observation=ObsConfig(bandwidth_mhz=10.0, n_channels=8),
+        imaging=[ImgConfig(imager="wsclean", pixels=64)],
+    )
+    resolved = _resolve_spectral_cube_wsclean_config(
+        config.imaging[0], n_channels=config.observation.n_channels
+    )
+    argv = build_wsclean_argv(
+        resolved,
+        visibility_path=Path("vis.MS"),
+        fov=0.2 * u.deg,
+        output_prefix="line",
+        n_channels=config.observation.n_channels,
+    )
+    assert "-join-channels" not in argv
+    assert "-multiscale" not in argv
+    assert argv[argv.index("-channels-out") + 1] == "8"
+
+
+def test_run_wsclean_imaging_triggers_moment8_for_spectral_cube(
+    tmp_path, monkeypatch
+):
+    """A spectral cube run calls moment8 after WSClean."""
+
+    class FakeImage:
+        def __init__(self, path):
+            self.path = path
+
+        def plot(self, filename, **kwargs):
+            Path(filename).write_text("png", encoding="utf-8")
+
+    def fake_require(module_name):
+        if module_name == "karabo.imaging.image":
+            return SimpleNamespace(Image=FakeImage)
+        if module_name == "karabo.imaging.imager_wsclean":
+            return SimpleNamespace(TMP_PREFIX_CUSTOM="tmp", TMP_PURPOSE_CUSTOM="test")
+        if module_name == "karabo.util.file_handler":
+            return SimpleNamespace(
+                FileHandler=lambda: SimpleNamespace(
+                    get_tmp_dir=lambda **kwargs: tmp_path
+                )
+            )
+        raise AssertionError(module_name)
+
+    captured = {}
+
+    def fake_run_moment8(ctx, work_dir, output_prefix, tag):
+        captured["moment8"] = (str(work_dir), output_prefix, tag)
+
+    def fake_run(argv, work_dir):
+        prefix = argv[argv.index("-name") + 1]
+        work_dir.mkdir(parents=True, exist_ok=True)
+        (work_dir / f"{prefix}-MFS-image.fits").write_text("fits", encoding="utf-8")
+
+        class Result:
+            stdout = "ok"
+
+        return Result()
+
+    monkeypatch.setattr("skasim.imaging.require_karabo_module", fake_require)
+    monkeypatch.setattr("skasim.imaging.run_wsclean_command", fake_run)
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.run_moment8_for_spectral_cube",
+        fake_run_moment8,
+    )
+    monkeypatch.setattr(
+        "skasim.imaging.write_fits_preview",
+        lambda img_path, png_path, title: Path(png_path).write_text(
+            "png", encoding="utf-8"
+        ),
+    )
+
+    (tmp_path / "cube.fits").write_text("fits", encoding="utf-8")
+
+    config = SimConfig(
+        output_dir=str(tmp_path / "run"),
+        models=[SpectralCubeModelEntry(type="spectral_cube", cube=str(tmp_path / "cube.fits"))],
+        imaging=[ImgConfig(imager="wsclean")],
+    )
+    ctx = create_run_context(config)
+
+    run_wsclean_imaging(
+        ctx,
+        ctx.visibility_path,
+        0.2 * u.deg,
+        img_config=config.imaging[0],
+        sub_dir=ctx.work_dir / config.imaging[0].tag,
+    )
+
+    assert captured["moment8"][1] == f"{config.imaging[0].tag}_wsclean"
+    assert captured["moment8"][2] == config.imaging[0].tag
+
+
+def test_run_wsclean_imaging_skips_moment8_without_spectral_cube(
+    tmp_path, monkeypatch
+):
+    """Non-cube runs do not trigger moment8."""
+
+    class FakeImage:
+        def __init__(self, path):
+            self.path = path
+
+        def plot(self, filename, **kwargs):
+            Path(filename).write_text("png", encoding="utf-8")
+
+    def fake_require(module_name):
+        if module_name == "karabo.imaging.image":
+            return SimpleNamespace(Image=FakeImage)
+        if module_name == "karabo.imaging.imager_wsclean":
+            return SimpleNamespace(TMP_PREFIX_CUSTOM="tmp", TMP_PURPOSE_CUSTOM="test")
+        if module_name == "karabo.util.file_handler":
+            return SimpleNamespace(
+                FileHandler=lambda: SimpleNamespace(
+                    get_tmp_dir=lambda **kwargs: tmp_path
+                )
+            )
+        raise AssertionError(module_name)
+
+    captured = {}
+
+    def fake_run_moment8(ctx, work_dir, output_prefix, tag):
+        captured["moment8"] = (str(work_dir), output_prefix, tag)
+
+    def fake_run(argv, work_dir):
+        prefix = argv[argv.index("-name") + 1]
+        work_dir.mkdir(parents=True, exist_ok=True)
+        (work_dir / f"{prefix}-MFS-image.fits").write_text("fits", encoding="utf-8")
+
+        class Result:
+            stdout = "ok"
+
+        return Result()
+
+    monkeypatch.setattr("skasim.imaging.require_karabo_module", fake_require)
+    monkeypatch.setattr("skasim.imaging.run_wsclean_command", fake_run)
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.run_moment8_for_spectral_cube",
+        fake_run_moment8,
+    )
+    monkeypatch.setattr(
+        "skasim.imaging.write_fits_preview",
+        lambda img_path, png_path, title: Path(png_path).write_text(
+            "png", encoding="utf-8"
+        ),
+    )
+
+    config = SimConfig(
+        output_dir=str(tmp_path / "run"),
+        imaging=[ImgConfig(imager="wsclean")],
+    )
+    ctx = create_run_context(config)
+
+    run_wsclean_imaging(
+        ctx,
+        ctx.visibility_path,
+        0.2 * u.deg,
+        img_config=config.imaging[0],
+        sub_dir=ctx.work_dir / config.imaging[0].tag,
+    )
+
+    assert "moment8" not in captured
 
 
 def test_build_wsclean_argv_uses_default_command():

@@ -10,6 +10,8 @@ from skasim.config import (
     ImgConfig,
     ObsConfig,
     SimConfig,
+    SpectralCubeModelEntry,
+    StaticStokesMapsModelEntry,
 )
 
 # ---------------------------------------------------------------------------
@@ -441,3 +443,102 @@ def test_img_config_tag_validation():
         ImgConfig(tag="foo bar")
     with pytest.raises(ValidationError, match="tag must not contain whitespace"):
         ImgConfig(tag="foo/bar")
+
+
+# ---------------------------------------------------------------------------
+# SpectralCubeModelEntry
+# ---------------------------------------------------------------------------
+
+
+def test_spectral_cube_model_entry_defaults(tmp_path):
+    """Minimal spectral_cube entry requires only an existing cube file."""
+    cube_path = tmp_path / "line_cube.fits"
+    cube_path.write_bytes(b"")
+    # make it a minimal valid FITS-like file by writing a real FITS header
+    import numpy as np
+    from astropy.io import fits
+
+    fits.writeto(cube_path, np.zeros((2, 2, 2), dtype=np.float32), overwrite=True)
+    entry = SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path))
+    assert entry.type == "spectral_cube"
+    assert entry.cube == str(cube_path)
+    assert entry.reference_frequency_hz is None
+    assert entry.channel_width_hz is None
+    assert entry.n_channels is None
+
+
+def test_spectral_cube_model_entry_with_overrides(tmp_path):
+    """Optional spectral overrides are accepted when positive."""
+    cube_path = tmp_path / "line_cube.fits"
+    import numpy as np
+    from astropy.io import fits
+
+    fits.writeto(cube_path, np.zeros((2, 2, 2), dtype=np.float32), overwrite=True)
+    entry = SpectralCubeModelEntry(
+        type="spectral_cube",
+        cube=str(cube_path),
+        reference_frequency_hz=1.42e9,
+        channel_width_hz=1e5,
+        n_channels=32,
+    )
+    assert entry.reference_frequency_hz == pytest.approx(1.42e9)
+    assert entry.channel_width_hz == pytest.approx(1e5)
+    assert entry.n_channels == 32
+
+
+def test_spectral_cube_model_entry_rejects_nonexistent_file():
+    """Cube path must exist at config time."""
+    with pytest.raises(ValidationError, match="model file does not exist"):
+        SpectralCubeModelEntry(cube="/tmp/nonexistent_cube.fits")
+
+
+def test_spectral_cube_model_entry_rejects_bad_channel_width(tmp_path):
+    """channel_width_hz must be strictly positive."""
+    cube_path = tmp_path / "line_cube.fits"
+    import numpy as np
+    from astropy.io import fits
+
+    fits.writeto(cube_path, np.zeros((2, 2, 2), dtype=np.float32), overwrite=True)
+    with pytest.raises(ValidationError, match="channel_width_hz must be > 0"):
+        SpectralCubeModelEntry(
+            type="spectral_cube",
+            cube=str(cube_path),
+            channel_width_hz=0.0,
+        )
+
+
+def test_spectral_cube_model_entry_rejects_bad_n_channels(tmp_path):
+    """n_channels must be at least 1."""
+    cube_path = tmp_path / "line_cube.fits"
+    import numpy as np
+    from astropy.io import fits
+
+    fits.writeto(cube_path, np.zeros((2, 2, 2), dtype=np.float32), overwrite=True)
+    with pytest.raises(ValidationError, match="n_channels must be >= 1"):
+        SpectralCubeModelEntry(
+            type="spectral_cube",
+            cube=str(cube_path),
+            n_channels=0,
+        )
+
+
+def test_sim_config_accepts_spectral_cube_model_entry(tmp_path):
+    """SimConfig accepts a spectral_cube entry in its typed models list."""
+    cube_path = tmp_path / "line_cube.fits"
+    import numpy as np
+    from astropy.io import fits
+
+    fits.writeto(cube_path, np.zeros((4, 4, 4), dtype=np.float32), overwrite=True)
+    cfg = SimConfig(
+        observation=ObsConfig(bandwidth_mhz=3.2, n_channels=32),
+        models=[
+            {
+                "type": "spectral_cube",
+                "cube": str(cube_path),
+            }
+        ],
+        imaging=[ImgConfig(tag="line", imager="wsclean", pixels=64)],
+    )
+    assert len(cfg.models) == 1
+    assert isinstance(cfg.models[0], SpectralCubeModelEntry)
+    assert cfg.models[0].cube == str(cube_path)

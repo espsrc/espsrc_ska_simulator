@@ -36,6 +36,7 @@
     .badge.stokes-maps { background: rgba(188,76,0,0.13); color: #bc4c00; }
     .badge.fits-file { background: rgba(0,129,138,0.13); color: #00818a; }
     .badge.random { background: rgba(101,109,118,0.13); color: var(--muted); }
+    .badge.spectral-cube { background: rgba(183,33,117,0.13); color: #b72175; }
 
     /* durations summary */
     .durations-summary { display: flex; gap: 2rem; margin: 1.5rem 0; font-size: 0.85rem; color: var(--muted); }
@@ -188,6 +189,10 @@
             {%- if entry.nterms %} · nterms={{ entry.nterms }}{% endif %}
             {%- if entry.ref_freq_hz %} · ref={{ (entry.ref_freq_hz / 1e6) | round(1) }} MHz{% endif %}
             {%- if entry.stokes %} · {{ entry.stokes | join(', ') }}{% endif %}
+            {%- if entry.n_channels %} · {{ entry.n_channels }} channels{% endif %}
+            {%- if entry.central_frequency_mhz %} · {{ entry.central_frequency_mhz | round(4) }} MHz{% endif %}
+            {%- if entry.channel_width_khz %} · {{ entry.channel_width_khz | round(3) }} kHz/ch{% endif %}
+            {%- if entry.spatial_shape %} · {{ entry.spatial_shape[0] }}×{{ entry.spatial_shape[1] }}{% endif %}
             {%- if entry.reference %} · ref={{ entry.reference }}{% endif %}
             <br>
           {% endfor %}
@@ -203,14 +208,33 @@
         {% endif %}
         {% endif %}
       </table>
-      {% for plot in fits_model_plots %}
-      <div class="plot-container">
-        <div class="plot-title">FITS Model{% if plot.model_type %} ({{ plot.model_type }}){% endif %}</div>
-        <a href="{{ plot.path }}" target="_blank" rel="noopener">
-          <img src="{{ plot.data }}" alt="FITS model preview">
-        </a>
-      </div>
-      {% endfor %}
+        {% if fits_model_plots %}
+        {% for plot in fits_model_plots %}
+        <tr>
+          <th>FITS Model{% if plot.model_type %} ({{ plot.model_type }}){% endif %}</th>
+          <td>
+            <div class="plot-container" style="margin-top:0.5rem;">
+              <a href="{{ plot.path }}" target="_blank" rel="noopener">
+                <img src="{{ plot.data }}" alt="FITS model preview" style="max-width:260px;">
+              </a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+        {% endif %}
+        {% if input_cube_moment8_plot %}
+        <tr>
+          <th>Input spectral cube — Moment 8 (peak)</th>
+          <td>
+            <div class="plot-container" style="margin-top:0.5rem;">
+              <a href="{{ input_cube_moment8_plot.path }}" target="_blank" rel="noopener">
+                <img src="{{ input_cube_moment8_plot.data }}" alt="Input cube moment 8 preview" style="max-width:260px;">
+              </a>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+      </table>
       {% if sky_model_plot %}
       <div class="plot-container">
         <div class="plot-title">Full Sky Model</div>
@@ -283,6 +307,26 @@
             {% endif %}
           </figure>
           {% endif %}
+          {% if product.moment8 %}
+          <figure>
+            {% if product.moment8.preview and product.moment8.data %}
+              <a href="{{ product.moment8.preview }}" target="_blank" rel="noopener"><img src="{{ product.moment8.data }}" alt="Moment 8"></a>
+              <figcaption>Moment 8 (peak)</figcaption>
+            {% else %}
+              <figcaption style="padding: 3rem 0;">Moment 8 — not available</figcaption>
+            {% endif %}
+          </figure>
+          {% endif %}
+          {% if product.avg_spectrum %}
+          <figure>
+            {% if product.avg_spectrum.data %}
+              <a href="{{ product.avg_spectrum.path }}" target="_blank" rel="noopener"><img src="{{ product.avg_spectrum.data }}" alt="Average spectrum"></a>
+              <figcaption>Average spectrum</figcaption>
+            {% else %}
+              <figcaption style="padding: 3rem 0;">Average spectrum — not available</figcaption>
+            {% endif %}
+          </figure>
+          {% endif %}
         </div>
       </div>
       {% endfor %}
@@ -330,18 +374,7 @@
       </tbody>
     </table>
 
-    <!-- Supporting Plots -->
-    {% if images %}
-    <h2>Supporting Plots</h2>
-    <div class="gallery">
-      {% for img in images %}
-      <figure>
-        <a href="{{ img.path }}" target="_blank" rel="noopener"><img src="{{ img.data }}" alt="{{ img.caption }}"></a>
-        <figcaption>{{ img.caption }}</figcaption>
-      </figure>
-      {% endfor %}
-    </div>
-    {% endif %}
+    <!-- Supporting Plots removed from main page -->
 
     <!-- Collapsible detail sections -->
     {% if manifest.outputs %}

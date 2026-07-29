@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, List, Literal, Optional, Union
@@ -94,15 +95,33 @@ class ContinuumIAlphaModelEntry(BaseModel):
     stokes_i: str
     alpha: str
     reference_frequency_hz: float = Field(gt=0)
+    injection_backend: Literal["wsclean_predict", "casa_ft"] = "wsclean_predict"
 
     @field_validator("stokes_i", "alpha")
     @classmethod
     def _path_exists(cls, value: str) -> str:
         return _require_existing_path(value)
 
+    @model_validator(mode="after")
+    def _warn_deprecated_casa_ft(self):
+        if self.injection_backend == "casa_ft":
+            warnings.warn(
+                "injection_backend='casa_ft' is deprecated for continuum_i_alpha "
+                "and will be removed in a future release; use 'wsclean_predict' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return self
+
 
 class CasaTaylorTermsModelEntry(BaseModel):
-    """Existing CASA Taylor-term image model set."""
+    """Existing CASA Taylor-term image model set.
+
+    This entry type currently only supports the legacy CASA ``ft`` backend.
+    A ``wsclean_predict`` backend is planned but not yet implemented; the
+    ``injection_backend`` field is reserved for future use and defaults to
+    ``casa_ft``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -110,6 +129,7 @@ class CasaTaylorTermsModelEntry(BaseModel):
     tt0: str
     tt1: Optional[str] = None
     reference_frequency_hz: float = Field(gt=0)
+    injection_backend: Literal["casa_ft"] = "casa_ft"
 
     @field_validator("tt0", "tt1")
     @classmethod
@@ -117,6 +137,59 @@ class CasaTaylorTermsModelEntry(BaseModel):
         if value is None:
             return value
         return _require_existing_path(value)
+
+    @model_validator(mode="after")
+    def _warn_deprecated_casa_ft(self):
+        warnings.warn(
+            "casa_taylor_terms uses the deprecated CASA ft backend; "
+            "consider migrating to continuum_i_alpha with wsclean_predict.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self
+
+
+class SpectralCubeModelEntry(BaseModel):
+    """3D spectral-line cube (RA, Dec, FREQ) in Stokes I.
+
+    The cube describes the *sky* and may have a much finer spectral grid than
+    the observation. Validation only checks that the observed channel centres
+    lie inside the cube's frequency extent and that the spatial dimensions match
+    the imaging configuration. The optional ``reference_frequency_hz``,
+    ``channel_width_hz`` and ``n_channels`` fields are accepted for backward
+    compatibility but are ignored; the FITS header is authoritative.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["spectral_cube"]
+    cube: str
+    reference_frequency_hz: Optional[float] = None
+    channel_width_hz: Optional[float] = None
+    n_channels: Optional[int] = None
+
+    @field_validator("cube")
+    @classmethod
+    def _path_exists(cls, value: str) -> str:
+        return _require_existing_path(value)
+
+    @field_validator("channel_width_hz")
+    @classmethod
+    def _positive_channel_width_hz(cls, value: Optional[float]) -> Optional[float]:
+        if value is None:
+            return value
+        if value <= 0:
+            raise ValueError("channel_width_hz must be > 0")
+        return value
+
+    @field_validator("n_channels")
+    @classmethod
+    def _positive_n_channels(cls, value: Optional[int]) -> Optional[int]:
+        if value is None:
+            return value
+        if value < 1:
+            raise ValueError("n_channels must be >= 1")
+        return value
 
 
 class StaticStokesMapsModelEntry(BaseModel):
@@ -150,6 +223,7 @@ ModelEntry = Annotated[
         ContinuumIAlphaModelEntry,
         CasaTaylorTermsModelEntry,
         StaticStokesMapsModelEntry,
+        SpectralCubeModelEntry,
     ],
     Field(discriminator="type"),
 ]
@@ -234,6 +308,7 @@ class ImgConfig(BaseModel):
     robust: float = 0.0
     imager: Literal["oskar-dirty", "wsclean"] = "oskar-dirty"
     wsclean_command: str = "wsclean"
+    wsclean_predict_command: Optional[str] = None
     clean_iterations: int = 5000
 
     # WSClean-only flags.  None means "use the skasim default".
@@ -389,6 +464,21 @@ class SimConfig(BaseModel):
             )
             if component_count > 1:
                 raise ValueError("Provide at most one component_sky_model entry.")
+
+            # spectral_cube is exclusive; it cannot coexist with other model types
+            cube_count = sum(
+                1
+                for model in self.models
+                if getattr(model, "type", None) == "spectral_cube"
+            )
+            if cube_count > 1:
+                raise ValueError("Provide at most one spectral_cube entry.")
+            if cube_count == 1 and len(self.models) > 1:
+                raise ValueError(
+                    "spectral_cube mode is exclusive and cannot be mixed with other "
+                    "model entries."
+                )
+
             self.source_flux_jy = []
             self.stokes_q_jy = None
             self.stokes_u_jy = None
@@ -446,3 +536,19 @@ class SimConfig(BaseModel):
         if v < 1:
             raise ValueError("uv_coverage_canvas_size must be >= 1")
         return v
+
+
+def has_spectral_cube_model(config: SimConfig) -> bool:
+    """Return True if the simulation contains a spectral_cube model entry."""
+    return any(
+        getattr(model, "type", None) == "spectral_cube" for model in config.models
+    )
+
+
+def spectral_cube_model_entries(config: SimConfig) -> list:
+    """Return all spectral_cube model entries in the config."""
+    return [
+        model
+        for model in config.models
+        if getattr(model, "type", None) == "spectral_cube"
+    ]
