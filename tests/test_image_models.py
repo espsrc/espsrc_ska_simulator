@@ -472,6 +472,14 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path, monkey
         "skasim.loaders.image_models.require_casacore",
         lambda: FakeCasacoreTable,
     )
+    adjust_calls = []
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.adjust_spectral_reference",
+        lambda image_path, old_ref_hz, new_ref_hz, alpha_map=None: adjust_calls.append(
+            {"image_path": image_path, "alpha_map": alpha_map, "new_ref_hz": new_ref_hz}
+        )
+        or new_ref_hz,
+    )
     monkeypatch.setattr(
         "skasim.loaders.image_models.run_casa_set_spectral_coordinate",
         lambda work_dir, image_paths, frequency_hz: calls.append(
@@ -490,10 +498,12 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path, monkey
     assert product.nterms == 2
     assert product.reffreq == "700000000.0Hz"
     assert (product.model_paths[0] / "table.dat").exists()
-    # adjust_spectral_reference calls _set_crval4_via_script for each term
-    assert len(calls) == 2
-    assert calls[0] == (ctx.work_dir, [product.model_paths[0]], 700_000_000.0)
-    assert calls[1] == (ctx.work_dir, [product.model_paths[1]], 700_000_000.0)
+    # both tt0 and tt1 are scaled by the same alpha_map to preserve the ratio
+    assert len(adjust_calls) == 2
+    assert adjust_calls[0]["alpha_map"] is not None
+    assert adjust_calls[1]["alpha_map"] is not None
+    assert adjust_calls[0]["new_ref_hz"] == pytest.approx(700_000_000.0)
+    assert adjust_calls[1]["new_ref_hz"] == pytest.approx(700_000_000.0)
 
 
 def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
@@ -518,7 +528,7 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
     ctx = create_run_context(cfg)
     calls = []
 
-    # fake casacore table to satisfy require_casacore + pixel reads
+    # fake casacore table to satisfy require_casacore + pixel reads in prepare_casa_taylor_terms
     fake_map_data = np.ones((1, 1, 4, 4), dtype=np.float32)
 
     class FakeCasacoreTable:
@@ -545,10 +555,11 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
         lambda: FakeCasacoreTable,
     )
     monkeypatch.setattr(
-        "skasim.loaders.image_models.run_casa_set_spectral_coordinate",
-        lambda work_dir, image_paths, frequency_hz: calls.append(
-            {"spectral_copy": image_paths, "frequency_hz": frequency_hz}
-        ),
+        "skasim.loaders.image_models.adjust_spectral_reference",
+        lambda image_path, old_ref_hz, new_ref_hz, alpha_map=None: calls.append(
+            {"image_path": image_path, "frequency_hz": new_ref_hz, "alpha_map": alpha_map}
+        )
+        or new_ref_hz,
     )
     monkeypatch.setattr(
         "skasim.loaders.image_models.run_casa_ft",
@@ -565,13 +576,15 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
         ctx.work_dir / "model_entry_01_casa_taylor.tt0.image",
         ctx.work_dir / "model_entry_01_casa_taylor.tt1.image",
     ]
-    # prepare_casa_taylor_terms now adjusts spectral reference inline:
-    #   calls[0]: adjust_spectral_reference for tt0 (via run_casa_set_spectral_coordinate)
-    #   calls[1]: adjust_spectral_reference for tt1 (via run_casa_set_spectral_coordinate)
+    # prepare_casa_taylor_terms now adjusts spectral reference inline for both terms
+    #   calls[0]: adjust_spectral_reference for tt0
+    #   calls[1]: adjust_spectral_reference for tt1
     #   calls[2]: run_casa_ft
     #   calls[3]: merge_model_data_into_data
     assert calls[0]["frequency_hz"] == 700_000_000.0
+    assert calls[0]["alpha_map"] is not None
     assert calls[1]["frequency_hz"] == 700_000_000.0
+    assert calls[1]["alpha_map"] is not None
     assert calls[2]["model_paths"] == copied_paths
     assert calls[2]["nterms"] == 2
     assert calls[2]["reffreq"] == "700000000.0Hz"
