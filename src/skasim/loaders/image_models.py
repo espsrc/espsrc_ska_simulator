@@ -109,7 +109,8 @@ def image_model_center(entries: list[ModelEntry]) -> SkyCoord | None:
             continue
         try:
             info = read_fits_image_info(path)
-        except Exception:
+        except Exception as exc:
+            logger.debug(f"image_model_center: failed to read {path}: {exc}")
             continue
         if info.center is not None:
             return info.center
@@ -148,7 +149,8 @@ def read_fits_image_info(path: Path) -> FitsImageInfo:
         center = wcs.pixel_to_world(center_x, center_y)
         if not isinstance(center, SkyCoord):
             center = None
-    except Exception:
+    except Exception as exc:
+        logger.debug(f"read_fits_image_info: WCS construction failed for {path}: {exc}")
         celestial_header = {}
         center = None
 
@@ -392,7 +394,10 @@ def _read_ms_phase_center(visibility_path: Path) -> tuple[float, float] | None:
     """Return (ra_deg, dec_deg) from the MS FIELD table, or None if unavailable."""
     try:
         from casacore.tables import table
-    except Exception:
+    except Exception as exc:
+        logger.debug(
+            f"_read_ms_phase_center: casacore not available for {visibility_path}: {exc}"
+        )
         return None
     try:
         with table(str(visibility_path / "FIELD"), ack=False) as tb:
@@ -405,7 +410,10 @@ def _read_ms_phase_center(visibility_path: Path) -> tuple[float, float] | None:
                 ra_rad = float(phase_dir[0, 0, 0])
                 dec_rad = float(phase_dir[1, 0, 0])
             return float(np.degrees(ra_rad)), float(np.degrees(dec_rad))
-    except Exception:
+    except Exception as exc:
+        logger.debug(
+            f"_read_ms_phase_center: failed to read PHASE_DIR from {visibility_path}: {exc}"
+        )
         return None
 
 
@@ -413,7 +421,10 @@ def _read_ms_spectral_window(visibility_path: Path) -> tuple[np.ndarray, float] 
     """Return (chan_freqs_hz, chan_width_hz) from the MS SPECTRAL_WINDOW table."""
     try:
         from casacore.tables import table
-    except Exception:
+    except Exception as exc:
+        logger.debug(
+            f"_read_ms_spectral_window: casacore not available for {visibility_path}: {exc}"
+        )
         return None
     try:
         with table(str(visibility_path / "SPECTRAL_WINDOW"), ack=False) as tb:
@@ -438,7 +449,10 @@ def _read_ms_spectral_window(visibility_path: Path) -> tuple[np.ndarray, float] 
                 widths = chan_width.flatten()[:n_chan_first]
 
             return freqs, float(np.mean(widths))
-    except Exception:
+    except Exception as exc:
+        logger.debug(
+            f"_read_ms_spectral_window: failed to read SPECTRAL_WINDOW from {visibility_path}: {exc}"
+        )
         return None
 
 
@@ -451,7 +465,8 @@ def _reorder_casa_image_to_radecfreqstokes(image_path: Path) -> None:
     """
     try:
         from casatools import image
-    except Exception:
+    except Exception as exc:
+        logger.debug(f"_reorder_casa_image_to_radecfreqstokes: casatools not available: {exc}")
         return
     try:
         ia = image()
@@ -467,8 +482,8 @@ def _reorder_casa_image_to_radecfreqstokes(image_path: Path) -> None:
         if len(order) == 4:
             ia.reorder(order)
         ia.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug(f"_reorder_casa_image_to_radecfreqstokes: failed for {image_path}: {exc}")
 
 
 def _resample_spectral_axis_to_ms_channels(
@@ -707,7 +722,10 @@ def prepare_spectral_cube_for_casa(
             sky = wcs.pixel_to_world(center_x, center_y)
             if isinstance(sky, SkyCoord):
                 phase_center = (float(sky.ra.deg), float(sky.dec.deg))
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                f"prepare_spectral_cube_for_casa: WCS phase centre failed for {source_path}: {exc}"
+            )
             phase_center = None
     if phase_center is None:
         try:
@@ -969,8 +987,11 @@ def write_spectral_cube_input_preview(
             pix = np.array([header["NAXIS1"] / 2.0, header["NAXIS2"] / 2.0])
             sky = wcs.pixel_to_world(*pix)
             recenter = (sky.ra.deg, sky.dec.deg, fov.to(u.deg).value)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                f"write_spectral_cube_input_preview: WCS recenter failed for {fits_path}: {exc}"
+            )
+            recenter = None
 
         write_fits_preview(
             fits_path,
@@ -1025,7 +1046,10 @@ def write_image_model_previews(
                     info.center.dec.deg,
                     fov.to(u.deg).value,
                 )
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                f"write_image_model_previews: WCS recenter failed for {image_path}: {exc}"
+            )
             recenter = None
         suffix = "" if len(entries) == 1 else f"_{index:02d}"
         png_name = f"{ctx.work_dir.name}_fits_model{suffix}.png"
@@ -1526,8 +1550,9 @@ def _set_crval4_via_script(
                 hdvalue=f"{frequency_hz}Hz",
             )
         return
-    except Exception:
-        pass  # fall through to batch mode
+    except Exception as exc:
+        logger.debug(f"_set_crval4_via_script: in-process imhead failed: {exc}")
+        # fall through to batch mode
 
     run_casa_set_spectral_coordinate(work_dir, image_paths, frequency_hz)
 
@@ -1536,7 +1561,8 @@ def import_casa_tasks():
     """Return in-process CASA tasks when they are importable in this Python env."""
     try:
         from casatasks import ft, importfits
-    except Exception:
+    except Exception as exc:
+        logger.debug(f"import_casa_tasks: casatasks not available: {exc}")
         return None
     return importfits, ft
 
@@ -1545,7 +1571,8 @@ def import_casa_tools():
     """Return in-process CASA simulator tool when importable."""
     try:
         from casatools import simulator
-    except Exception:
+    except Exception as exc:
+        logger.debug(f"import_casa_tools: casatools not available: {exc}")
         return None
     return simulator
 
