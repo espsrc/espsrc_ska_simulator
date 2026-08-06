@@ -1474,12 +1474,16 @@ def adjust_spectral_reference(
     return new_ref_hz
 
 
-from pathlib import Path
-from casacore import tables
-
 def _image_has_spectral_axis(image_path: Path) -> bool:
     """Return True if the CASA image has a frequency/spectral axis."""
-    with tables.table(str(image_path), readonly=True, ack=False) as tbl:
+    try:
+        from casacore.tables import table
+    except Exception as exc:
+        raise RuntimeError(
+            "python-casacore is required to inspect CASA image tables."
+        ) from exc
+
+    with table(str(image_path), readonly=True, ack=False) as tbl:
         # check primary coordinate system dictionary for a 'spectralN' key
         if "coords" in tbl.keywordnames():
             coords = tbl.getkeyword("coords")
