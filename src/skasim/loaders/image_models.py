@@ -291,9 +291,9 @@ def _squeeze_degenerate_axes(data: np.ndarray, header: fits.Header) -> tuple[np.
 
     # Remove leftover 4th-axis keys and any dangling higher-axis keys.
     for key in list(new_header.keys()):
-        match = re.match(r"(NAXIS|CTYPE|CRPIX|CRVAL|CDELT|CUNIT)\d+", key)
+        match = re.match(r"(NAXIS|CTYPE|CRPIX|CRVAL|CDELT|CUNIT)(\d+)", key)
         if match:
-            axis_num = int(match.group(0)[-1])
+            axis_num = int(match.group(2))
             if axis_num > 3:
                 del new_header[key]
 
