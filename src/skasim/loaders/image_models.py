@@ -161,6 +161,24 @@ def read_fits_image_info(path: Path) -> FitsImageInfo:
     )
 
 
+# canonical aliases accepted for Jy/pixel (per-pixel flux density) inputs.
+_ACCEPTED_JY_PER_PIXEL_UNITS = frozenset(
+    {
+        "jy/pixel",
+        "jy pix-1",
+        "jy/pix",
+        "jy",
+        "jy px-1",
+        "jy/px",
+        "jy pixels-1",
+        "jy pixel-1",
+        "jy pixel^-1",
+        "jy pix^-1",
+        "jy px^-1",
+    }
+)
+
+
 def validate_continuum_i_alpha(entry: ContinuumIAlphaModelEntry) -> dict:
     """Validate the continuum image contract and return report metadata."""
     stokes_info = read_fits_image_info(Path(entry.stokes_i).expanduser().resolve())
@@ -174,7 +192,7 @@ def validate_continuum_i_alpha(entry: ContinuumIAlphaModelEntry) -> dict:
     if stokes_info.celestial_header != alpha_info.celestial_header:
         raise ValueError("continuum_i_alpha requires matching celestial WCS.")
     unit = (stokes_info.unit or "").strip().lower()
-    if unit not in {"jy/pixel", "jy pix-1", "jy/pix", "jy"}:
+    if unit not in _ACCEPTED_JY_PER_PIXEL_UNITS:
         raise ValueError(
             f"{stokes_info.path} must declare Jy/pixel-compatible BUNIT; "
             f"found {stokes_info.unit!r}"
@@ -513,21 +531,7 @@ def validate_spectral_cube(
     path = Path(entry.cube).expanduser().resolve()
     info = read_fits_cube_info(path)
 
-    _accepted_units = {
-        "jy/pixel",
-        "jy pix-1",
-        "jy/pix",
-        "jy",
-        "jy px-1",
-        "jy/pixels",
-        "jy pixels-1",
-        "jy pixel-1",
-        "jy pixel^-1",
-        "jy pix^-1",
-        "jy px^-1",
-        "jy px",
-        "jy/px",
-    }
+    _accepted_units = _ACCEPTED_JY_PER_PIXEL_UNITS
     if info["unit"] not in _accepted_units:
         raise ValueError(
             f"{path} must declare Jy/pixel-compatible BUNIT; found {info['unit']!r}"
@@ -754,20 +758,7 @@ def prepare_spectral_cube_for_casa(
     header["CUNIT3"] = "Hz"
 
     bunit = str(header_in.get("BUNIT") or "Jy/px").strip().lower()
-    if bunit in {
-        "jy/px",
-        "jy pix-1",
-        "jy/pix",
-        "jy",
-        "jy px-1",
-        "jy/pixels",
-        "jy pixels-1",
-        "jy pixel-1",
-        "jy pixel^-1",
-        "jy pix^-1",
-        "jy px^-1",
-        "jy px",
-    }:
+    if bunit in _ACCEPTED_JY_PER_PIXEL_UNITS:
         bunit = "Jy/pixel"
     header["BUNIT"] = bunit
     header["RESTFRQ"] = float(np.mean(freqs_out_hz))
