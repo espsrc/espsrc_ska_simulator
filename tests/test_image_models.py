@@ -468,6 +468,14 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path, monkey
         def getcolkeywords(self, name):
             return {"dimnames": ["frequency"]}
 
+        def keywordnames(self):
+            return ["coords"]
+
+        def getkeyword(self, name):
+            if name == "coords":
+                return {"spectral0": {}}
+            return {}
+
     monkeypatch.setattr(
         "skasim.loaders.image_models.require_casacore",
         lambda: FakeCasacoreTable,
@@ -539,6 +547,14 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
 
         def getcolkeywords(self, name):
             return {"dimnames": ["frequency"]}
+
+        def keywordnames(self):
+            return ["coords"]
+
+        def getkeyword(self, name):
+            if name == "coords":
+                return {"spectral0": {}}
+            return {}
 
     monkeypatch.setattr(
         "skasim.loaders.image_models.require_casacore",

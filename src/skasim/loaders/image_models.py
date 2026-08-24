@@ -393,7 +393,7 @@ def _reorder_cube_axes(data: np.ndarray, header: fits.Header) -> np.ndarray:
 def _read_ms_phase_center(visibility_path: Path) -> tuple[float, float] | None:
     """Return (ra_deg, dec_deg) from the MS FIELD table, or None if unavailable."""
     try:
-        from casacore.tables import table
+        table = require_casacore()
     except Exception as exc:
         logger.debug(
             f"_read_ms_phase_center: casacore not available for {visibility_path}: {exc}"
@@ -401,14 +401,34 @@ def _read_ms_phase_center(visibility_path: Path) -> tuple[float, float] | None:
         return None
     try:
         with table(str(visibility_path / "FIELD"), ack=False) as tb:
-            phase_dir = tb.getcol("PHASE_DIR")
-            # PHASE_DIR shape can be (2, nrows) or (2, nrows, npoly)
+            phase_dir = np.asarray(tb.getcol("PHASE_DIR"))
+            # PHASE_DIR is stored as (nrows, npoly, 2) per the MS v2 spec.
+            # Some older tables or single-field data may appear as (2, nrows) or
+            # (2, nrows, npoly); only the standard layout is accepted here.
+            if phase_dir.ndim not in (2, 3):
+                logger.warning(
+                    f"PHASE_DIR in {visibility_path}/FIELD has unexpected ndim={phase_dir.ndim}; "
+                    "expected 2 or 3."
+                )
+                return None
             if phase_dir.ndim == 2:
+                if phase_dir.shape[1] != 2:
+                    logger.warning(
+                        f"PHASE_DIR in {visibility_path}/FIELD has shape {phase_dir.shape}; "
+                        "expected (nrows, 2)."
+                    )
+                    return None
                 ra_rad = float(phase_dir[0, 0])
-                dec_rad = float(phase_dir[1, 0])
+                dec_rad = float(phase_dir[0, 1])
             else:
+                if phase_dir.shape[2] != 2:
+                    logger.warning(
+                        f"PHASE_DIR in {visibility_path}/FIELD has shape {phase_dir.shape}; "
+                        "expected (nrows, npoly, 2)."
+                    )
+                    return None
                 ra_rad = float(phase_dir[0, 0, 0])
-                dec_rad = float(phase_dir[1, 0, 0])
+                dec_rad = float(phase_dir[0, 0, 1])
             return float(np.degrees(ra_rad)), float(np.degrees(dec_rad))
     except Exception as exc:
         logger.debug(
@@ -420,7 +440,7 @@ def _read_ms_phase_center(visibility_path: Path) -> tuple[float, float] | None:
 def _read_ms_spectral_window(visibility_path: Path) -> tuple[np.ndarray, float] | None:
     """Return (chan_freqs_hz, chan_width_hz) from the MS SPECTRAL_WINDOW table."""
     try:
-        from casacore.tables import table
+        table = require_casacore()
     except Exception as exc:
         logger.debug(
             f"_read_ms_spectral_window: casacore not available for {visibility_path}: {exc}"
@@ -738,8 +758,8 @@ def prepare_spectral_cube_for_casa(
             ) from exc
 
     ra_deg, dec_deg = phase_center
-    cdelt1 = float(header_in.get(f"CDELT{spatial_axes[0]}", 1.0))
-    cdelt2 = float(header_in.get(f"CDELT{spatial_axes[1]}", 1.0))
+    cdelt1 = float(header_in[f"CDELT{spatial_axes[0]}"])
+    cdelt2 = float(header_in[f"CDELT{spatial_axes[1]}"])
     cunit1 = str(header_in.get(f"CUNIT{spatial_axes[0]}") or "").strip().lower()
     cunit2 = str(header_in.get(f"CUNIT{spatial_axes[1]}") or "").strip().lower()
     if cunit1 == "rad":
@@ -1501,7 +1521,7 @@ def adjust_spectral_reference(
 def _image_has_spectral_axis(image_path: Path) -> bool:
     """Return True if the CASA image has a frequency/spectral axis."""
     try:
-        from casacore.tables import table
+        table = require_casacore()
     except Exception as exc:
         raise RuntimeError(
             "python-casacore is required to inspect CASA image tables."
@@ -1549,11 +1569,17 @@ def _set_crval4_via_script(
                 hdkey="crval4",
                 hdvalue=f"{frequency_hz}Hz",
             )
+        logger.info(
+            f"Set CRVAL4 in-process for {len(image_paths)} image(s) using casatasks.imhead"
+        )
         return
     except Exception as exc:
         logger.debug(f"_set_crval4_via_script: in-process imhead failed: {exc}")
         # fall through to batch mode
 
+    logger.info(
+        f"Set CRVAL4 falling back to CASA batch mode for {len(image_paths)} image(s)"
+    )
     run_casa_set_spectral_coordinate(work_dir, image_paths, frequency_hz)
 
 
@@ -1664,6 +1690,9 @@ def run_casa_exportfits(
             str(fitsimage),
         ),
     ]
+    logger.info(
+        f"CASA exportfits falling back to batch mode for {imagename} -> {fitsimage}"
+    )
     run_casa_script(executable, script_path, lines)
 
 
@@ -1756,7 +1785,12 @@ def run_casa_predict(
     )
 
 
-def run_casa_script(executable: Path, script_path: Path, lines: list[str]) -> None:
+def run_casa_script(
+    executable: Path,
+    script_path: Path,
+    lines: list[str],
+    timeout_s: float = 3600.0,
+) -> None:
     """Write and execute one CASA batch script, surfacing useful failure output."""
     script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     log_path = script_path.with_suffix(".log")
@@ -1770,14 +1804,21 @@ def run_casa_script(executable: Path, script_path: Path, lines: list[str]) -> No
     ]
     logger.info(f"CASA batch command: {' '.join(command)}")
     with log_path.open("w", encoding="utf-8") as log_file:
-        result = subprocess.run(
-            command,
-            cwd=str(script_path.parent),
-            text=True,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            result = subprocess.run(
+                command,
+                cwd=str(script_path.parent),
+                text=True,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                timeout=timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            tail = "\n".join(log_path.read_text(encoding="utf-8").splitlines()[-80:])
+            raise RuntimeError(
+                f"CASA batch command timed out after {timeout_s} s: {script_path}\n{tail}"
+            ) from exc
         if result.returncode != 0:
             tail = "\n".join(log_path.read_text(encoding="utf-8").splitlines()[-80:])
             raise RuntimeError(
@@ -1789,7 +1830,7 @@ def run_casa_script(executable: Path, script_path: Path, lines: list[str]) -> No
 def merge_model_data_into_data(visibility_path: Path) -> None:
     """Add image-model MODEL_DATA into the delivered DATA column."""
     try:
-        from casacore.tables import table
+        table = require_casacore()
     except Exception as exc:
         raise RuntimeError(
             "python-casacore is required to merge MODEL_DATA into DATA."
