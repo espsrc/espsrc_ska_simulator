@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from skasim.config import CasaTaylorTermsModelEntry, ContinuumIAlphaModelEntry, ObsConfig, SimConfig
-from skasim.loaders.image_models import adjust_spectral_reference
+from skasim.loaders.image_models.casa_interop import adjust_spectral_reference
 from skasim.manifest import create_run_context
 from skasim.runtime import CasacoreRuntimeError
 
@@ -58,7 +58,7 @@ def _patch_require_casacore_and_table(monkeypatch, pixel_data_map):
         return FakeTable
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casacore", fake_require_casacore,
+        "skasim.loaders.image_models.casa_interop.require_casacore", fake_require_casacore,
     )
     return written
 
@@ -69,7 +69,7 @@ def test_adjust_spectral_reference_nterms1_crval_only(tmp_path, monkeypatch):
 
     set_crval_calls = []
     monkeypatch.setattr(
-        "skasim.loaders.image_models._set_crval4_via_script",
+        "skasim.loaders.image_models.casa_interop._set_crval4_via_script",
         lambda work_dir, paths, freq: set_crval_calls.append((paths, freq)),
     )
 
@@ -89,7 +89,7 @@ def test_adjust_spectral_reference_nterms2_scales_pixel_data(tmp_path, monkeypat
 
     # mock _set_crval4_via_script (called after pixel data)
     monkeypatch.setattr(
-        "skasim.loaders.image_models._set_crval4_via_script",
+        "skasim.loaders.image_models.casa_interop._set_crval4_via_script",
         lambda work_dir, paths, freq: None,
     )
 
@@ -117,7 +117,7 @@ def test_adjust_spectral_reference_idempotent(tmp_path, monkeypatch):
     pixel_data = np.ones((4, 4), dtype=np.float64) * 50.0
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models._set_crval4_via_script",
+        "skasim.loaders.image_models.casa_interop._set_crval4_via_script",
         lambda work_dir, paths, freq: None,
     )
 
@@ -141,7 +141,7 @@ def test_adjust_spectral_reference_alpha_zero(tmp_path, monkeypatch):
     pixel_data = np.ones((4, 4), dtype=np.float64) * 77.0
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models._set_crval4_via_script",
+        "skasim.loaders.image_models.casa_interop._set_crval4_via_script",
         lambda work_dir, paths, freq: None,
     )
 
@@ -163,7 +163,7 @@ def test_adjust_spectral_reference_positive_alpha(tmp_path, monkeypatch):
     pixel_data = np.ones((2, 2), dtype=np.float64) * 10.0
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models._set_crval4_via_script",
+        "skasim.loaders.image_models.casa_interop._set_crval4_via_script",
         lambda work_dir, paths, freq: None,
     )
 
@@ -221,12 +221,12 @@ def test_prepare_casa_taylor_terms_adjusts_spectral_reference(tmp_path, monkeypa
         return new_ref_hz
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.adjust_spectral_reference",
+        "skasim.loaders.image_models.casa_interop.adjust_spectral_reference",
         fake_adjust,
     )
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casacore",
+        "skasim.loaders.image_models.casa_interop.require_casacore",
         lambda: MagicMock(),
     )
 
@@ -272,7 +272,7 @@ def test_prepare_casa_taylor_terms_nterms1(tmp_path, monkeypatch):
         return new_ref_hz
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.adjust_spectral_reference",
+        "skasim.loaders.image_models.casa_interop.adjust_spectral_reference",
         fake_adjust,
     )
 
@@ -333,20 +333,25 @@ def test_prepare_continuum_i_alpha_adjusts_spectral_reference(tmp_path, monkeypa
         return new_ref_hz
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.adjust_spectral_reference",
+        "skasim.loaders.image_models.casa_interop.adjust_spectral_reference",
         fake_adjust,
     )
     monkeypatch.setattr(
-        "skasim.loaders.image_models.run_casa_importfits",
+        "skasim.loaders.image_models.casa_interop.run_casa_importfits",
         lambda work_dir, images: None,
     )
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casacore",
+        "skasim.loaders.image_models.casa_interop.require_casacore",
         lambda: MagicMock(),
     )
 
-    from skasim.loaders.image_models import prepare_continuum_i_alpha_for_casa
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.require_casa_executable",
+        lambda: Path("/opt/casa/bin/casa"),
+    )
+
+    from skasim.loaders.image_models.casa_interop import prepare_continuum_i_alpha_for_casa
     product = prepare_continuum_i_alpha_for_casa(ctx, cfg.models[0], 0)
 
     assert product.reffreq == f"{1284.0e6}Hz"

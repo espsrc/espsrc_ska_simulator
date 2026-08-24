@@ -4,6 +4,7 @@ from .fits_catalogue import FitsCatalogLoader
 from .fits_image import FitsImageLoader
 from .image_models import (
     CasaModelProduct,
+    FitsCubeInfo,
     FitsImageInfo,
     adjust_spectral_reference,
     component_model_entries,
@@ -35,6 +36,7 @@ __all__ = [
     "FitsCatalogLoader",
     "FitsImageLoader",
     "FitsImageInfo",
+    "FitsCubeInfo",
     "CasaModelProduct",
     "adjust_spectral_reference",
     "component_model_entries",
@@ -50,6 +52,7 @@ __all__ = [
     "write_spectral_cube_input_preview",
     "inject_image_models",
     "prepare_continuum_i_alpha_for_casa",
+    "prepare_spectral_cube_for_casa",
     "run_casa_exportfits",
     "run_casa_ft",
     "run_casa_set_spectral_coordinate",

@@ -245,7 +245,7 @@ def test_weblog_renders_casa_taylor_term_preview(tmp_path, monkeypatch):
         stokes_i, _ = _write_model_pair(tmp_path, shape=(32, 32))
         fitsimage.write_bytes(stokes_i.read_bytes())
 
-    monkeypatch.setattr("skasim.loaders.image_models.run_casa_exportfits", fake_export)
+    monkeypatch.setattr("skasim.loaders.image_models.previews.run_casa_exportfits", fake_export)
 
     write_image_model_previews(
         ctx,
@@ -303,10 +303,26 @@ def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypat
     monkeypatch.setattr(
         "skasim.loaders.image_models.prepare_continuum_i_alpha_for_casa", fake_prepare
     )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.prepare_continuum_i_alpha_for_casa", fake_prepare
+    )
     monkeypatch.setattr("skasim.loaders.image_models.run_casa_ft", fake_run_casa_ft)
+    monkeypatch.setattr("skasim.loaders.image_models.casa_interop.run_casa_ft", fake_run_casa_ft)
     monkeypatch.setattr(
         "skasim.loaders.image_models.merge_model_data_into_data",
         lambda visibility_path: calls.append({"merged": str(visibility_path)}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": str(visibility_path)}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": str(visibility_path)}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.require_casa_executable",
+        lambda: Path("/opt/casa/bin/casa"),
     )
 
     inject_image_models(ctx, visibility_path=Path("fake.ms"))
@@ -366,6 +382,9 @@ def test_inject_image_models_runs_continuum_entries_with_wsclean_predict(tmp_pat
 
     monkeypatch.setattr(
         "skasim.loaders.image_models.prepare_continuum_i_alpha_for_casa", fake_prepare
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.prepare_continuum_i_alpha_for_casa", fake_prepare
     )
     monkeypatch.setattr(
         "skasim.loaders.wsclean_predict.inject_continuum_i_alpha_with_wsclean_predict",
@@ -476,11 +495,11 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path, monkey
             return {}
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casacore",
+        "skasim.loaders.image_models.casa_interop.require_casacore",
         lambda: FakeCasacoreTable,
     )
     monkeypatch.setattr(
-        "skasim.loaders.image_models.run_casa_set_spectral_coordinate",
+        "skasim.loaders.image_models.casa_interop.run_casa_set_spectral_coordinate",
         lambda work_dir, image_paths, frequency_hz: calls.append(
             (work_dir, image_paths, frequency_hz)
         ),
@@ -556,7 +575,7 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
             return {}
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casacore",
+        "skasim.loaders.image_models.casa_interop.require_casacore",
         lambda: FakeCasacoreTable,
     )
     monkeypatch.setattr(
@@ -566,12 +585,30 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.run_casa_set_spectral_coordinate",
+        lambda work_dir, image_paths, frequency_hz: calls.append(
+            {"spectral_copy": image_paths, "frequency_hz": frequency_hz}
+        ),
+    )
+    monkeypatch.setattr(
         "skasim.loaders.image_models.run_casa_ft",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.run_casa_ft",
         lambda **kwargs: calls.append(kwargs),
     )
     monkeypatch.setattr(
         "skasim.loaders.image_models.merge_model_data_into_data",
         lambda visibility_path: calls.append({"merged": visibility_path}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": visibility_path}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.require_casa_executable",
+        lambda: Path("/opt/casa/bin/casa"),
     )
 
     inject_image_models(ctx, tmp_path / "visibilities.MS")
@@ -616,10 +653,10 @@ def test_run_casa_importfits_uses_batch_fallback(tmp_path, monkeypatch):
         return Result()
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casa_executable",
+        "skasim.loaders.image_models.casa_interop.require_casa_executable",
         lambda: Path("/opt/casa/bin/casa"),
     )
-    monkeypatch.setattr("skasim.loaders.image_models.subprocess.run", fake_run)
+    monkeypatch.setattr("skasim.loaders.image_models.casa_interop.subprocess.run", fake_run)
 
     run_casa_importfits(
         tmp_path,
@@ -672,6 +709,10 @@ def test_inject_image_models_runs_spectral_cube_with_wsclean_predict(
         "skasim.loaders.image_models.merge_model_data_into_data",
         lambda visibility_path: calls.append({"merged": visibility_path}),
     )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": visibility_path}),
+    )
 
     inject_image_models(ctx, tmp_path / "visibilities.MS")
 
@@ -718,10 +759,10 @@ def test_run_casa_ft_uses_batch_fallback(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "casacore.tables", fake_tables)
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casa_executable",
+        "skasim.loaders.image_models.casa_interop.require_casa_executable",
         lambda: Path("/opt/casa/bin/casa"),
     )
-    monkeypatch.setattr("skasim.loaders.image_models.subprocess.run", fake_run)
+    monkeypatch.setattr("skasim.loaders.image_models.casa_interop.subprocess.run", fake_run)
 
     run_casa_ft(
         visibility_path=tmp_path / "visibilities.MS",

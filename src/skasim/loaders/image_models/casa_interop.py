@@ -1,4 +1,4 @@
-"""Image-model validation, preview, and CASA injection helpers."""
+"""CASA image-model preparation and batch execution."""
 
 from __future__ import annotations
 
@@ -7,62 +7,40 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 import warnings
-import astropy.units as u
-from astropy.wcs import FITSFixedWarning
-from astropy.utils.iers import conf
+
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.wcs import WCS
+from astropy.wcs import FITSFixedWarning, WCS
 from loguru import logger
-import re
 
-from ..config import (
+from ...config import (
     CasaTaylorTermsModelEntry,
-    ComponentSkyModelEntry,
     ContinuumIAlphaModelEntry,
-    ImgConfig,
-    ModelEntry,
     ObsConfig,
     SimConfig,
     SpectralCubeModelEntry,
-    StaticStokesMapsModelEntry,
-    has_spectral_cube_model,
-    spectral_cube_model_entries,
 )
-from ..imaging import write_fits_preview
-from ..manifest import RunContext
-from ..runtime import require_casacore
+from ...manifest import RunContext
+from ...runtime import require_casacore
+from .fits_io import (
+    FitsCubeInfo,
+    _ACCEPTED_JY_PER_PIXEL_UNITS,
+    _find_frequency_axis,
+    _fits_axis_to_numpy,
+    _freq_axis_centres,
+    _reorder_cube_axes,
+    _squeeze_degenerate_axes,
+    read_fits_cube_info,
+    validate_continuum_i_alpha,
+    validate_spectral_cube,
+)
 
 
 # suppress fits formatting fixes
 warnings.simplefilter("ignore", category=FITSFixedWarning)
 # suppress polar motion fallback warnings
 warnings.filterwarnings("ignore", message=".*polar motions.*")
-
-@dataclass(frozen=True)
-class FitsCubeInfo:
-    """Small summary of an accepted 3D spectral-cube model."""
-
-    path: Path
-    shape: tuple[int, int, int]
-    spatial_shape: tuple[int, int]
-    unit: str
-    n_channels: int
-    channel_width_hz: float
-    start_frequency_hz: float
-    reference_frequency_hz: float
-
-
-@dataclass(frozen=True)
-class FitsImageInfo:
-    """Small summary of one accepted FITS image model plane."""
-
-    path: Path
-    spatial_shape: tuple[int, int]
-    unit: str | None
-    celestial_header: dict[str, object]
-    center: SkyCoord | None
 
 
 @dataclass(frozen=True)
@@ -77,334 +55,6 @@ class CasaModelProduct:
     header: fits.Header | None = None
     freq_axis: int | None = None
     model_dir: Path | None = None
-
-
-def component_model_entries(config: SimConfig) -> list[ComponentSkyModelEntry]:
-    return [
-        entry for entry in config.models if isinstance(entry, ComponentSkyModelEntry)
-    ]
-
-
-def image_model_entries(config: SimConfig) -> list[ModelEntry]:
-    return [
-        entry
-        for entry in config.models
-        if isinstance(
-            entry,
-            (
-                ContinuumIAlphaModelEntry,
-                CasaTaylorTermsModelEntry,
-                StaticStokesMapsModelEntry,
-                SpectralCubeModelEntry,
-            ),
-        )
-    ]
-
-
-def image_model_center(entries: list[ModelEntry]) -> SkyCoord | None:
-    """Return the centre of the first image model with usable celestial WCS."""
-    for entry in entries:
-        path = primary_model_fits_path(entry)
-        if path is None:
-            continue
-        try:
-            info = read_fits_image_info(path)
-        except Exception as exc:
-            logger.debug(f"image_model_center: failed to read {path}: {exc}")
-            continue
-        if info.center is not None:
-            return info.center
-    return None
-
-
-def primary_model_fits_path(entry: ModelEntry) -> Path | None:
-    """Return the representative FITS image for previews and phase-centre inference."""
-    if isinstance(entry, ContinuumIAlphaModelEntry):
-        return Path(entry.stokes_i).expanduser().resolve()
-    if isinstance(entry, StaticStokesMapsModelEntry):
-        for value in (entry.stokes_i, entry.stokes_q, entry.stokes_u, entry.stokes_v):
-            if value:
-                return Path(value).expanduser().resolve()
-    return None
-
-
-def read_fits_image_info(path: Path) -> FitsImageInfo:
-    """Read FITS image metadata used by validation and reporting."""
-    with fits.open(path) as hdul:
-        hdu = hdul[0]
-        if hdu.data is None:
-            raise ValueError(f"{path} has no image data")
-        data = np.asarray(hdu.data).squeeze()
-        if data.ndim < 2:
-            raise ValueError(f"{path} is not a spatial FITS image")
-        spatial_shape = tuple(int(v) for v in data.shape[-2:])
-        header = hdu.header.copy()
-        unit = header.get("BUNIT")
-
-    try:
-        wcs = WCS(header).celestial
-        celestial_header = dict(wcs.to_header())
-        center_y = (spatial_shape[0] - 1) / 2.0
-        center_x = (spatial_shape[1] - 1) / 2.0
-        center = wcs.pixel_to_world(center_x, center_y)
-        if not isinstance(center, SkyCoord):
-            center = None
-    except Exception as exc:
-        logger.debug(f"read_fits_image_info: WCS construction failed for {path}: {exc}")
-        celestial_header = {}
-        center = None
-
-    return FitsImageInfo(
-        path=path,
-        spatial_shape=spatial_shape,
-        unit=unit,
-        celestial_header=celestial_header,
-        center=center,
-    )
-
-
-# canonical aliases accepted for Jy/pixel (per-pixel flux density) inputs.
-_ACCEPTED_JY_PER_PIXEL_UNITS = frozenset(
-    {
-        "jy/pixel",
-        "jy pix-1",
-        "jy/pix",
-        "jy",
-        "jy px-1",
-        "jy/px",
-        "jy pixels-1",
-        "jy pixel-1",
-        "jy pixel^-1",
-        "jy pix^-1",
-        "jy px^-1",
-    }
-)
-
-
-def validate_continuum_i_alpha(entry: ContinuumIAlphaModelEntry) -> dict:
-    """Validate the continuum image contract and return report metadata."""
-    stokes_info = read_fits_image_info(Path(entry.stokes_i).expanduser().resolve())
-    alpha_info = read_fits_image_info(Path(entry.alpha).expanduser().resolve())
-    if stokes_info.spatial_shape != alpha_info.spatial_shape:
-        raise ValueError(
-            "continuum_i_alpha requires matching spatial dimensions: "
-            f"{stokes_info.path} has {stokes_info.spatial_shape}, "
-            f"{alpha_info.path} has {alpha_info.spatial_shape}"
-        )
-    if stokes_info.celestial_header != alpha_info.celestial_header:
-        raise ValueError("continuum_i_alpha requires matching celestial WCS.")
-    unit = (stokes_info.unit or "").strip().lower()
-    if unit not in _ACCEPTED_JY_PER_PIXEL_UNITS:
-        raise ValueError(
-            f"{stokes_info.path} must declare Jy/pixel-compatible BUNIT; "
-            f"found {stokes_info.unit!r}"
-        )
-    alpha_unit = (alpha_info.unit or "").strip().lower()
-    if alpha_unit not in {"", "1", "dimensionless", "none"}:
-        raise ValueError(
-            f"{alpha_info.path} must be dimensionless; found BUNIT={alpha_info.unit!r}"
-        )
-    return {
-        "stokes_i": str(stokes_info.path),
-        "alpha": str(alpha_info.path),
-        "spatial_shape": list(stokes_info.spatial_shape),
-        "unit": stokes_info.unit,
-        "reference_frequency_hz": entry.reference_frequency_hz,
-    }
-
-
-# ---------------------------------------------------------------------------
-# spectral cube helpers
-# ---------------------------------------------------------------------------
-
-
-def _find_frequency_axis(header: fits.Header) -> int:
-    """Return the 1-based FITS axis index whose CTYPE is FREQ.
-
-    FITS axis k (CTYPEk/NAXISk) corresponds to numpy axis -k (k-th from the end).
-    """
-    naxis = int(header.get("NAXIS", 3))
-    for axis in range(1, naxis + 1):
-        ctype = str(header.get(f"CTYPE{axis}", "")).strip().upper()
-        if ctype.startswith("FREQ"):
-            return axis
-    raise ValueError("spectral cube has no FREQ axis in CTYPE1..CTYPEn")
-
-
-def _fits_axis_to_numpy(axis: int, ndim: int = 3) -> int:
-    """Return the NumPy axis index for a 1-based FITS axis number.
-
-    FITS axis ``k`` is stored as the ``ndim - k`` NumPy axis (the ``k``-th axis
-    from the slowest-varying end).  For a 3D cube this means:
-    ``NAXIS1`` -> axis 2, ``NAXIS2`` -> axis 1, ``NAXIS3`` -> axis 0.
-    """
-    return ndim - axis
-
-
-def _squeeze_degenerate_axes(data: np.ndarray, header: fits.Header) -> tuple[np.ndarray, fits.Header]:
-    """Drop length-1 axes from a FITS cube, keeping the spectral axis intact.
-
-    Spectral cubes are sometimes stored as 4D (RA, DEC, FREQ, STOKES) with a
-    single Stokes axis.  This helper squeezes those degenerate axes and updates
-    the header so downstream code sees a standard 3D cube.
-    """
-    if data.ndim == 3:
-        return data, header
-    if data.ndim < 3 or data.ndim > 4:
-        raise ValueError(f"spectral_cube must be 3D or 4D with a degenerate axis, got ndim={data.ndim}")
-
-    freq_axis = _find_frequency_axis(header)
-    single_axes = [axis for axis in range(1, data.ndim + 1) if header[f"NAXIS{axis}"] == 1]
-
-    if not single_axes:
-        raise ValueError(
-            f"spectral_cube has {data.ndim} dimensions but no degenerate (length-1) axis to squeeze"
-        )
-
-    if len(single_axes) > 1:
-        raise ValueError(
-            f"spectral_cube has multiple degenerate axes {single_axes}; cannot disambiguate"
-        )
-
-    squeeze_axis = single_axes[0]
-    if squeeze_axis == freq_axis:
-        raise ValueError(
-            f"spectral_cube frequency axis (FREQ in FITS axis {freq_axis}) has length 1; "
-            "cannot squeeze the spectral axis"
-        )
-
-    # NumPy axis to drop.
-    np_axis = _fits_axis_to_numpy(squeeze_axis, data.ndim)
-    data = np.squeeze(data, axis=np_axis)
-
-    # Build a clean 3D header preserving the remaining axes in FITS order.
-    new_header = header.copy()
-    new_header["NAXIS"] = 3
-
-    old_axes = [a for a in range(1, data.ndim + 2) if a != squeeze_axis]
-    for new_axis, old_axis in enumerate(old_axes, start=1):
-        for key in ("NAXIS", "CTYPE", "CRPIX", "CRVAL", "CDELT", "CUNIT"):
-            old_key = f"{key}{old_axis}"
-            new_key = f"{key}{new_axis}"
-            if old_key in new_header:
-                new_header[new_key] = new_header[old_key]
-
-    # Remove leftover 4th-axis keys and any dangling higher-axis keys.
-    for key in list(new_header.keys()):
-        match = re.match(r"(NAXIS|CTYPE|CRPIX|CRVAL|CDELT|CUNIT)(\d+)", key)
-        if match:
-            axis_num = int(match.group(2))
-            if axis_num > 3:
-                del new_header[key]
-
-    return data, new_header
-
-
-def read_fits_cube_info(path: Path) -> FitsCubeInfo:
-    """Read metadata from a 3D FITS spectral cube."""
-    with fits.open(path) as hdul:
-        hdu = hdul[0]
-        if hdu.data is None:
-            raise ValueError(f"{path} has no image data")
-        data = np.asarray(hdu.data)
-        header = hdu.header.copy()
-        data, header = _squeeze_degenerate_axes(data, header)
-        if data.ndim != 3:
-            raise ValueError(f"spectral_cube must be 3D, got ndim={data.ndim}")
-        freq_axis = _find_frequency_axis(header)
-        n_freq = int(header[f"NAXIS{freq_axis}"])
-        freqs = _freq_axis_centres(header, n_freq, axis=freq_axis)
-        channel_width_hz = float(np.diff(freqs).mean()) if n_freq > 1 else 0.0
-        unit = str(header.get("BUNIT") or "Jy/px").strip().lower()
-
-        # spatial shape in (n_ra, n_dec) order regardless of axis order.
-        spatial_shape = [None, None]
-        for axis in range(1, 4):
-            if axis == freq_axis:
-                continue
-            ctype = str(header.get(f"CTYPE{axis}", "")).strip().upper()
-            if ctype.startswith("RA") or ctype.startswith("GLON"):
-                spatial_shape[0] = int(header[f"NAXIS{axis}"])
-            elif ctype.startswith("DEC") or ctype.startswith("GLAT"):
-                spatial_shape[1] = int(header[f"NAXIS{axis}"])
-        if None in spatial_shape:
-            raise ValueError("spectral cube spatial axes are not labelled as RA/DEC or GLON/GLAT")
-
-    return FitsCubeInfo(
-        path=path,
-        shape=tuple(int(v) for v in data.shape),
-        spatial_shape=tuple(spatial_shape),
-        unit=unit,
-        n_channels=n_freq,
-        channel_width_hz=channel_width_hz,
-        start_frequency_hz=float(freqs[0]),
-        reference_frequency_hz=float(freqs[n_freq // 2]),
-    )
-
-
-def _freq_axis_centres(header: fits.Header, n_channels: int, axis: int = 3) -> np.ndarray:
-    """Return the frequency axis centre positions in Hz for the given 1-based axis."""
-    crpix = float(header.get(f"CRPIX{axis}", 1.0))
-    crval = float(header[f"CRVAL{axis}"])
-    cdelt = float(header[f"CDELT{axis}"])
-    cunit = str(header.get(f"CUNIT{axis}") or "").strip().lower()
-    if cunit == "mhz":
-        crval *= 1e6
-        cdelt *= 1e6
-    return crval + (np.arange(n_channels) - (crpix - 1.0)) * cdelt
-
-
-def _strip_spectral_axis_from_header(header: fits.Header) -> fits.Header:
-    """Return a 2D header with the spectral (axis 3) keys removed."""
-    out_header = header.copy()
-    for key in list(out_header.keys()):
-        if key in ("NAXIS", "NAXIS3") or key.startswith("NAXIS3"):
-            out_header.remove(key, ignore_missing=True)
-        if key in ("CRPIX3", "CRVAL3", "CDELT3", "CTYPE3", "CUNIT3"):
-            out_header.remove(key, ignore_missing=True)
-    out_header["NAXIS"] = 2
-    out_header["NAXIS1"] = header["NAXIS1"]
-    out_header["NAXIS2"] = header["NAXIS2"]
-    return out_header
-
-
-def _select_wsclean_img_config(imaging_configs: list[ImgConfig]) -> ImgConfig:
-    """Return the first wsclean imaging config, or the first config if none match."""
-    return next(
-        (img for img in imaging_configs if img.imager == "wsclean"),
-        imaging_configs[0],
-    )
-
-
-def _reorder_cube_axes(data: np.ndarray, header: fits.Header) -> np.ndarray:
-    """Reorder a 3D FITS array so its numpy axes become (freq, dec, ra).
-
-    FITS axis ``k`` (CTYPEk/NAXISk) maps to numpy axis ``ndim - k`` (the
-    ``k``-th axis from the slowest-varying end).  This function looks at
-    CTYPE1..CTYPE3 and moves the frequency axis to the front, followed by DEC
-    and RA.
-    """
-    ndim = data.ndim
-    axis_map: dict[str, int] = {}
-    for axis in range(1, ndim + 1):
-        ctype = str(header.get(f"CTYPE{axis}", "")).strip().upper()
-        if ctype.startswith("FREQ"):
-            label = "freq"
-        elif ctype.startswith("RA") or ctype.startswith("GLON"):
-            label = "ra"
-        elif ctype.startswith("DEC") or ctype.startswith("GLAT"):
-            label = "dec"
-        else:
-            raise ValueError(f"spectral cube has unsupported CTYPE{axis}={ctype!r}")
-        axis_map[label] = _fits_axis_to_numpy(axis, ndim)
-
-    for label in ("freq", "dec", "ra"):
-        if label not in axis_map:
-            raise ValueError(f"spectral cube is missing {label} axis")
-
-    target_order = ["freq", "dec", "ra"]
-    source_axes = [axis_map[label] for label in target_order]
-    return np.moveaxis(data, source_axes, [0, 1, 2])
 
 
 def _read_ms_phase_center(visibility_path: Path) -> tuple[float, float] | None:
@@ -542,67 +192,6 @@ def _resample_spectral_axis_to_ms_channels(
         data_out_r[out_idx, :] = weighted_sum / abs(df_out_hz)
 
     return data_out_r.reshape(n_out, n_y, n_x)
-
-
-def validate_spectral_cube(
-    entry: SpectralCubeModelEntry,
-    obs: ObsConfig,
-    img: ImgConfig,
-) -> dict:
-    """Validate the spectral-cube contract against observation/imaging config."""
-    path = Path(entry.cube).expanduser().resolve()
-    info = read_fits_cube_info(path)
-
-    _accepted_units = _ACCEPTED_JY_PER_PIXEL_UNITS
-    if info.unit not in _accepted_units:
-        raise ValueError(
-            f"{path} must declare Jy/pixel-compatible BUNIT; found {info.unit!r}"
-        )
-
-    if info.spatial_shape != (img.pixels, img.pixels):
-        raise ValueError(
-            f"spectral_cube spatial dimensions {info.spatial_shape} do not match "
-            f"imaging pixels {img.pixels}"
-        )
-
-    if obs.bandwidth_mhz is None or obs.n_channels is None or obs.channel_width_mhz is None:
-        raise ValueError("observation spectral grid is incomplete")
-
-    obs_bw_hz = obs.bandwidth_mhz * 1e6
-    obs_center_hz = obs.frequency_mhz * 1e6
-    obs_min_hz = obs_center_hz - obs_bw_hz / 2.0
-    obs_max_hz = obs_center_hz + obs_bw_hz / 2.0
-
-    n_channels = info.n_channels
-    channel_width_hz = info.channel_width_hz
-    cube_center_hz = info.start_frequency_hz + (n_channels - 1) * channel_width_hz / 2.0
-    cube_min_hz = cube_center_hz - n_channels * channel_width_hz / 2.0
-    cube_max_hz = cube_center_hz + n_channels * channel_width_hz / 2.0
-
-    edge_tol_hz = 0.01 * obs_bw_hz
-    if cube_min_hz < obs_min_hz - edge_tol_hz or cube_max_hz > obs_max_hz + edge_tol_hz:
-        raise ValueError(
-            f"spectral_cube frequency range [{cube_min_hz:.3e}, {cube_max_hz:.3e}] Hz "
-            f"extends beyond the observation band "
-            f"[{obs_min_hz:.3e}, {obs_max_hz:.3e}] Hz"
-        )
-
-    logger.info(
-        f"validate_spectral_cube: cube {n_channels} channels x {channel_width_hz:.3e} Hz "
-        f"covering [{cube_min_hz:.3e}, {cube_max_hz:.3e}] Hz inside observation band "
-        f"[{obs_min_hz:.3e}, {obs_max_hz:.3e}] Hz"
-    )
-
-    return {
-        "cube": str(path),
-        "shape": info.shape,
-        "spatial_shape": list(info.spatial_shape),
-        "unit": info.unit,
-        "n_channels": n_channels,
-        "channel_width_hz": channel_width_hz,
-        "reference_frequency_hz": cube_center_hz,
-        "frequency_range_hz": [cube_min_hz, cube_max_hz],
-    }
 
 
 def prepare_spectral_cube_for_casa(
@@ -805,387 +394,6 @@ def prepare_spectral_cube_for_casa(
         header=header,
         freq_axis=3,
         model_dir=ctx.work_dir,
-    )
-
-
-def run_moment8_for_spectral_cube(
-    ctx: RunContext,
-    work_dir: Path,
-    output_prefix: str,
-    tag: str,
-) -> None:
-    """Generate a moment-8 (peak intensity) map and an average spectrum plot from the stacked WSClean clean cube.
-
-    Uses pure NumPy over the FITS cube; no CASA required.
-    """
-    cube_path = work_dir / f"{output_prefix}-cube-image.fits"
-    if not cube_path.exists():
-        logger.warning(f"No cleaned cube found at {cube_path}; skipping moment-8")
-        return
-
-    with fits.open(cube_path) as hdul:
-        data = np.asarray(hdul[0].data, dtype=np.float32)
-        header = hdul[0].header.copy()
-
-    if data.ndim != 3:
-        logger.warning(f"Cube {cube_path} has shape {data.shape}; expected 3D")
-        return
-
-    nchan = data.shape[0]
-    freq_axis = _freq_axis_centres(header, nchan, axis=3)
-    cunit3 = (header.get("CUNIT3") or "Hz").strip()
-    restfreq = header.get("RESTFRQ") or header.get("RESTFREQ") or header.get("RESTWAV")
-    if restfreq:
-        restfreq = float(restfreq)
-        velocities = 299792.458 * (1.0 - freq_axis / restfreq)  # km/s
-        x_label = "Velocity (km/s)"
-        x_values = velocities
-    else:
-        velocities = None
-        x_label = f"Frequency ({cunit3})"
-        x_values = freq_axis
-
-    moment8 = np.nanmax(data, axis=0)
-
-    # average spectrum (mean over all spatial pixels)
-    avg_spectrum = np.nanmean(data.reshape(nchan, -1), axis=1)
-    png_spectrum = work_dir / f"{output_prefix}-avg_spectrum.png"
-    try:
-        import matplotlib
-        matplotlib.use("Agg", force=True)
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.plot(x_values, avg_spectrum * 1000.0, color="#0969da", linewidth=1.0)
-        ax.set_xlabel(x_label)
-        ax.set_ylabel("Mean intensity (mJy/pixel)")
-        ax.set_title("Average spectrum (clean cube)")
-        ax.grid(True, color="0.85", linestyle=":", linewidth=0.8)
-        fig.tight_layout()
-        fig.savefig(png_spectrum, dpi=150)
-        plt.close(fig)
-        ctx.manifest.add_output(
-            "image_product",
-            str(png_spectrum.relative_to(ctx.work_dir)),
-            image_product_id=output_prefix,
-            imager="wsclean",
-            role="avg_spectrum_plot",
-            metadata={"tag": tag},
-        )
-    except Exception as exc:
-        logger.debug(f"Average spectrum plot failed: {exc}")
-
-    base_header = _strip_spectral_axis_from_header(header)
-
-    out_fits = work_dir / f"{output_prefix}-moment8.fits"
-    base_header["BUNIT"] = header.get("BUNIT") or "Jy/beam"
-    base_header["MOMENT"] = 8
-    base_header["HISTORY"] = "produced by skasim.run_moment8_for_spectral_cube"
-    if out_fits.exists():
-        out_fits.unlink()
-    fits.writeto(out_fits, np.asarray(moment8, dtype=np.float32), base_header, overwrite=True)
-    ctx.manifest.add_output(
-        "image_product",
-        str(out_fits.relative_to(ctx.work_dir)),
-        image_product_id=output_prefix,
-        imager="wsclean",
-        role="moment8",
-        metadata={"tag": tag},
-    )
-
-    png_path = out_fits.with_suffix(".png")
-    try:
-        write_fits_preview(out_fits, png_path, "Moment 8 (peak)")
-        ctx.manifest.add_output(
-            "image_product",
-            str(png_path.relative_to(ctx.work_dir)),
-            image_product_id=output_prefix,
-            imager="wsclean",
-            role="moment8_preview",
-            metadata={"tag": tag},
-        )
-    except Exception as exc:
-        logger.debug(f"Preview for moment8 failed: {exc}")
-
-
-def write_spectral_cube_input_preview(
-    ctx: RunContext,
-    fov: u.Quantity,
-) -> None:
-    """Render a peak-intensity (moment-8) PNG preview of the input spectral cube.
-
-    The preview is added to the manifest as a sky-model plot so it appears in
-    the weblog's Sky Model section.
-    """
-    from ..config import SpectralCubeModelEntry
-
-    cube_entries = [
-        m for m in ctx.config.models if isinstance(m, SpectralCubeModelEntry)
-    ]
-    if not cube_entries:
-        return
-
-    for index, entry in enumerate(cube_entries, start=1):
-        cube_path = Path(entry.cube).expanduser().resolve()
-        if not cube_path.exists():
-            logger.warning(f"spectral_cube input not found for preview: {cube_path}")
-            continue
-        try:
-            with fits.open(cube_path) as hdul:
-                hdu = hdul[0]
-                data = np.asarray(hdu.data, dtype=np.float32)
-                header = hdu.header.copy()
-                data, header = _squeeze_degenerate_axes(data, header)
-        except Exception as exc:
-            logger.warning(f"Failed to read spectral cube for preview: {exc}")
-            continue
-
-        if data.ndim != 3:
-            logger.warning(f"spectral_cube preview expects 3D data, got {data.shape}")
-            continue
-
-        # Determine the frequency axis dynamically; the raw FITS may have an
-        # arbitrary axis ordering and ``_reorder_cube_axes`` is designed for
-        # the pipeline's internal (freq, dec, ra) representation, not for raw
-        # preview data.
-        freq_axis = _find_frequency_axis(header)
-        moment8 = np.nanmax(data, axis=_fits_axis_to_numpy(freq_axis))
-
-        # Build a minimal 2D header for the preview FITS
-        out_header = _strip_spectral_axis_from_header(header)
-        out_header["BUNIT"] = header.get("BUNIT") or "Jy/pixel"
-        out_header["MOMENT"] = 8
-
-        suffix = "" if len(cube_entries) == 1 else f"_{index:02d}"
-        fits_name = f"{ctx.work_dir.name}_input_cube_moment8{suffix}.fits"
-        png_name = f"{ctx.work_dir.name}_input_cube_moment8{suffix}.png"
-        fits_path = ctx.work_dir / fits_name
-        png_path = ctx.work_dir / png_name
-        fits.writeto(
-            fits_path,
-            np.asarray(moment8, dtype=np.float32),
-            out_header,
-            overwrite=True,
-        )
-
-        recenter = None
-        try:
-            wcs = WCS(header).celestial
-            pix = np.array([header["NAXIS1"] / 2.0, header["NAXIS2"] / 2.0])
-            sky = wcs.pixel_to_world(*pix)
-            recenter = (sky.ra.deg, sky.dec.deg, fov.to(u.deg).value)
-        except Exception as exc:
-            logger.debug(
-                f"write_spectral_cube_input_preview: WCS recenter failed for {fits_path}: {exc}"
-            )
-            recenter = None
-
-        write_fits_preview(
-            fits_path,
-            png_path,
-            "Input spectral cube — Moment 8 (peak)",
-            recenter=recenter,
-            scale_factor=1000.0,
-            bunit="mJy/pixel",
-            colorbar_label="mJy/pixel",
-        )
-        ctx.manifest.add_output(
-            "plot",
-            png_name,
-            role="input_cube_moment8",
-            metadata={
-                "model_entry_index": index - 1,
-                "model_type": entry.type,
-                "source_fits": str(cube_path),
-                "preview_fits": str(fits_path),
-            },
-        )
-
-
-def write_image_model_previews(
-    ctx: RunContext,
-    center: SkyCoord,
-    fov: u.Quantity,
-) -> None:
-    """Write FITS model previews for the weblog sky-model section."""
-    entries = image_model_entries(ctx.config)
-    if not entries:
-        return
-
-    for index, entry in enumerate(entries, start=1):
-        image_path = primary_model_fits_path(entry)
-        export_path = None
-        if image_path is None and isinstance(entry, CasaTaylorTermsModelEntry):
-            image_path = Path(entry.tt0).expanduser().resolve()
-            export_path = ctx.work_dir / f"model_entry_{index:02d}_casa_taylor.tt0.fits"
-        if image_path is None:
-            continue
-        # use the FITS image's own WCS center to avoid recentering NaN
-        # when the model and sky-catalog coordinates differ
-        try:
-            info = read_fits_image_info(image_path)
-            if info.center is None:
-                recenter = None
-            else:
-                assert isinstance(info.center, SkyCoord)  # narrow for type checker
-                recenter = (
-                    info.center.ra.deg,
-                    info.center.dec.deg,
-                    fov.to(u.deg).value,
-                )
-        except Exception as exc:
-            logger.debug(
-                f"write_image_model_previews: WCS recenter failed for {image_path}: {exc}"
-            )
-            recenter = None
-        suffix = "" if len(entries) == 1 else f"_{index:02d}"
-        png_name = f"{ctx.work_dir.name}_fits_model{suffix}.png"
-        png_path = ctx.work_dir / png_name
-        preview_source = image_path
-        if export_path is not None:
-            run_casa_exportfits(ctx.work_dir, image_path, export_path)
-            preview_source = export_path
-        write_fits_preview(
-            preview_source,
-            png_path,
-            "FITS Model",
-            recenter=recenter,
-            scale_factor=1000.0,
-            bunit="mJy/pixel",
-            colorbar_label="mJy/pixel",
-        )
-        ctx.manifest.add_output(
-            "plot",
-            png_name,
-            role="fits_model",
-            metadata={
-                "model_entry_index": index - 1,
-                "model_type": entry.type,
-                "source_fits": str(image_path),
-                "preview_fits": str(preview_source),
-            },
-        )
-
-    # For spectral-cube inputs, also render a moment-8 (peak) preview of the raw cube.
-    write_spectral_cube_input_preview(ctx, fov)
-
-
-def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
-    """Inject configured image models into an existing Measurement Set."""
-    entries = image_model_entries(ctx.config)
-    if not entries:
-        return
-
-    backends = {"casa_ft", "wsclean_predict"}
-    ctx.add_milestone(
-        "image_injection_started",
-        "started",
-        details={"n_model_entries": len(entries), "backends": sorted(backends)},
-    )
-
-    for index, entry in enumerate(entries):
-        if isinstance(entry, StaticStokesMapsModelEntry):
-            raise NotImplementedError(
-                "static_stokes_maps is schema-ready, but the CASA backend path is "
-                "planned for the next implementation phase."
-            )
-        if isinstance(entry, ContinuumIAlphaModelEntry):
-            img_config = _select_wsclean_img_config(ctx.config.imaging)
-            report = validate_continuum_i_alpha(entry)
-            product = prepare_continuum_i_alpha_for_casa(ctx, entry, index)
-
-            if entry.injection_backend == "casa_ft":
-                logger.warning(
-                    "continuum_i_alpha injection_backend='casa_ft' is deprecated; "
-                    "prefer 'wsclean_predict'."
-                )
-                run_casa_ft(
-                    visibility_path=visibility_path,
-                    model_paths=product.model_paths,
-                    nterms=product.nterms,
-                    reffreq=product.reffreq,
-                    incremental=index > 0,
-                )
-                backend = "casa_ft"
-            else:
-                from .wsclean_predict import inject_continuum_i_alpha_with_wsclean_predict
-
-                report_predict = inject_continuum_i_alpha_with_wsclean_predict(
-                    ctx,
-                    entry,
-                    index,
-                    visibility_path,
-                    img_config,
-                    product,
-                )
-                backend = "wsclean_predict"
-                report = {**report, **report_predict}
-        elif isinstance(entry, CasaTaylorTermsModelEntry):
-            report = validate_casa_taylor_terms(entry)
-            product = prepare_casa_taylor_terms(ctx, entry, index)
-            logger.warning(
-                "casa_taylor_terms uses the deprecated CASA ft backend; "
-                "consider migrating to continuum_i_alpha with wsclean_predict."
-            )
-            run_casa_ft(
-                visibility_path=visibility_path,
-                model_paths=product.model_paths,
-                nterms=product.nterms,
-                reffreq=product.reffreq,
-                incremental=index > 0,
-            )
-            backend = "casa_ft"
-        elif isinstance(entry, SpectralCubeModelEntry):
-            img_config = _select_wsclean_img_config(ctx.config.imaging)
-            report = validate_spectral_cube(entry, ctx.config.observation, img_config)
-            product = prepare_spectral_cube_for_casa(ctx, entry, index, report)
-            from .wsclean_predict import inject_spectral_cube_with_wsclean_predict
-
-            assert product.cube_data is not None
-            assert product.header is not None
-            assert product.freq_axis is not None
-            report_predict = inject_spectral_cube_with_wsclean_predict(
-                ctx,
-                entry,
-                index,
-                visibility_path,
-                img_config,
-                product.cube_data,
-                product.header,
-                product.freq_axis,
-            )
-            backend = "wsclean_predict"
-            report = {**report, **report_predict}
-        else:
-            continue
-        ctx.manifest.add_output(
-            "sky_model",
-            product.model_paths[0].name,
-            role="casa_model_image",
-            metadata={
-                "model_entry_index": index,
-                "model_type": entry.type,
-                "nterms": product.nterms,
-                "reffreq": product.reffreq,
-                "all_model_paths": [path.name for path in product.model_paths],
-            },
-        )
-        ctx.add_milestone(
-            "image_model_injected",
-            "completed",
-            details={
-                "model_entry_index": index,
-                "model_type": entry.type,
-                "backend": backend,
-                **report,
-            },
-        )
-
-    merge_model_data_into_data(visibility_path)
-    ctx.add_milestone(
-        "image_injection_completed",
-        "completed",
-        details={"visibility_path": str(visibility_path), "model_data_merged": True},
     )
 
 
@@ -1400,6 +608,7 @@ def prepare_continuum_i_alpha_for_casa(
     )
 
 
+
 def _as_4d_image(data: np.ndarray, header: fits.Header, reference_freq_hz: float) -> tuple[np.ndarray, fits.Header]:
     """Return a 4D view (FREQ, STOKES, Y, X) of a 2D FITS image plus an updated header."""
     # collapse any leading degenerate axes and validate spatial dimensions
@@ -1432,12 +641,14 @@ def _as_4d_image(data: np.ndarray, header: fits.Header, reference_freq_hz: float
     return image_4d, new_header
 
 
+
 def _broadcast_to_4d(data: np.ndarray) -> np.ndarray:
     """Collapse leading degenerate axes and broadcast a 2D spatial map to 4D."""
     flat = np.asarray(data).squeeze()
     if flat.ndim != 2:
         raise ValueError(f"continuum_i_alpha alpha map must be 2D spatial; got shape {data.shape}")
     return flat.reshape(1, 1, *flat.shape)
+
 
 def adjust_spectral_reference(
     image_path: Path,

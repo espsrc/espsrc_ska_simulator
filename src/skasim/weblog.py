@@ -12,7 +12,7 @@ import numpy as np
 from astropy.io import fits
 from jinja2 import Environment, PackageLoader, select_autoescape
 
-from .loaders.image_models import (
+from .loaders.image_models.fits_io import (
     FitsCubeInfo,
     read_fits_cube_info,
 )
