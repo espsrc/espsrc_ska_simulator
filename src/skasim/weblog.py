@@ -12,7 +12,10 @@ import numpy as np
 from astropy.io import fits
 from jinja2 import Environment, PackageLoader, select_autoescape
 
-from .loaders.image_models import read_fits_cube_info
+from .loaders.image_models import (
+    FitsCubeInfo,
+    read_fits_cube_info,
+)
 from .manifest import RunManifest
 
 KNOWN_ANTENNA_COUNTS = {
@@ -647,7 +650,7 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
                 }
             )
         elif mtype == "spectral_cube":
-            info: dict | None = None
+            info: FitsCubeInfo | None = None
             if isinstance(model, SpectralCubeModelEntry):
                 try:
                     info = read_fits_cube_info(Path(model.cube).expanduser().resolve())
@@ -659,10 +662,10 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
                 "source": getattr(model, "cube", None),
             }
             if info:
-                entry["n_channels"] = info.get("n_channels")
-                entry["channel_width_khz"] = info.get("channel_width_hz", 0.0) / 1e3
-                entry["central_frequency_mhz"] = info.get("reference_frequency_hz", 0.0) / 1e6
-                entry["spatial_shape"] = info.get("spatial_shape")
+                entry["n_channels"] = info.n_channels
+                entry["channel_width_khz"] = info.channel_width_hz / 1e3
+                entry["central_frequency_mhz"] = info.reference_frequency_hz / 1e6
+                entry["spatial_shape"] = info.spatial_shape
             entries.append(entry)
 
     # legacy paths

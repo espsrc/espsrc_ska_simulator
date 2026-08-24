@@ -17,7 +17,6 @@ from .image_models import (
     primary_model_fits_path,
     read_fits_cube_info,
     read_fits_image_info,
-    require_casa_tasks,
     run_casa_exportfits,
     run_casa_ft,
     run_casa_set_spectral_coordinate,

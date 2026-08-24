@@ -21,7 +21,6 @@ from skasim.config import (
 from skasim.loaders.image_models import (
     _resample_spectral_axis_to_ms_channels,
     image_model_center,
-    import_casa_tasks,
     inject_image_models,
     merge_model_data_into_data,
     prepare_casa_taylor_terms,
@@ -641,18 +640,6 @@ def test_run_casa_importfits_uses_batch_fallback(tmp_path, monkeypatch):
     assert calls[0][1]["cwd"] == str(tmp_path)
 
 
-def test_run_casa_predict_uses_batch_fallback(tmp_path, monkeypatch):
-    """CASA sm.predict now raises because the path has been deprecated."""
-    from skasim.loaders.image_models import run_casa_predict
-
-    with pytest.raises(RuntimeError, match="deprecated"):
-        run_casa_predict(
-            visibility_path=tmp_path / "visibilities.MS",
-            model_paths=[tmp_path / "model.image"],
-            incremental=True,
-        )
-
-
 def test_inject_image_models_runs_spectral_cube_with_wsclean_predict(
     tmp_path, monkeypatch
 ):
@@ -730,7 +717,6 @@ def test_run_casa_ft_uses_batch_fallback(tmp_path, monkeypatch):
     fake_tables.table = FakeTable
     monkeypatch.setitem(sys.modules, "casacore.tables", fake_tables)
 
-    monkeypatch.setattr("skasim.loaders.image_models.import_casa_tasks", lambda: None)
     monkeypatch.setattr(
         "skasim.loaders.image_models.require_casa_executable",
         lambda: Path("/opt/casa/bin/casa"),
@@ -816,11 +802,11 @@ def test_read_fits_cube_info_returns_expected_shape(tmp_path):
     cube_path = _write_spectral_cube(tmp_path, n_channels=16, pixels=32)
     info = read_fits_cube_info(cube_path)
 
-    assert info["shape"] == (16, 32, 32)
-    assert info["spatial_shape"] == (32, 32)
-    assert info["n_channels"] == 16
-    assert info["channel_width_hz"] == pytest.approx(12.5e6)
-    assert info["unit"] == "jy/px"
+    assert info.shape == (16, 32, 32)
+    assert info.spatial_shape == (32, 32)
+    assert info.n_channels == 16
+    assert info.channel_width_hz == pytest.approx(12.5e6)
+    assert info.unit == "jy/px"
 
 
 def test_read_fits_cube_info_squeezes_4d_degenerate_stokes(tmp_path):
@@ -859,11 +845,11 @@ def test_read_fits_cube_info_squeezes_4d_degenerate_stokes(tmp_path):
 
     info = read_fits_cube_info(cube_path)
 
-    assert info["shape"] == (8, 64, 64)
-    assert info["spatial_shape"] == (64, 64)
-    assert info["n_channels"] == 8
-    assert info["channel_width_hz"] == pytest.approx(12.5e6)
-    assert info["unit"] == "jy/px"
+    assert info.shape == (8, 64, 64)
+    assert info.spatial_shape == (64, 64)
+    assert info.n_channels == 8
+    assert info.channel_width_hz == pytest.approx(12.5e6)
+    assert info.unit == "jy/px"
 
 
 def test_validate_spectral_cube_accepts_matching_config(tmp_path):

@@ -337,10 +337,6 @@ def test_prepare_continuum_i_alpha_adjusts_spectral_reference(tmp_path, monkeypa
         fake_adjust,
     )
     monkeypatch.setattr(
-        "skasim.loaders.image_models.import_casa_tasks",
-        lambda: None,
-    )
-    monkeypatch.setattr(
         "skasim.loaders.image_models.run_casa_importfits",
         lambda work_dir, images: None,
     )

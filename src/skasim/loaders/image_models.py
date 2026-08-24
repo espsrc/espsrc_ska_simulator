@@ -300,12 +300,8 @@ def _squeeze_degenerate_axes(data: np.ndarray, header: fits.Header) -> tuple[np.
     return data, new_header
 
 
-def read_fits_cube_info(path: Path) -> dict:
-    """Read metadata from a 3D FITS spectral cube.
-
-    Returns a dict with keys: shape, spatial_shape, unit, n_channels,
-    channel_width_hz, start_frequency_hz, reference_frequency_hz.
-    """
+def read_fits_cube_info(path: Path) -> FitsCubeInfo:
+    """Read metadata from a 3D FITS spectral cube."""
     with fits.open(path) as hdul:
         hdu = hdul[0]
         if hdu.data is None:
@@ -334,17 +330,16 @@ def read_fits_cube_info(path: Path) -> dict:
         if None in spatial_shape:
             raise ValueError("spectral cube spatial axes are not labelled as RA/DEC or GLON/GLAT")
 
-    return {
-        "path": path,
-        "shape": tuple(int(v) for v in data.shape),
-        "spatial_shape": tuple(spatial_shape),
-        "unit": unit,
-        "n_channels": n_freq,
-        "channel_width_hz": channel_width_hz,
-        "start_frequency_hz": float(freqs[0]),
-        "reference_frequency_hz": float(freqs[n_freq // 2]),
-        "freq_axis": freq_axis,
-    }
+    return FitsCubeInfo(
+        path=path,
+        shape=tuple(int(v) for v in data.shape),
+        spatial_shape=tuple(spatial_shape),
+        unit=unit,
+        n_channels=n_freq,
+        channel_width_hz=channel_width_hz,
+        start_frequency_hz=float(freqs[0]),
+        reference_frequency_hz=float(freqs[n_freq // 2]),
+    )
 
 
 def _freq_axis_centres(header: fits.Header, n_channels: int, axis: int = 3) -> np.ndarray:
@@ -357,6 +352,28 @@ def _freq_axis_centres(header: fits.Header, n_channels: int, axis: int = 3) -> n
         crval *= 1e6
         cdelt *= 1e6
     return crval + (np.arange(n_channels) - (crpix - 1.0)) * cdelt
+
+
+def _strip_spectral_axis_from_header(header: fits.Header) -> fits.Header:
+    """Return a 2D header with the spectral (axis 3) keys removed."""
+    out_header = header.copy()
+    for key in list(out_header.keys()):
+        if key in ("NAXIS", "NAXIS3") or key.startswith("NAXIS3"):
+            out_header.remove(key, ignore_missing=True)
+        if key in ("CRPIX3", "CRVAL3", "CDELT3", "CTYPE3", "CUNIT3"):
+            out_header.remove(key, ignore_missing=True)
+    out_header["NAXIS"] = 2
+    out_header["NAXIS1"] = header["NAXIS1"]
+    out_header["NAXIS2"] = header["NAXIS2"]
+    return out_header
+
+
+def _select_wsclean_img_config(imaging_configs: list[ImgConfig]) -> ImgConfig:
+    """Return the first wsclean imaging config, or the first config if none match."""
+    return next(
+        (img for img in imaging_configs if img.imager == "wsclean"),
+        imaging_configs[0],
+    )
 
 
 def _reorder_cube_axes(data: np.ndarray, header: fits.Header) -> np.ndarray:
@@ -476,36 +493,6 @@ def _read_ms_spectral_window(visibility_path: Path) -> tuple[np.ndarray, float] 
         return None
 
 
-def _reorder_casa_image_to_radecfreqstokes(image_path: Path) -> None:
-    """Ensure the CASA image table has axis order (RA, DEC, FREQ, STOKES).
-
-    .. deprecated::
-        Kept for backward compatibility but no longer used by the spectral-cube
-        pipeline, which now uses WSClean -predict.
-    """
-    try:
-        from casatools import image
-    except Exception as exc:
-        logger.debug(f"_reorder_casa_image_to_radecfreqstokes: casatools not available: {exc}")
-        return
-    try:
-        ia = image()
-        ia.open(str(image_path))
-        coordsys = ia.coordsys()
-        names = [str(n).lower() for n in coordsys.names()]
-        order = []
-        for target in ("ra", "dec", "freq", "stokes"):
-            for idx, name in enumerate(names):
-                if name.startswith(target):
-                    order.append(idx)
-                    break
-        if len(order) == 4:
-            ia.reorder(order)
-        ia.close()
-    except Exception as exc:
-        logger.debug(f"_reorder_casa_image_to_radecfreqstokes: failed for {image_path}: {exc}")
-
-
 def _resample_spectral_axis_to_ms_channels(
     freqs_in_hz: np.ndarray,
     data_in: np.ndarray,
@@ -567,14 +554,14 @@ def validate_spectral_cube(
     info = read_fits_cube_info(path)
 
     _accepted_units = _ACCEPTED_JY_PER_PIXEL_UNITS
-    if info["unit"] not in _accepted_units:
+    if info.unit not in _accepted_units:
         raise ValueError(
-            f"{path} must declare Jy/pixel-compatible BUNIT; found {info['unit']!r}"
+            f"{path} must declare Jy/pixel-compatible BUNIT; found {info.unit!r}"
         )
 
-    if info["spatial_shape"] != (img.pixels, img.pixels):
+    if info.spatial_shape != (img.pixels, img.pixels):
         raise ValueError(
-            f"spectral_cube spatial dimensions {info['spatial_shape']} do not match "
+            f"spectral_cube spatial dimensions {info.spatial_shape} do not match "
             f"imaging pixels {img.pixels}"
         )
 
@@ -586,9 +573,9 @@ def validate_spectral_cube(
     obs_min_hz = obs_center_hz - obs_bw_hz / 2.0
     obs_max_hz = obs_center_hz + obs_bw_hz / 2.0
 
-    n_channels = info["n_channels"]
-    channel_width_hz = info["channel_width_hz"]
-    cube_center_hz = info["start_frequency_hz"] + (n_channels - 1) * channel_width_hz / 2.0
+    n_channels = info.n_channels
+    channel_width_hz = info.channel_width_hz
+    cube_center_hz = info.start_frequency_hz + (n_channels - 1) * channel_width_hz / 2.0
     cube_min_hz = cube_center_hz - n_channels * channel_width_hz / 2.0
     cube_max_hz = cube_center_hz + n_channels * channel_width_hz / 2.0
 
@@ -608,9 +595,9 @@ def validate_spectral_cube(
 
     return {
         "cube": str(path),
-        "shape": info["shape"],
-        "spatial_shape": list(info["spatial_shape"]),
-        "unit": info["unit"],
+        "shape": info.shape,
+        "spatial_shape": list(info.spatial_shape),
+        "unit": info.unit,
         "n_channels": n_channels,
         "channel_width_hz": channel_width_hz,
         "reference_frequency_hz": cube_center_hz,
@@ -845,11 +832,8 @@ def run_moment8_for_spectral_cube(
         return
 
     nchan = data.shape[0]
-    crpix3 = header.get("CRPIX3", 1.0)
-    crval3 = header.get("CRVAL3", 0.0)
-    cdelt3 = header.get("CDELT3", 1.0)
+    freq_axis = _freq_axis_centres(header, nchan, axis=3)
     cunit3 = (header.get("CUNIT3") or "Hz").strip()
-    freq_axis = crval3 + (np.arange(nchan) - (crpix3 - 1.0)) * cdelt3
     restfreq = header.get("RESTFRQ") or header.get("RESTFREQ") or header.get("RESTWAV")
     if restfreq:
         restfreq = float(restfreq)
@@ -891,15 +875,7 @@ def run_moment8_for_spectral_cube(
     except Exception as exc:
         logger.debug(f"Average spectrum plot failed: {exc}")
 
-    base_header = header.copy()
-    for key in list(base_header.keys()):
-        if key in ("NAXIS", "NAXIS3") or key.startswith("NAXIS3"):
-            base_header.remove(key, ignore_missing=True)
-        if key in ("CRPIX3", "CRVAL3", "CDELT3", "CTYPE3", "CUNIT3"):
-            base_header.remove(key, ignore_missing=True)
-    base_header["NAXIS"] = 2
-    base_header["NAXIS1"] = header["NAXIS1"]
-    base_header["NAXIS2"] = header["NAXIS2"]
+    base_header = _strip_spectral_axis_from_header(header)
 
     out_fits = work_dir / f"{output_prefix}-moment8.fits"
     base_header["BUNIT"] = header.get("BUNIT") or "Jy/beam"
@@ -919,7 +895,6 @@ def run_moment8_for_spectral_cube(
 
     png_path = out_fits.with_suffix(".png")
     try:
-        from ..imaging import write_fits_preview
         write_fits_preview(out_fits, png_path, "Moment 8 (peak)")
         ctx.manifest.add_output(
             "image_product",
@@ -977,15 +952,7 @@ def write_spectral_cube_input_preview(
         moment8 = np.nanmax(data, axis=_fits_axis_to_numpy(freq_axis))
 
         # Build a minimal 2D header for the preview FITS
-        out_header = header.copy()
-        for key in list(out_header.keys()):
-            if key in ("NAXIS", "NAXIS3") or key.startswith("NAXIS3"):
-                out_header.remove(key, ignore_missing=True)
-            if key in ("CRPIX3", "CRVAL3", "CDELT3", "CTYPE3", "CUNIT3"):
-                out_header.remove(key, ignore_missing=True)
-        out_header["NAXIS"] = 2
-        out_header["NAXIS1"] = header["NAXIS1"]
-        out_header["NAXIS2"] = header["NAXIS2"]
+        out_header = _strip_spectral_axis_from_header(header)
         out_header["BUNIT"] = header.get("BUNIT") or "Jy/pixel"
         out_header["MOMENT"] = 8
 
@@ -1123,6 +1090,7 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
                 "planned for the next implementation phase."
             )
         if isinstance(entry, ContinuumIAlphaModelEntry):
+            img_config = _select_wsclean_img_config(ctx.config.imaging)
             report = validate_continuum_i_alpha(entry)
             product = prepare_continuum_i_alpha_for_casa(ctx, entry, index)
 
@@ -1140,10 +1108,6 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
                 )
                 backend = "casa_ft"
             else:
-                img_config = next(
-                    (img for img in ctx.config.imaging if img.imager == "wsclean"),
-                    ctx.config.imaging[0],
-                )
                 from .wsclean_predict import inject_continuum_i_alpha_with_wsclean_predict
 
                 report_predict = inject_continuum_i_alpha_with_wsclean_predict(
@@ -1172,10 +1136,7 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
             )
             backend = "casa_ft"
         elif isinstance(entry, SpectralCubeModelEntry):
-            img_config = next(
-                (img for img in ctx.config.imaging if img.imager == "wsclean"),
-                ctx.config.imaging[0],
-            )
+            img_config = _select_wsclean_img_config(ctx.config.imaging)
             report = validate_spectral_cube(entry, ctx.config.observation, img_config)
             product = prepare_spectral_cube_for_casa(ctx, entry, index, report)
             from .wsclean_predict import inject_spectral_cube_with_wsclean_predict
@@ -1389,12 +1350,15 @@ def prepare_continuum_i_alpha_for_casa(
     for imagename in (tt0_image, tt1_image):
         if imagename.exists():
             shutil.rmtree(imagename)
-    casa_tasks = import_casa_tasks()
-    if casa_tasks is not None:
-        importfits, _ = casa_tasks
+    try:
+        from casatasks import importfits
+
         importfits(fitsimage=str(tt0_fits), imagename=str(tt0_image), overwrite=True)
         importfits(fitsimage=str(tt1_fits), imagename=str(tt1_image), overwrite=True)
-    else:
+    except Exception as exc:
+        logger.debug(
+            f"prepare_continuum_i_alpha_for_casa: in-process importfits unavailable: {exc}"
+        )
         run_casa_importfits(
             ctx.work_dir,
             [(tt0_fits, tt0_image), (tt1_fits, tt1_image)],
@@ -1583,52 +1547,6 @@ def _set_crval4_via_script(
     run_casa_set_spectral_coordinate(work_dir, image_paths, frequency_hz)
 
 
-def import_casa_tasks():
-    """Return in-process CASA tasks when they are importable in this Python env."""
-    try:
-        from casatasks import ft, importfits
-    except Exception as exc:
-        logger.debug(f"import_casa_tasks: casatasks not available: {exc}")
-        return None
-    return importfits, ft
-
-
-def import_casa_tools():
-    """Return in-process CASA simulator tool when importable."""
-    try:
-        from casatools import simulator
-    except Exception as exc:
-        logger.debug(f"import_casa_tools: casatools not available: {exc}")
-        return None
-    return simulator
-
-
-def require_casa_tasks():
-    """Import CASA tasks lazily and provide a clear runtime error if unavailable."""
-    casa_tasks = import_casa_tasks()
-    if casa_tasks is None:
-        raise RuntimeError(
-            "CASA casatasks.importfits and casatasks.ft are required for "
-            "in-process image-model injection. Install casatasks in this "
-            "environment or make the CASA executable available on PATH for "
-            "batch-mode fallback."
-        )
-    return casa_tasks
-
-
-def require_casa_tools():
-    """Import CASA simulator tool lazily and provide a clear runtime error if unavailable."""
-    simulator_cls = import_casa_tools()
-    if simulator_cls is None:
-        raise RuntimeError(
-            "CASA casatools.simulator is required for in-process "
-            "sm.predict image-model injection. Install casatools in this "
-            "environment or make the CASA executable available on PATH for "
-            "batch-mode fallback."
-        )
-    return simulator_cls
-
-
 def require_casa_executable() -> Path:
     """Return a CASA executable for batch-mode fallback."""
     executable = shutil.which("casa")
@@ -1734,9 +1652,9 @@ def run_casa_ft(
         f"CASA ft model={[str(path) for path in model_paths]} "
         f"nterms={nterms} reffreq={reffreq} incremental={incremental}"
     )
-    casa_tasks = import_casa_tasks()
-    if casa_tasks is not None:
-        _, ft = casa_tasks
+    try:
+        from casatasks import ft
+
         ft(
             vis=str(visibility_path),
             model=[str(path) for path in model_paths],
@@ -1746,6 +1664,8 @@ def run_casa_ft(
             usescratch=True,
         )
         return
+    except Exception as exc:
+        logger.debug(f"run_casa_ft: in-process ft unavailable: {exc}")
 
     executable = require_casa_executable()
     script_path = visibility_path.parent / "skasim_casa_ft.py"
@@ -1766,23 +1686,6 @@ def run_casa_ft(
         ")",
     ]
     run_casa_script(executable, script_path, lines)
-
-
-def run_casa_predict(
-    visibility_path: Path,
-    model_paths: list[Path],
-    incremental: bool,
-) -> None:
-    """Run CASA simulator.predict into MODEL_DATA for a spectral-cube model.
-
-    .. deprecated::
-        This CASA path has been replaced by ``wsclean -predict`` for spectral
-        cubes.  It is kept as a visible tombstone so existing callers get a clear
-        error instead of a missing-symbol failure.
-    """
-    raise RuntimeError(
-        "CASA sm.predict path is deprecated; use wsclean -predict instead."
-    )
 
 
 def run_casa_script(
