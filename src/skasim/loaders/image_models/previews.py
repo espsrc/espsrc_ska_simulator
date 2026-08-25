@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import warnings
+from pathlib import Path
 
 import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.wcs import FITSFixedWarning, WCS
+from astropy.wcs import WCS, FITSFixedWarning
 from loguru import logger
 
 from ...config import CasaTaylorTermsModelEntry, SpectralCubeModelEntry
@@ -20,11 +20,12 @@ from .fits_io import (
     _find_frequency_axis,
     _fits_axis_to_numpy,
     _freq_axis_centres,
+    _squeeze_degenerate_axes,
     _strip_spectral_axis_from_header,
-    read_fits_cube_info,
+    image_model_entries,
+    primary_model_fits_path,
+    read_fits_image_info,
 )
-from .fits_io import image_model_entries, primary_model_fits_path
-
 
 # suppress fits formatting fixes
 warnings.simplefilter("ignore", category=FITSFixedWarning)
@@ -141,8 +142,6 @@ def write_spectral_cube_input_preview(
     The preview is added to the manifest as a sky-model plot so it appears in
     the weblog's Sky Model section.
     """
-    from ...config import SpectralCubeModelEntry
-
     cube_entries = [
         m for m in ctx.config.models if isinstance(m, SpectralCubeModelEntry)
     ]
@@ -228,7 +227,6 @@ def write_spectral_cube_input_preview(
 
 def write_image_model_previews(
     ctx: RunContext,
-    center: SkyCoord,
     fov: u.Quantity,
 ) -> None:
     """Write FITS model previews for the weblog sky-model section."""
@@ -292,5 +290,3 @@ def write_image_model_previews(
 
     # For spectral-cube inputs, also render a moment-8 (peak) preview of the raw cube.
     write_spectral_cube_input_preview(ctx, fov)
-
-

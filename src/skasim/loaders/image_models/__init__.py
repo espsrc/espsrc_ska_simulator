@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import astropy.units as u
-from astropy.coordinates import SkyCoord
 from loguru import logger
 
 from ...config import (
@@ -21,9 +19,6 @@ from ...config import (
     spectral_cube_model_entries,
 )
 from ...manifest import RunContext
-import subprocess
-
-from ...runtime import require_casacore as require_casacore
 from .casa_interop import (
     CasaModelProduct,
     _resample_spectral_axis_to_ms_channels,
@@ -98,7 +93,9 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
                 )
                 backend = "casa_ft"
             else:
-                from ..wsclean_predict import inject_continuum_i_alpha_with_wsclean_predict
+                from ..wsclean_predict import (
+                    inject_continuum_i_alpha_with_wsclean_predict,
+                )
 
                 report_predict = inject_continuum_i_alpha_with_wsclean_predict(
                     ctx,
