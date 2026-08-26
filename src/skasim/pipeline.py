@@ -26,7 +26,6 @@ from .loaders import (
     image_model_entries,
     inject_image_models,
     write_image_model_previews,
-    write_spectral_cube_input_preview,
 )
 from .manifest import RunContext, create_run_context
 from .runtime import require_karabo_module
@@ -780,9 +779,7 @@ def run(config: SimConfig) -> None:
                 ctx.work_dir.name,
             ):
                 ctx.manifest.add_output("plot", path, role=role)
-            write_image_model_previews(ctx, center, fov0)
-            if has_spectral_cube_model(config):
-                write_spectral_cube_input_preview(ctx, fov0)
+            write_image_model_previews(ctx, fov0)
         except Exception as exc:
             logger.warning(f"Sky model previews failed: {exc}")
             logger.exception("Sky model preview traceback")

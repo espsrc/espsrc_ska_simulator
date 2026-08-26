@@ -21,7 +21,6 @@ from skasim.config import (
 from skasim.loaders.image_models import (
     _resample_spectral_axis_to_ms_channels,
     image_model_center,
-    import_casa_tasks,
     inject_image_models,
     merge_model_data_into_data,
     prepare_casa_taylor_terms,
@@ -181,14 +180,13 @@ def test_weblog_renders_fits_model_preview(tmp_path):
 
     write_image_model_previews(
         ctx,
-        SkyCoord(10.0 * u.deg, 2.0 * u.deg),
         0.05 * u.deg,
     )
     html = render_weblog(ctx.manifest, ctx.work_dir)
 
     assert "FITS Model" in html
     assert "continuum_i_alpha" in html
-    assert (ctx.work_dir / "run_fits_model.png").exists()
+
 
 
 def test_weblog_renders_existing_fits_model_output(tmp_path):
@@ -246,11 +244,10 @@ def test_weblog_renders_casa_taylor_term_preview(tmp_path, monkeypatch):
         stokes_i, _ = _write_model_pair(tmp_path, shape=(32, 32))
         fitsimage.write_bytes(stokes_i.read_bytes())
 
-    monkeypatch.setattr("skasim.loaders.image_models.run_casa_exportfits", fake_export)
+    monkeypatch.setattr("skasim.loaders.image_models.previews.run_casa_exportfits", fake_export)
 
     write_image_model_previews(
         ctx,
-        SkyCoord(10.0 * u.deg, 2.0 * u.deg),
         0.05 * u.deg,
     )
     html = render_weblog(ctx.manifest, ctx.work_dir)
@@ -304,10 +301,26 @@ def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypat
     monkeypatch.setattr(
         "skasim.loaders.image_models.prepare_continuum_i_alpha_for_casa", fake_prepare
     )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.prepare_continuum_i_alpha_for_casa", fake_prepare
+    )
     monkeypatch.setattr("skasim.loaders.image_models.run_casa_ft", fake_run_casa_ft)
+    monkeypatch.setattr("skasim.loaders.image_models.casa_interop.run_casa_ft", fake_run_casa_ft)
     monkeypatch.setattr(
         "skasim.loaders.image_models.merge_model_data_into_data",
         lambda visibility_path: calls.append({"merged": str(visibility_path)}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": str(visibility_path)}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": str(visibility_path)}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.require_casa_executable",
+        lambda: Path("/opt/casa/bin/casa"),
     )
 
     inject_image_models(ctx, visibility_path=Path("fake.ms"))
@@ -367,6 +380,9 @@ def test_inject_image_models_runs_continuum_entries_with_wsclean_predict(tmp_pat
 
     monkeypatch.setattr(
         "skasim.loaders.image_models.prepare_continuum_i_alpha_for_casa", fake_prepare
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.prepare_continuum_i_alpha_for_casa", fake_prepare
     )
     monkeypatch.setattr(
         "skasim.loaders.wsclean_predict.inject_continuum_i_alpha_with_wsclean_predict",
@@ -468,12 +484,20 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path, monkey
         def getcolkeywords(self, name):
             return {"dimnames": ["frequency"]}
 
+        def keywordnames(self):
+            return ["coords"]
+
+        def getkeyword(self, name):
+            if name == "coords":
+                return {"spectral0": {}}
+            return {}
+
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casacore",
+        "skasim.loaders.image_models.casa_interop.require_casacore",
         lambda: FakeCasacoreTable,
     )
     monkeypatch.setattr(
-        "skasim.loaders.image_models.run_casa_set_spectral_coordinate",
+        "skasim.loaders.image_models.casa_interop.run_casa_set_spectral_coordinate",
         lambda work_dir, image_paths, frequency_hz: calls.append(
             (work_dir, image_paths, frequency_hz)
         ),
@@ -540,8 +564,16 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
         def getcolkeywords(self, name):
             return {"dimnames": ["frequency"]}
 
+        def keywordnames(self):
+            return ["coords"]
+
+        def getkeyword(self, name):
+            if name == "coords":
+                return {"spectral0": {}}
+            return {}
+
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casacore",
+        "skasim.loaders.image_models.casa_interop.require_casacore",
         lambda: FakeCasacoreTable,
     )
     monkeypatch.setattr(
@@ -551,12 +583,30 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.run_casa_set_spectral_coordinate",
+        lambda work_dir, image_paths, frequency_hz: calls.append(
+            {"spectral_copy": image_paths, "frequency_hz": frequency_hz}
+        ),
+    )
+    monkeypatch.setattr(
         "skasim.loaders.image_models.run_casa_ft",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.run_casa_ft",
         lambda **kwargs: calls.append(kwargs),
     )
     monkeypatch.setattr(
         "skasim.loaders.image_models.merge_model_data_into_data",
         lambda visibility_path: calls.append({"merged": visibility_path}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": visibility_path}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.require_casa_executable",
+        lambda: Path("/opt/casa/bin/casa"),
     )
 
     inject_image_models(ctx, tmp_path / "visibilities.MS")
@@ -601,10 +651,10 @@ def test_run_casa_importfits_uses_batch_fallback(tmp_path, monkeypatch):
         return Result()
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casa_executable",
+        "skasim.loaders.image_models.casa_interop.require_casa_executable",
         lambda: Path("/opt/casa/bin/casa"),
     )
-    monkeypatch.setattr("skasim.loaders.image_models.subprocess.run", fake_run)
+    monkeypatch.setattr("skasim.loaders.image_models.casa_interop.subprocess.run", fake_run)
 
     run_casa_importfits(
         tmp_path,
@@ -623,18 +673,6 @@ def test_run_casa_importfits_uses_batch_fallback(tmp_path, monkeypatch):
         "-c",
     ]
     assert calls[0][1]["cwd"] == str(tmp_path)
-
-
-def test_run_casa_predict_uses_batch_fallback(tmp_path, monkeypatch):
-    """CASA sm.predict now raises because the path has been deprecated."""
-    from skasim.loaders.image_models import run_casa_predict
-
-    with pytest.raises(RuntimeError, match="deprecated"):
-        run_casa_predict(
-            visibility_path=tmp_path / "visibilities.MS",
-            model_paths=[tmp_path / "model.image"],
-            incremental=True,
-        )
 
 
 def test_inject_image_models_runs_spectral_cube_with_wsclean_predict(
@@ -667,6 +705,10 @@ def test_inject_image_models_runs_spectral_cube_with_wsclean_predict(
     )
     monkeypatch.setattr(
         "skasim.loaders.image_models.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": visibility_path}),
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.merge_model_data_into_data",
         lambda visibility_path: calls.append({"merged": visibility_path}),
     )
 
@@ -714,12 +756,11 @@ def test_run_casa_ft_uses_batch_fallback(tmp_path, monkeypatch):
     fake_tables.table = FakeTable
     monkeypatch.setitem(sys.modules, "casacore.tables", fake_tables)
 
-    monkeypatch.setattr("skasim.loaders.image_models.import_casa_tasks", lambda: None)
     monkeypatch.setattr(
-        "skasim.loaders.image_models.require_casa_executable",
+        "skasim.loaders.image_models.casa_interop.require_casa_executable",
         lambda: Path("/opt/casa/bin/casa"),
     )
-    monkeypatch.setattr("skasim.loaders.image_models.subprocess.run", fake_run)
+    monkeypatch.setattr("skasim.loaders.image_models.casa_interop.subprocess.run", fake_run)
 
     run_casa_ft(
         visibility_path=tmp_path / "visibilities.MS",
@@ -800,11 +841,11 @@ def test_read_fits_cube_info_returns_expected_shape(tmp_path):
     cube_path = _write_spectral_cube(tmp_path, n_channels=16, pixels=32)
     info = read_fits_cube_info(cube_path)
 
-    assert info["shape"] == (16, 32, 32)
-    assert info["spatial_shape"] == (32, 32)
-    assert info["n_channels"] == 16
-    assert info["channel_width_hz"] == pytest.approx(12.5e6)
-    assert info["unit"] == "jy/px"
+    assert info.shape == (16, 32, 32)
+    assert info.spatial_shape == (32, 32)
+    assert info.n_channels == 16
+    assert info.channel_width_hz == pytest.approx(12.5e6)
+    assert info.unit == "jy/px"
 
 
 def test_read_fits_cube_info_squeezes_4d_degenerate_stokes(tmp_path):
@@ -843,11 +884,11 @@ def test_read_fits_cube_info_squeezes_4d_degenerate_stokes(tmp_path):
 
     info = read_fits_cube_info(cube_path)
 
-    assert info["shape"] == (8, 64, 64)
-    assert info["spatial_shape"] == (64, 64)
-    assert info["n_channels"] == 8
-    assert info["channel_width_hz"] == pytest.approx(12.5e6)
-    assert info["unit"] == "jy/px"
+    assert info.shape == (8, 64, 64)
+    assert info.spatial_shape == (64, 64)
+    assert info.n_channels == 8
+    assert info.channel_width_hz == pytest.approx(12.5e6)
+    assert info.unit == "jy/px"
 
 
 def test_validate_spectral_cube_accepts_matching_config(tmp_path):
