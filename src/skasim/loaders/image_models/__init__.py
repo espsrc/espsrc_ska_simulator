@@ -47,12 +47,16 @@ from .fits_io import (
     read_fits_image_info,
     validate_continuum_i_alpha,
     validate_spectral_cube,
+    validate_static_stokes_maps,
 )
 from .previews import (
     run_moment8_for_spectral_cube,
     write_image_model_previews,
     write_spectral_cube_input_preview,
 )
+
+# avoid circular imports: wsclean_predict is imported locally inside
+# inject_image_models when a wsclean_predict backend is selected.
 
 
 def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
@@ -70,11 +74,28 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
 
     for index, entry in enumerate(entries):
         if isinstance(entry, StaticStokesMapsModelEntry):
-            raise NotImplementedError(
-                "static_stokes_maps is schema-ready, but the CASA backend path is "
-                "planned for the next implementation phase."
+            img_config = _select_wsclean_img_config(ctx.config.imaging)
+            report = validate_static_stokes_maps(
+                entry, ctx.config.observation, img_config
             )
-        if isinstance(entry, ContinuumIAlphaModelEntry):
+            from ..wsclean_predict import inject_static_stokes_i_with_wsclean_predict
+
+            report_predict = inject_static_stokes_i_with_wsclean_predict(
+                ctx,
+                entry,
+                index,
+                visibility_path,
+                img_config,
+            )
+            _record_injection(
+                ctx,
+                index,
+                entry,
+                backend="wsclean_predict",
+                report={**report, **report_predict},
+                model_paths=[Path(p) for p in report_predict.get("model_paths", [])],
+            )
+        elif isinstance(entry, ContinuumIAlphaModelEntry):
             img_config = _select_wsclean_img_config(ctx.config.imaging)
             report = validate_continuum_i_alpha(entry)
             product = prepare_continuum_i_alpha_for_casa(ctx, entry, index)
@@ -107,6 +128,16 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
                 )
                 backend = "wsclean_predict"
                 report = {**report, **report_predict}
+            _record_injection(
+                ctx,
+                index,
+                entry,
+                backend=backend,
+                report=report,
+                model_paths=[Path(p) for p in product.model_paths],
+                nterms=product.nterms,
+                reffreq=product.reffreq,
+            )
         elif isinstance(entry, CasaTaylorTermsModelEntry):
             report = validate_casa_taylor_terms(entry)
             product = prepare_casa_taylor_terms(ctx, entry, index)
@@ -121,7 +152,16 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
                 reffreq=product.reffreq,
                 incremental=index > 0,
             )
-            backend = "casa_ft"
+            _record_injection(
+                ctx,
+                index,
+                entry,
+                backend="casa_ft",
+                report=report,
+                model_paths=[Path(p) for p in product.model_paths],
+                nterms=product.nterms,
+                reffreq=product.reffreq,
+            )
         elif isinstance(entry, SpectralCubeModelEntry):
             img_config = _select_wsclean_img_config(ctx.config.imaging)
             report = validate_spectral_cube(entry, ctx.config.observation, img_config)
@@ -141,38 +181,59 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
                 product.header,
                 product.freq_axis,
             )
-            backend = "wsclean_predict"
-            report = {**report, **report_predict}
+            _record_injection(
+                ctx,
+                index,
+                entry,
+                backend="wsclean_predict",
+                report={**report, **report_predict},
+                model_paths=[Path(p) for p in product.model_paths],
+                nterms=product.nterms,
+                reffreq=product.reffreq,
+            )
         else:
             continue
-        ctx.manifest.add_output(
-            "sky_model",
-            product.model_paths[0].name,
-            role="casa_model_image",
-            metadata={
-                "model_entry_index": index,
-                "model_type": entry.type,
-                "nterms": product.nterms,
-                "reffreq": product.reffreq,
-                "all_model_paths": [path.name for path in product.model_paths],
-            },
-        )
-        ctx.add_milestone(
-            "image_model_injected",
-            "completed",
-            details={
-                "model_entry_index": index,
-                "model_type": entry.type,
-                "backend": backend,
-                **report,
-            },
-        )
 
     merge_model_data_into_data(visibility_path)
     ctx.add_milestone(
         "image_injection_completed",
         "completed",
         details={"visibility_path": str(visibility_path), "model_data_merged": True},
+    )
+
+
+def _record_injection(
+    ctx: RunContext,
+    index: int,
+    entry: ModelEntry,
+    backend: str,
+    report: dict,
+    model_paths: list[Path],
+    nterms: int = 1,
+    reffreq: str = "",
+) -> None:
+    """Record a sky_model output and image_model_injected milestone."""
+    ctx.manifest.add_output(
+        "sky_model",
+        model_paths[0].name if model_paths else report.get("prefix", "model"),
+        role="casa_model_image",
+        metadata={
+            "model_entry_index": index,
+            "model_type": entry.type,
+            "nterms": nterms,
+            "reffreq": reffreq,
+            "all_model_paths": [path.name for path in model_paths],
+        },
+    )
+    ctx.add_milestone(
+        "image_model_injected",
+        "completed",
+        details={
+            "model_entry_index": index,
+            "model_type": entry.type,
+            "backend": backend,
+            **report,
+        },
     )
 
 
@@ -203,6 +264,7 @@ __all__ = [
     "validate_casa_taylor_terms",
     "validate_continuum_i_alpha",
     "validate_spectral_cube",
+    "validate_static_stokes_maps",
     "write_image_model_previews",
     "write_spectral_cube_input_preview",
 ]

@@ -193,12 +193,12 @@ class SpectralCubeModelEntry(BaseModel):
 
 
 class StaticStokesMapsModelEntry(BaseModel):
-    """Static Stokes map set. Schema-ready for the phase-2 backend path."""
+    """Static Stokes map set. Currently Stokes I only via wsclean_predict."""
 
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["static_stokes_maps"]
-    stokes_i: Optional[str] = None
+    stokes_i: str
     stokes_q: Optional[str] = None
     stokes_u: Optional[str] = None
     stokes_v: Optional[str] = None
@@ -211,9 +211,9 @@ class StaticStokesMapsModelEntry(BaseModel):
         return _require_existing_path(value)
 
     @model_validator(mode="after")
-    def _at_least_one_stokes_map(self):
-        if not any((self.stokes_i, self.stokes_q, self.stokes_u, self.stokes_v)):
-            raise ValueError("static_stokes_maps requires at least one Stokes map.")
+    def _stokes_i_required(self):
+        if not self.stokes_i:
+            raise ValueError("static_stokes_maps requires stokes_i.")
         return self
 
 
