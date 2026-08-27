@@ -24,6 +24,7 @@ from .image_models import (
     spectral_cube_model_entries,
     validate_continuum_i_alpha,
     validate_spectral_cube,
+    validate_static_stokes_maps,
     write_image_model_previews,
     write_spectral_cube_input_preview,
 )
@@ -48,6 +49,7 @@ __all__ = [
     "read_fits_cube_info",
     "validate_continuum_i_alpha",
     "validate_spectral_cube",
+    "validate_static_stokes_maps",
     "write_image_model_previews",
     "write_spectral_cube_input_preview",
     "inject_image_models",

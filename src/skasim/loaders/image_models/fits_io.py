@@ -170,6 +170,57 @@ _ACCEPTED_JY_PER_PIXEL_UNITS = frozenset(
 )
 
 
+def validate_static_stokes_maps(
+    entry: StaticStokesMapsModelEntry,
+    obs: ObsConfig,
+    img_config: ImgConfig,
+) -> dict:
+    """Validate a static Stokes I map and return report metadata.
+
+    Currently only ``stokes_i`` is supported. The image must be a 2D spatial
+    FITS file with Jy/pixel-compatible BUNIT.
+    """
+    stokes_info = read_fits_image_info(Path(entry.stokes_i).expanduser().resolve())
+    with fits.open(stokes_info.path) as hdul:
+        hdu = hdul[0]
+        raw_data = np.asarray(hdu.data)  # type: ignore[union-attr]
+        data = raw_data.squeeze()
+        # reject genuine 3D input before squeezing degenerate axes
+        if raw_data.ndim > 2:
+            raise ValueError(
+                f"{stokes_info.path} must be a 2D spatial image; "
+                f"got shape {raw_data.shape}"
+            )
+    if data.ndim != 2:
+        raise ValueError(
+            f"{stokes_info.path} must be a 2D spatial image; "
+            f"got shape {data.shape}"
+        )
+    unit = (stokes_info.unit or "").strip().lower()
+    if unit not in _ACCEPTED_JY_PER_PIXEL_UNITS:
+        raise ValueError(
+            f"{stokes_info.path} must declare Jy/pixel-compatible BUNIT; "
+            f"found {stokes_info.unit!r}"
+        )
+    if stokes_info.spatial_shape[0] != stokes_info.spatial_shape[1]:
+        logger.warning(
+            "static_stokes_maps model image is not square ({}x{}); "
+            "WSClean predict will use {} pixels for both dimensions.",
+            stokes_info.spatial_shape[1],
+            stokes_info.spatial_shape[0],
+            stokes_info.spatial_shape[1],
+        )
+    return {
+        "stokes_i": str(stokes_info.path),
+        "spatial_shape": list(stokes_info.spatial_shape),
+        "unit": stokes_info.unit,
+        "n_channels": obs.n_channels,
+        "bandwidth_mhz": obs.bandwidth_mhz,
+        "frequency_mhz": obs.frequency_mhz,
+        "imager": img_config.imager,
+    }
+
+
 def validate_continuum_i_alpha(entry: ContinuumIAlphaModelEntry) -> dict:
     """Validate the continuum image contract and return report metadata."""
     stokes_info = read_fits_image_info(Path(entry.stokes_i).expanduser().resolve())

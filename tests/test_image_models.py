@@ -17,6 +17,7 @@ from skasim.config import (
     ObsConfig,
     SimConfig,
     SpectralCubeModelEntry,
+    StaticStokesMapsModelEntry,
 )
 from skasim.loaders.image_models import (
     _resample_spectral_axis_to_ms_channels,
@@ -33,10 +34,12 @@ from skasim.loaders.image_models import (
     validate_casa_taylor_terms,
     validate_continuum_i_alpha,
     validate_spectral_cube,
+    validate_static_stokes_maps,
     write_image_model_previews,
 )
 from skasim.loaders.wsclean_predict import (
     inject_spectral_cube_with_wsclean_predict,
+    inject_static_stokes_i_with_wsclean_predict,
     run_wsclean_predict,
 )
 from skasim.manifest import RunManifest, create_run_context
@@ -812,6 +815,215 @@ def test_merge_model_data_into_data_adds_model_column(monkeypatch, tmp_path):
     merge_model_data_into_data(tmp_path / "visibilities.MS")
 
     assert np.array_equal(written["DATA"], data + model)
+
+
+# ---------------------------------------------------------------------------
+# static Stokes maps validation and injection
+# ---------------------------------------------------------------------------
+
+
+def _write_static_stokes_image(tmp_path, shape=(16, 16), bunit="Jy/pixel", ndim=2):
+    """Create a minimal valid 2D FITS image for static_stokes_maps tests."""
+    wcs = WCS(naxis=2)
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    wcs.wcs.crval = [10.0, 2.0]
+    wcs.wcs.crpix = [shape[1] / 2.0, shape[0] / 2.0]
+    wcs.wcs.cdelt = [-0.001, 0.001]
+
+    header = wcs.to_header()
+    header["BUNIT"] = bunit
+
+    data = np.ones(shape, dtype=np.float32)
+    if ndim == 3:
+        data = data[np.newaxis, :, :]
+
+    path = tmp_path / "stokes_i.fits"
+    fits.writeto(path, data, header, overwrite=True)
+    return path
+
+
+def test_validate_static_stokes_maps_accepts_2d_jy_per_pixel(tmp_path):
+    """A 2D Jy/pixel image passes validation."""
+    image_path = _write_static_stokes_image(tmp_path, shape=(64, 64))
+    obs = ObsConfig(
+        frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8, observation_time_s=1
+    )
+    img = ImgConfig(pixels=64, imager="wsclean")
+    entry = StaticStokesMapsModelEntry(
+        type="static_stokes_maps", stokes_i=str(image_path)
+    )
+
+    report = validate_static_stokes_maps(entry, obs, img)
+
+    assert report["stokes_i"] == str(image_path)
+    assert report["spatial_shape"] == [64, 64]
+    assert report["unit"] == "Jy/pixel"
+    assert report["n_channels"] == 8
+    assert report["frequency_mhz"] == 700.0
+
+
+def test_validate_static_stokes_maps_rejects_3d_image(tmp_path):
+    """A 3D cube is rejected as stokes_i input."""
+    image_path = _write_static_stokes_image(tmp_path, shape=(64, 64), ndim=3)
+    obs = ObsConfig(
+        frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8, observation_time_s=1
+    )
+    img = ImgConfig(pixels=64, imager="wsclean")
+    entry = StaticStokesMapsModelEntry(
+        type="static_stokes_maps", stokes_i=str(image_path)
+    )
+
+    with pytest.raises(ValueError, match="must be a 2D spatial image"):
+        validate_static_stokes_maps(entry, obs, img)
+
+
+def test_validate_static_stokes_maps_rejects_jy_per_beam(tmp_path):
+    """Jy/beam units are rejected for stokes_i."""
+    image_path = _write_static_stokes_image(tmp_path, shape=(64, 64), bunit="Jy/beam")
+    obs = ObsConfig(
+        frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8, observation_time_s=1
+    )
+    img = ImgConfig(pixels=64, imager="wsclean")
+    entry = StaticStokesMapsModelEntry(
+        type="static_stokes_maps", stokes_i=str(image_path)
+    )
+
+    with pytest.raises(ValueError, match="Jy/pixel-compatible"):
+        validate_static_stokes_maps(entry, obs, img)
+
+
+def test_inject_static_stokes_i_runs_wsclean_predict_and_merges(
+    tmp_path, monkeypatch
+):
+    """Static Stokes I injection writes per-channel models and runs predict."""
+    image_path = _write_static_stokes_image(tmp_path, shape=(64, 64))
+    cfg = SimConfig(
+        output_dir=str(tmp_path / "run"),
+        models=[
+            StaticStokesMapsModelEntry(
+                type="static_stokes_maps", stokes_i=str(image_path)
+            )
+        ],
+        observation=ObsConfig(
+            frequency_mhz=700.0,
+            bandwidth_mhz=100.0,
+            n_channels=4,
+            observation_time_s=1,
+        ),
+        imaging=[ImgConfig(pixels=64, imager="wsclean")],
+    )
+    ctx = create_run_context(cfg)
+    calls = []
+
+    def fake_inject(ctx_arg, entry, index, visibility_path, img_config):
+        calls.append({
+            "backend": "wsclean_predict",
+            "index": index,
+            "visibility_path": str(visibility_path),
+        })
+        return {
+            "model_paths": [
+                ctx.work_dir / f"model_entry_{index + 1:02d}_static_stokes-0000-model.fits",
+            ],
+        }
+
+    monkeypatch.setattr(
+        "skasim.loaders.wsclean_predict.inject_static_stokes_i_with_wsclean_predict",
+        fake_inject,
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.merge_model_data_into_data",
+        lambda visibility_path: calls.append({"merged": str(visibility_path)}),
+    )
+
+    inject_image_models(ctx, visibility_path=Path("fake.ms"))
+
+    assert len(calls) == 2
+    assert calls[0]["backend"] == "wsclean_predict"
+    assert calls[0]["index"] == 0
+    assert any(c.get("merged") == "fake.ms" for c in calls)
+
+    outputs = [o for o in ctx.manifest.outputs if o.kind == "sky_model"]
+    assert len(outputs) == 1
+    assert outputs[0].metadata["model_type"] == "static_stokes_maps"
+
+
+def test_inject_static_stokes_i_generates_per_channel_fits(tmp_path, monkeypatch):
+    """The real injection function writes one FITS per channel."""
+    image_path = _write_static_stokes_image(tmp_path, shape=(64, 64))
+    cfg = SimConfig(
+        output_dir=str(tmp_path / "run"),
+        models=[
+            StaticStokesMapsModelEntry(
+                type="static_stokes_maps", stokes_i=str(image_path)
+            )
+        ],
+        observation=ObsConfig(
+            frequency_mhz=700.0,
+            bandwidth_mhz=100.0,
+            n_channels=4,
+            observation_time_s=1,
+        ),
+        imaging=[ImgConfig(pixels=64, imager="wsclean")],
+    )
+    ctx = create_run_context(cfg)
+
+    run_calls = []
+    monkeypatch.setattr(
+        "skasim.loaders.wsclean_predict.run_wsclean_predict",
+        lambda **kwargs: run_calls.append(kwargs),
+    )
+
+    report = inject_static_stokes_i_with_wsclean_predict(
+        ctx, cfg.models[0], 0, Path("fake.ms"), cfg.imaging[0]
+    )
+
+    assert report["n_channels"] == 4
+    assert len(report["model_paths"]) == 4
+    for i, path_str in enumerate(report["model_paths"]):
+        path = Path(path_str)
+        assert path.exists()
+        assert path.name == f"model_entry_01_static_stokes-{i:04d}-model.fits"
+        with fits.open(path) as hdul:
+            hdu = hdul[0]
+            assert hdu.header["NAXIS"] == 3  # type: ignore[union-attr]
+            assert hdu.header["NAXIS3"] == 1  # type: ignore[union-attr]
+            assert hdu.header["CTYPE3"] == "FREQ"  # type: ignore[union-attr]
+            expected_freq = (700.0 - 100.0 / 2.0 + (i + 0.5) * 100.0 / 4.0) * 1e6
+            assert hdu.header["CRVAL3"] == pytest.approx(expected_freq)  # type: ignore[union-attr]
+    assert len(run_calls) == 1
+    assert run_calls[0]["n_channels"] == 4
+
+
+def test_weblog_renders_static_stokes_map_preview(tmp_path, monkeypatch):
+    """The weblog shows a preview for a static_stokes_maps model entry."""
+    image_path = _write_static_stokes_image(tmp_path, shape=(64, 64))
+    cfg = SimConfig(
+        output_dir=str(tmp_path / "run"),
+        models=[
+            StaticStokesMapsModelEntry(
+                type="static_stokes_maps", stokes_i=str(image_path)
+            )
+        ],
+        imaging=[ImgConfig(pixels=64, imager="wsclean")],
+    )
+    ctx = create_run_context(cfg)
+    preview_calls = []
+
+    def fake_preview(*args, **kwargs):
+        preview_calls.append((args, kwargs))
+
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.previews.write_fits_preview",
+        fake_preview,
+    )
+
+    from skasim.loaders.image_models.previews import write_image_model_previews as _previews
+
+    _previews(ctx, 1.0 * u.deg)
+
+    assert len(preview_calls) == 1
+    assert preview_calls[0][0][0] == image_path
 
 
 # ---------------------------------------------------------------------------

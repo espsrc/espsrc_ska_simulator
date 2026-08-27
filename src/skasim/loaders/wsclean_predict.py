@@ -263,6 +263,126 @@ def inject_spectral_cube_with_wsclean_predict(
     }
 
 
+def inject_static_stokes_i_with_wsclean_predict(
+    ctx,
+    entry,
+    index: int,
+    visibility_path: Path,
+    img_config: ImgConfig,
+) -> dict:
+    """Inject a static Stokes I model using ``wsclean -predict``.
+
+    The input is a single 2D spatial FITS image in Jy/pixel. It is converted
+    into per-channel model images following WSClean's ``<prefix>-NNNN-model.fits``
+    convention. Each channel is a spectrally-flat copy of the input image with
+    frequency metadata taken from the observation spectral window.
+    ``wsclean -predict`` then fills the MODEL_DATA column of the MS.
+    """
+    prefix = f"model_entry_{index + 1:02d}_static_stokes"
+    model_dir = ctx.work_dir / f"{prefix}_models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    stokes_path = Path(entry.stokes_i).expanduser().resolve()
+    with fits.open(stokes_path) as hdul:
+        hdu = hdul[0]
+        data = np.asarray(hdu.data, dtype=float).squeeze()  # type: ignore[union-attr]
+        header_template = hdu.header.copy()  # type: ignore[union-attr]
+
+    if data.ndim != 2:
+        raise ValueError(
+            f"static_stokes_maps stokes_i must be 2D; got shape {data.shape}"
+        )
+
+    cdelt1 = abs(float(header_template.get("CDELT1", 0.0)))
+    cdelt2 = abs(float(header_template.get("CDELT2", 0.0)))
+    if cdelt1 <= 0.0 or cdelt2 <= 0.0:
+        raise ValueError(
+            f"model header missing CDELT1/CDELT2; cannot determine pixel size"
+        )
+    pixel_size_deg = 0.5 * (cdelt1 + cdelt2)
+    pixel_size_arcsec = pixel_size_deg * 3600.0
+
+    ny, nx = data.shape
+    if ny != nx:
+        logger.warning(
+            "static_stokes_maps model image is not square ({}×{}); WSClean predict "
+            "will use {} pixels for both dimensions, which may distort the model.",
+            nx, ny, nx,
+        )
+    n_pixels = nx
+
+    obs = ctx.config.observation
+    n_channels = obs.n_channels
+    center_hz = obs.frequency_mhz * 1e6
+    bandwidth_hz = obs.bandwidth_mhz * 1e6
+    if n_channels < 1:
+        raise ValueError(f"observation.n_channels must be >= 1, got {n_channels}")
+    chan_width_hz = bandwidth_hz / n_channels
+    start_hz = center_hz - bandwidth_hz / 2.0
+
+    model_paths: list[Path] = []
+    for i in range(n_channels):
+        freq_hz = start_hz + (i + 0.5) * chan_width_hz
+
+        hdr = header_template.copy()
+        for key in list(hdr.keys()):
+            if key.startswith("NAXIS") and key != "NAXIS":
+                hdr.remove(key)
+        hdr["NAXIS"] = 3
+        hdr["NAXIS1"] = nx
+        hdr["NAXIS2"] = ny
+        hdr["NAXIS3"] = 1
+
+        for k in (
+            "CTYPE1", "CRPIX1", "CRVAL1", "CDELT1", "CUNIT1",
+            "CTYPE2", "CRPIX2", "CRVAL2", "CDELT2", "CUNIT2",
+        ):
+            if k in header_template:
+                hdr[k] = header_template[k]
+
+        hdr["CTYPE3"] = "FREQ"
+        hdr["CRPIX3"] = 1.0
+        hdr["CRVAL3"] = freq_hz
+        hdr["CDELT3"] = chan_width_hz
+        hdr["CUNIT3"] = "Hz"
+        hdr["BUNIT"] = header_template.get("BUNIT", "Jy/pixel")
+
+        path = model_dir / f"{prefix}-{i:04d}-model.fits"
+        fits.writeto(path, data[np.newaxis, :, :], hdr, overwrite=True)
+        model_paths.append(path)
+
+    logger.info(
+        f"wrote {len(model_paths)} per-channel model FITS for static Stokes I "
+        f"WSClean predict under {model_dir}"
+    )
+
+    wsclean_command = img_config.wsclean_predict_command or img_config.wsclean_command
+
+    run_wsclean_predict(
+        wsclean_command=wsclean_command,
+        visibility_path=visibility_path,
+        img_config=img_config,
+        prefix=prefix,
+        n_channels=n_channels,
+        work_dir=model_dir,
+        pixel_size_arcsec=pixel_size_arcsec,
+        n_pixels=n_pixels,
+    )
+
+    return {
+        "model_entry_index": index,
+        "model_type": entry.type,
+        "backend": "wsclean_predict",
+        "n_channels": len(model_paths),
+        "prefix": prefix,
+        "model_dir": str(model_dir),
+        "model_paths": [str(p) for p in model_paths],
+        "pixel_size_arcsec": pixel_size_arcsec,
+        "n_pixels": n_pixels,
+        "wsclean_command": wsclean_command,
+    }
+
+
 def inject_continuum_i_alpha_with_wsclean_predict(
     ctx,
     entry,
@@ -417,6 +537,7 @@ def inject_continuum_i_alpha_with_wsclean_predict(
 __all__ = [
     "build_wsclean_predict_argv",
     "inject_continuum_i_alpha_with_wsclean_predict",
+    "inject_static_stokes_i_with_wsclean_predict",
     "inject_spectral_cube_with_wsclean_predict",
     "merge_model_data_into_data",
     "run_wsclean_predict",
