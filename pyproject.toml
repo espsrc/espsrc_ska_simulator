@@ -30,6 +30,14 @@ docs = [
     "sphinx-rtd-theme>=3.1.0",
     "sphinx-autodoc-typehints>=2.3.0,<4",
 ]
+dev = [
+    "pre-commit>=4.0",
+    "ruff>=0.12",
+]
+
+
+[tool.ruff.lint]
+extend-select = ["I"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
