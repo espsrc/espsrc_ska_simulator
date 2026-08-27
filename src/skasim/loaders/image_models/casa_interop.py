@@ -4,38 +4,31 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
-import warnings
 
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.wcs import FITSFixedWarning, WCS
+from astropy.wcs import WCS, FITSFixedWarning
 from loguru import logger
 
 from ...config import (
     CasaTaylorTermsModelEntry,
     ContinuumIAlphaModelEntry,
-    ObsConfig,
-    SimConfig,
     SpectralCubeModelEntry,
 )
 from ...manifest import RunContext
 from ...runtime import require_casacore
 from .fits_io import (
-    FitsCubeInfo,
     _ACCEPTED_JY_PER_PIXEL_UNITS,
     _find_frequency_axis,
     _fits_axis_to_numpy,
     _freq_axis_centres,
     _reorder_cube_axes,
     _squeeze_degenerate_axes,
-    read_fits_cube_info,
-    validate_continuum_i_alpha,
-    validate_spectral_cube,
 )
-
 
 # suppress fits formatting fixes
 warnings.simplefilter("ignore", category=FITSFixedWarning)
@@ -252,15 +245,13 @@ def prepare_spectral_cube_for_casa(
         n_freq_out = len(freqs_out_hz)
     else:
         if obs.channel_width_mhz is None or obs.frequency_mhz is None:
-            raise ValueError(
-                "Cannot determine output spectral grid from MS or config"
-            )
+            raise ValueError("Cannot determine output spectral grid from MS or config")
         n_freq_out = obs.n_channels
         obs_df_hz = obs.channel_width_mhz * 1e6
         obs_center_hz = obs.frequency_mhz * 1e6
-        freqs_out_hz = obs_center_hz + (
-            np.arange(n_freq_out) - (n_freq_out - 1) / 2.0
-        ) * obs_df_hz
+        freqs_out_hz = (
+            obs_center_hz + (np.arange(n_freq_out) - (n_freq_out - 1) / 2.0) * obs_df_hz
+        )
 
     if obs_df_hz == 0:
         raise ValueError("output channel width is 0; cannot build output grid")
@@ -275,17 +266,17 @@ def prepare_spectral_cube_for_casa(
     ms_min_hz, ms_max_hz = float(freqs_out_hz[0]), float(freqs_out_hz[-1])
     logger.info(
         f"spectral cube input: {n_freq_in} channels, "
-        f"[{cube_min_hz/1e6:.6f}, {cube_max_hz/1e6:.6f}] MHz, "
+        f"[{cube_min_hz / 1e6:.6f}, {cube_max_hz / 1e6:.6f}] MHz, "
         f"data min={float(data_in.min()):.3e} max={float(data_in.max()):.3e} mean={float(data_in.mean()):.3e}"
     )
     logger.info(
-        f"MS output grid: {n_freq_out} channels x {obs_df_hz/1e6:.6f} MHz, "
-        f"[{ms_min_hz/1e6:.6f}, {ms_max_hz/1e6:.6f}] MHz"
+        f"MS output grid: {n_freq_out} channels x {obs_df_hz / 1e6:.6f} MHz, "
+        f"[{ms_min_hz / 1e6:.6f}, {ms_max_hz / 1e6:.6f}] MHz"
     )
     if cube_max_hz < ms_min_hz or cube_min_hz > ms_max_hz:
         raise ValueError(
-            f"spectral cube [{cube_min_hz/1e6:.3f}, {cube_max_hz/1e6:.3f}] MHz "
-            f"does not overlap MS grid [{ms_min_hz/1e6:.3f}, {ms_max_hz/1e6:.3f}] MHz"
+            f"spectral cube [{cube_min_hz / 1e6:.3f}, {cube_max_hz / 1e6:.3f}] MHz "
+            f"does not overlap MS grid [{ms_min_hz / 1e6:.3f}, {ms_max_hz / 1e6:.3f}] MHz"
         )
 
     data_ordered = _reorder_cube_axes(data_in, header_in)
@@ -311,8 +302,6 @@ def prepare_spectral_cube_for_casa(
     if phase_center is None:
         try:
             wcs = WCS(header_in).celestial
-            ra_fits_axis = spatial_axes[0]
-            dec_fits_axis = spatial_axes[1]
             center_x = (n_ra_in - 1) / 2.0
             center_y = (n_dec_in - 1) / 2.0
             sky = wcs.pixel_to_world(center_x, center_y)
@@ -378,7 +367,9 @@ def prepare_spectral_cube_for_casa(
     header["RESTFRQ"] = float(np.mean(freqs_out_hz))
     header["SPECSYS"] = "LSRK"
     header["SSYSOBS"] = "LSRK"
-    header["HISTORY"] = "resampled to MS spectral grid by skasim.prepare_spectral_cube_for_casa"
+    header["HISTORY"] = (
+        "resampled to MS spectral grid by skasim.prepare_spectral_cube_for_casa"
+    )
 
     # wsclean -predict expects one 2D FITS per channel named <prefix>-NNNN-model.fits.
     # We keep the full resampled cube as a reference FITS but do not import to CASA.
@@ -608,13 +599,16 @@ def prepare_continuum_i_alpha_for_casa(
     )
 
 
-
-def _as_4d_image(data: np.ndarray, header: fits.Header, reference_freq_hz: float) -> tuple[np.ndarray, fits.Header]:
+def _as_4d_image(
+    data: np.ndarray, header: fits.Header, reference_freq_hz: float
+) -> tuple[np.ndarray, fits.Header]:
     """Return a 4D view (FREQ, STOKES, Y, X) of a 2D FITS image plus an updated header."""
     # collapse any leading degenerate axes and validate spatial dimensions
     flat = np.asarray(data).squeeze()
     if flat.ndim != 2:
-        raise ValueError(f"continuum_i_alpha expects a 2D spatial image; got shape {data.shape}")
+        raise ValueError(
+            f"continuum_i_alpha expects a 2D spatial image; got shape {data.shape}"
+        )
     ny, nx = flat.shape
     image_4d = flat.reshape(1, 1, ny, nx)
 
@@ -641,12 +635,13 @@ def _as_4d_image(data: np.ndarray, header: fits.Header, reference_freq_hz: float
     return image_4d, new_header
 
 
-
 def _broadcast_to_4d(data: np.ndarray) -> np.ndarray:
     """Collapse leading degenerate axes and broadcast a 2D spatial map to 4D."""
     flat = np.asarray(data).squeeze()
     if flat.ndim != 2:
-        raise ValueError(f"continuum_i_alpha alpha map must be 2D spatial; got shape {data.shape}")
+        raise ValueError(
+            f"continuum_i_alpha alpha map must be 2D spatial; got shape {data.shape}"
+        )
     return flat.reshape(1, 1, *flat.shape)
 
 
@@ -716,7 +711,6 @@ def _image_has_spectral_axis(image_path: Path) -> bool:
             return any("freq" in name for name in dim_names)
 
     return False
-
 
 
 def _set_crval4_via_script(

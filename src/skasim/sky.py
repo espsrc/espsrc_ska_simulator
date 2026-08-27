@@ -1,6 +1,5 @@
 import os
-import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import astropy.coordinates as acoord
 import numpy as np
@@ -12,15 +11,13 @@ from astropy.time import Time
 from astropy.utils.iers import conf as iers_conf
 from loguru import logger
 
-from .utils import get_diameter
-
 
 class Source:
     def __init__(
         self,
         ra,
         dec,
-        I,
+        I,  # noqa: E741 - preserve the public Stokes-I argument name
         Q=0 * u.Jy,
         U=0 * u.Jy,
         V=0 * u.Jy,
@@ -306,12 +303,11 @@ class Source:
                     src.obj_id = row["ID"]
                 sources.append(src)
 
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed to create source from row")
                 continue
 
         return sources
-
 
     def __str__(self):
         # return a string representation of the source (only non-zero values)
@@ -400,8 +396,6 @@ class Source:
         iers_conf.auto_max_age = None
 
         midnight = Time(f"{date} 00:00:00") + 12 * u.hour  # mediodía UTC
-        delta = timedelta(minutes=1)
-
         best_time = None
         max_alt = -90
 
@@ -420,12 +414,20 @@ class Source:
         if len(data) == 3:
             return Source(ra=data[0], dec=data[1], I=data[2])
         return Source(
-            ra=data[0], dec=data[1], I=data[2],
-            Q=data[3], U=data[4], V=data[5],
-            ref_freq=data[6], spec_index=data[7],
-            rot_meas=data[8], major_axis=data[9],
-            minor_axis=data[10], pa=data[11],
-            true_redshift=data[12], obs_redshift=data[13],
+            ra=data[0],
+            dec=data[1],
+            I=data[2],
+            Q=data[3],
+            U=data[4],
+            V=data[5],
+            ref_freq=data[6],
+            spec_index=data[7],
+            rot_meas=data[8],
+            major_axis=data[9],
+            minor_axis=data[10],
+            pa=data[11],
+            true_redshift=data[12],
+            obs_redshift=data[13],
         )
 
     @staticmethod
@@ -474,6 +476,7 @@ class Source:
 try:
     from karabo.simulation.sky_model import SkyModel as KaraboSkyModel
 except ImportError:
+
     class KaraboSkyModel:
         """Small fallback for lightweight tests when Karabo is not installed."""
 
@@ -504,12 +507,12 @@ class SkyModel(KaraboSkyModel):
         if self.sources is None:
             return []
         import xarray as xr
+
         if isinstance(self.sources, xr.DataArray):
             return [Source.from_sky_model(row.values).to_json() for row in self.sources]
         if isinstance(self.sources, np.ndarray):
             return [Source.from_sky_model(row).to_json() for row in self.sources]
         return [source.to_json() for source in self.sources]
-
 
     def show(self, **kwargs):
         if "block" not in kwargs:
@@ -570,10 +573,8 @@ class SkyModel(KaraboSkyModel):
         if os.path.exists(fits_file):
             source_ref = Source.from_name("HCG16")
             fits_data = fits.open(fits_file)
-            fits_header = fits_data[0].header
             fits_data = fits_data[0].data
             img_pixels = int(fits_data.shape[2])
-            fits_wcs = WCS(fits_header)
             sky_wcs = WCS(naxis=4)  # RA, DEC, Intensities, STOKES
             sky_wcs.wcs.ctype = ["RA---TAN", "DEC--TAN", "FREQ", "STOKES"]
             sky_wcs.wcs.crpix = [fits_data.shape[2] // 2, fits_data.shape[3] // 2, 0, 0]
@@ -601,7 +602,6 @@ class SkyModel(KaraboSkyModel):
                 fluxes / np.max(fluxes) * total_intensity.to(u.Jy).value
             )  # Normalize to max intensity
 
-            sources = []
             total_pixels = fluxes.size
             skyModel = SkyModel(wcs=sky_wcs)
 
@@ -611,7 +611,6 @@ class SkyModel(KaraboSkyModel):
             progress = 0
             total_pixels = indices.shape[0]
             progress_to_print = np.linspace(0, total_pixels, 11, dtype=int)
-            max_flux = np.max(fluxes)
             t0 = time.time()
             logger.debug("Starting conversion...")
             ra_list = []
@@ -674,7 +673,6 @@ class SkyModel(KaraboSkyModel):
         Returns:
         - SkyModel object.
         """
-        from astropy.io import fits
 
         if os.path.exists(fits_file):
             fits_table = Table.read(fits_file)

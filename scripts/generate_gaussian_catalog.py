@@ -1,8 +1,8 @@
-import json
-import numpy as np
-
-import os
 import argparse
+import json
+import os
+
+import numpy as np
 
 
 def generate_catalog(seed: int = 42, n_sources: int = 100):
@@ -39,10 +39,10 @@ def generate_catalog(seed: int = 42, n_sources: int = 100):
             "minor_axis": minor_axis,
             "pa": pa,
             "true_redshift": 0.0,
-            "obs_redshift": 0.0
+            "obs_redshift": 0.0,
         }
         sources.append(src)
-    
+
     os.makedirs("demo_output", exist_ok=True)
     out_path = "demo_output/reference_gaussian_catalog.json"
     with open(out_path, "w") as f:
@@ -90,7 +90,7 @@ def write_ds9_regions(sources, path):
         lines.append(
             "ellipse("
             f"{src['ra']:.10f},{src['dec']:.10f},"
-            f"{src['major_axis']:.6f}\",{src['minor_axis']:.6f}\","
+            f'{src["major_axis"]:.6f}",{src["minor_axis"]:.6f}",'
             f"{ds9_angle:.6f}"
             f") # text={{src_{idx:03d} I={src['I']:.4g} Jy alpha={src['spec_index']:.3f}}}"
         )
@@ -106,9 +106,16 @@ def ds9_angle_from_catalog_pa(pa_deg):
     """Convert catalog PA east of north to DS9 display angle from +x."""
     return (90.0 - float(pa_deg)) % 180.0
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate a deterministic reference sky model catalog.")
-    parser.add_argument("--seed", type=int, default=42, help="Seed for random number generator")
-    parser.add_argument("--n-sources", type=int, default=100, help="Number of sources to generate")
+    parser = argparse.ArgumentParser(
+        description="Generate a deterministic reference sky model catalog."
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Seed for random number generator"
+    )
+    parser.add_argument(
+        "--n-sources", type=int, default=100, help="Number of sources to generate"
+    )
     args = parser.parse_args()
     generate_catalog(seed=args.seed, n_sources=args.n_sources)

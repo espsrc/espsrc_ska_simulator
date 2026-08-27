@@ -28,18 +28,18 @@ class FitsCatalogLoader:
 
     # default astropy units for each position in column_mapping
     _UNIT_BY_POS: Dict[int, UnitBase] = {
-        1: u.deg,       # ra
-        2: u.deg,       # dec
-        3: u.Jy,        # I
-        4: u.Jy,        # Q
-        5: u.Jy,        # U
-        6: u.Jy,        # V
+        1: u.deg,  # ra
+        2: u.deg,  # dec
+        3: u.Jy,  # I
+        4: u.Jy,  # Q
+        5: u.Jy,  # U
+        6: u.Jy,  # V
         7: u.dimensionless_unscaled,  # spectral_index
-        8: u.MHz,       # ref_freq
+        8: u.MHz,  # ref_freq
         9: u.rad / u.m**2,  # rot_meas
-        10: u.arcsec,   # major_axis
-        11: u.arcsec,   # minor_axis
-        12: u.deg,      # pa
+        10: u.arcsec,  # major_axis
+        11: u.arcsec,  # minor_axis
+        12: u.deg,  # pa
     }
 
     def __init__(
@@ -76,7 +76,6 @@ class FitsCatalogLoader:
         return False
 
     def load(self) -> "SkyModel":
-
         if self.has_missing_unit():
             logger.warning("Some mapped columns lack TUNIT; using own FITS loader.")
             return self._load_own(Source, SkyModel)
@@ -130,7 +129,6 @@ class FitsCatalogLoader:
                 kwargs[canon] = float(row[col]) * unit
         return kwargs
 
-
     # Karabo loader (all columns have unit)
     def _load_karabo(self) -> "SkyModel":
         sky_model_module = require_karabo_module("karabo.simulation.sky_model")
@@ -143,32 +141,44 @@ class FitsCatalogLoader:
                 col = hdu1.columns[idx]
                 if col.unit is not None:
                     mapped = mapping_unit(col.unit)
-                    unit_mapping[col.unit] = u.Unit(mapped) if mapped else u.dimensionless_unscaled
+                    unit_mapping[col.unit] = (
+                        u.Unit(mapped) if mapped else u.dimensionless_unscaled
+                    )
 
             prefix_mapping = sky_model_module.SkyPrefixMapping(
                 ra=hdu1.columns.names[self.cols_mapping[1]],
                 dec=hdu1.columns.names[self.cols_mapping[2]],
                 stokes_i=hdu1.columns.names[self.cols_mapping[3]],
                 stokes_q=hdu1.columns.names[self.cols_mapping[4]]
-                if self.cols_mapping[4] > -1 else None,
+                if self.cols_mapping[4] > -1
+                else None,
                 stokes_u=hdu1.columns.names[self.cols_mapping[5]]
-                if self.cols_mapping[5] > -1 else None,
+                if self.cols_mapping[5] > -1
+                else None,
                 stokes_v=hdu1.columns.names[self.cols_mapping[6]]
-                if self.cols_mapping[6] > -1 else None,
+                if self.cols_mapping[6] > -1
+                else None,
                 spectral_index=hdu1.columns.names[self.cols_mapping[7]]
-                if self.cols_mapping[7] > -1 else None,
+                if self.cols_mapping[7] > -1
+                else None,
                 ref_freq=hdu1.columns.names[self.cols_mapping[8]]
-                if self.cols_mapping[8] > -1 else None,
+                if self.cols_mapping[8] > -1
+                else None,
                 rm=hdu1.columns.names[self.cols_mapping[9]]
-                if self.cols_mapping[9] > -1 else None,
+                if self.cols_mapping[9] > -1
+                else None,
                 major=hdu1.columns.names[self.cols_mapping[10]]
-                if self.cols_mapping[10] > -1 else None,
+                if self.cols_mapping[10] > -1
+                else None,
                 minor=hdu1.columns.names[self.cols_mapping[11]]
-                if self.cols_mapping[11] > -1 else None,
+                if self.cols_mapping[11] > -1
+                else None,
                 pa=hdu1.columns.names[self.cols_mapping[12]]
-                if self.cols_mapping[12] > -1 else None,
+                if self.cols_mapping[12] > -1
+                else None,
                 id=hdu1.columns.names[self.cols_mapping[0]]
-                if self.cols_mapping[0] > -1 else None,
+                if self.cols_mapping[0] > -1
+                else None,
             )
 
         units_sources = sky_model_module.SkySourcesUnits(

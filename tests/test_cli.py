@@ -1,7 +1,6 @@
 """CLI configuration behavior."""
 
 import json
-import tempfile
 
 import pytest
 from pydantic import ValidationError

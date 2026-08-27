@@ -17,7 +17,6 @@ from loguru import logger
 from .config import ImgConfig, has_spectral_cube_model
 from .manifest import RunContext
 from .runtime import require_karabo_module
-from .utils import mapping_unit
 
 SKY_MODEL_CMAP = "viridis_r"
 
@@ -257,7 +256,7 @@ def run_wsclean_imaging(
             continue
         try:
             tmp.unlink()
-        except Exception as exc:
+        except Exception:
             logger.exception("Failed to clean up temp file %s", tmp)
 
     wsclean_outputs = collect_wsclean_outputs(work_dir, output_prefix)
@@ -521,7 +520,6 @@ def write_sky_model_previews(
     import matplotlib
 
     matplotlib.use("Agg", force=True)
-    import matplotlib.pyplot as plt
     from matplotlib.colors import LogNorm
 
     sources = sky_model.to_json()

@@ -117,7 +117,9 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
             "fits": output.path,
             "preview": str(preview.relative_to(work_dir)) if preview.exists() else None,
             "data": _file_to_base64_data_uri(preview) if preview.exists() else None,
-            "beam": _read_fits_beam(fpath) if key in ("model", "clean", "residual", "dirty", "psf") else None,
+            "beam": _read_fits_beam(fpath)
+            if key in ("model", "clean", "residual", "dirty", "psf")
+            else None,
         }
 
     for product in products.values():
@@ -135,7 +137,15 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
         for product in products.values()
         if any(
             product.get(k)
-            for k in ("model", "clean", "residual", "dirty", "cube", "moment8", "avg_spectrum")
+            for k in (
+                "model",
+                "clean",
+                "residual",
+                "dirty",
+                "cube",
+                "moment8",
+                "avg_spectrum",
+            )
         )
     ]
 
@@ -261,7 +271,6 @@ def _imager_parameter_rows_for_block(
     """Return the effective OSKAR or WSClean parameters for a single ImgConfig block."""
     config = manifest.config
     n_channels = int(config.observation.n_channels or 1)
-    channels_out = min(n_channels, 8)
     output_prefix = _first_image_product_id(manifest, img_config.imager)
     visibility_input = _first_output_path(manifest, "visibility")
     pixel_size_arcsec = None

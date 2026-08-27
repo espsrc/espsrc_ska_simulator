@@ -82,8 +82,16 @@ def write_per_channel_model_fits(
         hdr["NAXIS3"] = 1
 
         for k in (
-            "CTYPE1", "CRPIX1", "CRVAL1", "CDELT1", "CUNIT1",
-            "CTYPE2", "CRPIX2", "CRVAL2", "CDELT2", "CUNIT2",
+            "CTYPE1",
+            "CRPIX1",
+            "CRVAL1",
+            "CDELT1",
+            "CUNIT1",
+            "CTYPE2",
+            "CRPIX2",
+            "CRVAL2",
+            "CDELT2",
+            "CUNIT2",
         ):
             if k in header_template:
                 hdr[k] = header_template[k]
@@ -297,7 +305,7 @@ def inject_static_stokes_i_with_wsclean_predict(
     cdelt2 = abs(float(header_template.get("CDELT2", 0.0)))
     if cdelt1 <= 0.0 or cdelt2 <= 0.0:
         raise ValueError(
-            f"model header missing CDELT1/CDELT2; cannot determine pixel size"
+            "model header missing CDELT1/CDELT2; cannot determine pixel size"
         )
     pixel_size_deg = 0.5 * (cdelt1 + cdelt2)
     pixel_size_arcsec = pixel_size_deg * 3600.0
@@ -307,7 +315,9 @@ def inject_static_stokes_i_with_wsclean_predict(
         logger.warning(
             "static_stokes_maps model image is not square ({}×{}); WSClean predict "
             "will use {} pixels for both dimensions, which may distort the model.",
-            nx, ny, nx,
+            nx,
+            ny,
+            nx,
         )
     n_pixels = nx
 
@@ -334,8 +344,16 @@ def inject_static_stokes_i_with_wsclean_predict(
         hdr["NAXIS3"] = 1
 
         for k in (
-            "CTYPE1", "CRPIX1", "CRVAL1", "CDELT1", "CUNIT1",
-            "CTYPE2", "CRPIX2", "CRVAL2", "CDELT2", "CUNIT2",
+            "CTYPE1",
+            "CRPIX1",
+            "CRVAL1",
+            "CDELT1",
+            "CUNIT1",
+            "CTYPE2",
+            "CRPIX2",
+            "CRVAL2",
+            "CDELT2",
+            "CUNIT2",
         ):
             if k in header_template:
                 hdr[k] = header_template[k]
@@ -446,7 +464,7 @@ def inject_continuum_i_alpha_with_wsclean_predict(
     cdelt2 = abs(float(header_template.get("CDELT2", 0.0)))
     if cdelt1 <= 0.0 or cdelt2 <= 0.0:
         raise ValueError(
-            f"model header missing CDELT1/CDELT2; cannot determine pixel size"
+            "model header missing CDELT1/CDELT2; cannot determine pixel size"
         )
     # Average pixel size in arcseconds (FITS CDELT is in degrees).
     pixel_size_deg = 0.5 * (cdelt1 + cdelt2)
@@ -457,7 +475,9 @@ def inject_continuum_i_alpha_with_wsclean_predict(
         logger.warning(
             "continuum_i_alpha model image is not square ({}×{}); WSClean predict "
             "will use {} pixels for both dimensions, which may distort the model.",
-            nx, ny, nx,
+            nx,
+            ny,
+            nx,
         )
     n_pixels = nx
 
@@ -486,8 +506,16 @@ def inject_continuum_i_alpha_with_wsclean_predict(
         hdr["NAXIS3"] = 1
 
         for k in (
-            "CTYPE1", "CRPIX1", "CRVAL1", "CDELT1", "CUNIT1",
-            "CTYPE2", "CRPIX2", "CRVAL2", "CDELT2", "CUNIT2",
+            "CTYPE1",
+            "CRPIX1",
+            "CRVAL1",
+            "CDELT1",
+            "CUNIT1",
+            "CTYPE2",
+            "CRPIX2",
+            "CRVAL2",
+            "CDELT2",
+            "CUNIT2",
         ):
             if k in header_template:
                 hdr[k] = header_template[k]

@@ -8,7 +8,6 @@ from types import ModuleType
 import astropy.units as u
 import numpy as np
 import pytest
-from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
 
@@ -27,10 +26,8 @@ from skasim.loaders.image_models import (
     prepare_casa_taylor_terms,
     prepare_spectral_cube_for_casa,
     read_fits_cube_info,
-    run_casa_exportfits,
     run_casa_ft,
     run_casa_importfits,
-    run_casa_set_spectral_coordinate,
     validate_casa_taylor_terms,
     validate_continuum_i_alpha,
     validate_spectral_cube,
@@ -38,9 +35,7 @@ from skasim.loaders.image_models import (
     write_image_model_previews,
 )
 from skasim.loaders.wsclean_predict import (
-    inject_spectral_cube_with_wsclean_predict,
     inject_static_stokes_i_with_wsclean_predict,
-    run_wsclean_predict,
 )
 from skasim.manifest import RunManifest, create_run_context
 from skasim.weblog import render_weblog
@@ -191,7 +186,6 @@ def test_weblog_renders_fits_model_preview(tmp_path):
     assert "continuum_i_alpha" in html
 
 
-
 def test_weblog_renders_existing_fits_model_output(tmp_path):
     """The weblog can render a pre-recorded FITS model preview output."""
     manifest = RunManifest(
@@ -247,7 +241,9 @@ def test_weblog_renders_casa_taylor_term_preview(tmp_path, monkeypatch):
         stokes_i, _ = _write_model_pair(tmp_path, shape=(32, 32))
         fitsimage.write_bytes(stokes_i.read_bytes())
 
-    monkeypatch.setattr("skasim.loaders.image_models.previews.run_casa_exportfits", fake_export)
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.previews.run_casa_exportfits", fake_export
+    )
 
     write_image_model_previews(
         ctx,
@@ -305,10 +301,13 @@ def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypat
         "skasim.loaders.image_models.prepare_continuum_i_alpha_for_casa", fake_prepare
     )
     monkeypatch.setattr(
-        "skasim.loaders.image_models.casa_interop.prepare_continuum_i_alpha_for_casa", fake_prepare
+        "skasim.loaders.image_models.casa_interop.prepare_continuum_i_alpha_for_casa",
+        fake_prepare,
     )
     monkeypatch.setattr("skasim.loaders.image_models.run_casa_ft", fake_run_casa_ft)
-    monkeypatch.setattr("skasim.loaders.image_models.casa_interop.run_casa_ft", fake_run_casa_ft)
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.run_casa_ft", fake_run_casa_ft
+    )
     monkeypatch.setattr(
         "skasim.loaders.image_models.merge_model_data_into_data",
         lambda visibility_path: calls.append({"merged": str(visibility_path)}),
@@ -336,7 +335,9 @@ def test_inject_image_models_runs_continuum_entries_in_order(tmp_path, monkeypat
     assert any(c.get("merged") == "fake.ms" for c in calls)
 
 
-def test_inject_image_models_runs_continuum_entries_with_wsclean_predict(tmp_path, monkeypatch):
+def test_inject_image_models_runs_continuum_entries_with_wsclean_predict(
+    tmp_path, monkeypatch
+):
     """Two continuum entries run wsclean-predict in order and merge once."""
     stokes_i, alpha = _write_model_pair(tmp_path)
     cfg = SimConfig(
@@ -374,18 +375,21 @@ def test_inject_image_models_runs_continuum_entries_with_wsclean_predict(tmp_pat
         return Product(index)
 
     def fake_inject(ctx_arg, entry, index, visibility_path, img_config, product):
-        calls.append({
-            "backend": "wsclean_predict",
-            "index": index,
-            "visibility_path": str(visibility_path),
-        })
+        calls.append(
+            {
+                "backend": "wsclean_predict",
+                "index": index,
+                "visibility_path": str(visibility_path),
+            }
+        )
         return {"backend": "wsclean_predict"}
 
     monkeypatch.setattr(
         "skasim.loaders.image_models.prepare_continuum_i_alpha_for_casa", fake_prepare
     )
     monkeypatch.setattr(
-        "skasim.loaders.image_models.casa_interop.prepare_continuum_i_alpha_for_casa", fake_prepare
+        "skasim.loaders.image_models.casa_interop.prepare_continuum_i_alpha_for_casa",
+        fake_prepare,
     )
     monkeypatch.setattr(
         "skasim.loaders.wsclean_predict.inject_continuum_i_alpha_with_wsclean_predict",
@@ -657,7 +661,9 @@ def test_run_casa_importfits_uses_batch_fallback(tmp_path, monkeypatch):
         "skasim.loaders.image_models.casa_interop.require_casa_executable",
         lambda: Path("/opt/casa/bin/casa"),
     )
-    monkeypatch.setattr("skasim.loaders.image_models.casa_interop.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.subprocess.run", fake_run
+    )
 
     run_casa_importfits(
         tmp_path,
@@ -763,7 +769,9 @@ def test_run_casa_ft_uses_batch_fallback(tmp_path, monkeypatch):
         "skasim.loaders.image_models.casa_interop.require_casa_executable",
         lambda: Path("/opt/casa/bin/casa"),
     )
-    monkeypatch.setattr("skasim.loaders.image_models.casa_interop.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.subprocess.run", fake_run
+    )
 
     run_casa_ft(
         visibility_path=tmp_path / "visibilities.MS",
@@ -892,9 +900,7 @@ def test_validate_static_stokes_maps_rejects_jy_per_beam(tmp_path):
         validate_static_stokes_maps(entry, obs, img)
 
 
-def test_inject_static_stokes_i_runs_wsclean_predict_and_merges(
-    tmp_path, monkeypatch
-):
+def test_inject_static_stokes_i_runs_wsclean_predict_and_merges(tmp_path, monkeypatch):
     """Static Stokes I injection writes per-channel models and runs predict."""
     image_path = _write_static_stokes_image(tmp_path, shape=(64, 64))
     cfg = SimConfig(
@@ -916,14 +922,17 @@ def test_inject_static_stokes_i_runs_wsclean_predict_and_merges(
     calls = []
 
     def fake_inject(ctx_arg, entry, index, visibility_path, img_config):
-        calls.append({
-            "backend": "wsclean_predict",
-            "index": index,
-            "visibility_path": str(visibility_path),
-        })
+        calls.append(
+            {
+                "backend": "wsclean_predict",
+                "index": index,
+                "visibility_path": str(visibility_path),
+            }
+        )
         return {
             "model_paths": [
-                ctx.work_dir / f"model_entry_{index + 1:02d}_static_stokes-0000-model.fits",
+                ctx.work_dir
+                / f"model_entry_{index + 1:02d}_static_stokes-0000-model.fits",
             ],
         }
 
@@ -1018,7 +1027,9 @@ def test_weblog_renders_static_stokes_map_preview(tmp_path, monkeypatch):
         fake_preview,
     )
 
-    from skasim.loaders.image_models.previews import write_image_model_previews as _previews
+    from skasim.loaders.image_models.previews import (
+        write_image_model_previews as _previews,
+    )
 
     _previews(ctx, 1.0 * u.deg)
 
@@ -1031,7 +1042,9 @@ def test_weblog_renders_static_stokes_map_preview(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _write_spectral_cube(tmp_path, n_channels=8, pixels=64, freq_mhz=700.0, df_mhz=12.5):
+def _write_spectral_cube(
+    tmp_path, n_channels=8, pixels=64, freq_mhz=700.0, df_mhz=12.5
+):
     """Create a minimal 3D FITS spectral cube with valid WCS."""
     cube_path = tmp_path / "cube.fits"
     data = np.zeros((n_channels, pixels, pixels), dtype=np.float32)
@@ -1105,7 +1118,9 @@ def test_read_fits_cube_info_squeezes_4d_degenerate_stokes(tmp_path):
 
 def test_validate_spectral_cube_accepts_matching_config(tmp_path):
     """Matching cube/config passes validation and returns metadata."""
-    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=64, freq_mhz=700.0, df_mhz=12.5)
+    cube_path = _write_spectral_cube(
+        tmp_path, n_channels=8, pixels=64, freq_mhz=700.0, df_mhz=12.5
+    )
     obs = ObsConfig(bandwidth_mhz=100.0, n_channels=8)
     img = ImgConfig(pixels=64)
     entry = SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path))
@@ -1118,10 +1133,14 @@ def test_validate_spectral_cube_accepts_matching_config(tmp_path):
     assert report["unit"] == "jy/px"
 
 
-def test_validate_spectral_cube_accepts_mismatched_grid_when_cube_is_inside_observation(tmp_path):
+def test_validate_spectral_cube_accepts_mismatched_grid_when_cube_is_inside_observation(
+    tmp_path,
+):
     """Cube spectral sampling may differ from observation; it only needs to lie within the observation band."""
     # cube: 4 channels x 12.5 MHz, centred at 700 MHz -> 668.75-731.25 MHz
-    cube_path = _write_spectral_cube(tmp_path, n_channels=4, pixels=64, freq_mhz=700.0, df_mhz=12.5)
+    cube_path = _write_spectral_cube(
+        tmp_path, n_channels=4, pixels=64, freq_mhz=700.0, df_mhz=12.5
+    )
     # observation: 8 channels x 12.5 MHz, centred at 700 MHz -> 643.75-756.25 MHz
     obs = ObsConfig(frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8)
     img = ImgConfig(pixels=64)
@@ -1138,7 +1157,9 @@ def test_validate_spectral_cube_accepts_mismatched_grid_when_cube_is_inside_obse
 def test_validate_spectral_cube_rejects_when_cube_exceeds_observation(tmp_path):
     """Cube frequency range must not extend beyond the observation band."""
     # cube: 16 channels x 12.5 MHz, centred at 900 MHz -> 806.25-993.75 MHz
-    cube_path = _write_spectral_cube(tmp_path, n_channels=16, pixels=64, freq_mhz=900.0, df_mhz=12.5)
+    cube_path = _write_spectral_cube(
+        tmp_path, n_channels=16, pixels=64, freq_mhz=900.0, df_mhz=12.5
+    )
     # observation: 8 channels x 12.5 MHz, centred at 700 MHz -> 643.75-756.25 MHz
     obs = ObsConfig(frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8)
     img = ImgConfig(pixels=64)
@@ -1151,7 +1172,9 @@ def test_validate_spectral_cube_rejects_when_cube_exceeds_observation(tmp_path):
 def test_validate_spectral_cube_accepts_narrow_cube_inside_wide_observation(tmp_path):
     """A narrow cube is valid inside a much wider observation band."""
     # cube: 8 channels x 0.925 kHz, centred at 1420.4 MHz (HI line cube)
-    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=64, freq_mhz=1420.4, df_mhz=0.000925)
+    cube_path = _write_spectral_cube(
+        tmp_path, n_channels=8, pixels=64, freq_mhz=1420.4, df_mhz=0.000925
+    )
     # observation: 8 channels x 12.5 MHz, centred at 1420.4 MHz -> much wider
     obs = ObsConfig(frequency_mhz=1420.4, bandwidth_mhz=100.0, n_channels=8)
     img = ImgConfig(pixels=64)
