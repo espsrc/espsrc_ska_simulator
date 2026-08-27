@@ -187,13 +187,35 @@ run).
 
 **3. Static Stokes Maps** (``static_stokes_maps``)
 
-Schema-ready entry for static polarization maps:
+Injects a spectrally flat, spatially extended Stokes-I model through
+``wsclean -predict``. ``skasim`` creates one FITS model plane per observation
+channel, using the observation spectral grid, then WSClean writes the predicted
+visibilities to ``MODEL_DATA``.
 
-- ``stokes_i``, ``stokes_q``, ``stokes_u``, ``stokes_v``: Paths to FITS images.
+- ``stokes_i``: Required 2D spatial FITS image in Jy/pixel. It is copied without
+  flux scaling into every observation channel.
+- The FITS header must provide valid ``CDELT1`` and ``CDELT2`` pixel scales.
+- The image should be square. Non-square inputs are accepted with a warning, but
+  WSClean predict uses the x dimension for both image dimensions and can distort
+  the model.
+- The model frequency reference is the observation channel grid; there is no
+  model-level reference-frequency parameter for this spectrally flat type.
 
-.. note::
-   ``static_stokes_maps`` is accepted by the configuration schema but the CASA
-   backend injection path is planned for a future implementation phase.
+Example (JSON config):
+
+.. code-block:: json
+
+   "models": [
+     {
+       "type": "static_stokes_maps",
+       "stokes_i": "/path/to/model_i.fits"
+     }
+   ]
+
+.. warning::
+   The schema also accepts ``stokes_q``, ``stokes_u`` and ``stokes_v`` paths,
+   but this implementation injects **Stokes I only**. Q/U/V planes are not yet
+   validated or predicted; do not rely on them for polarized simulations.
 
 Spectral Reference Policy
 -------------------------
