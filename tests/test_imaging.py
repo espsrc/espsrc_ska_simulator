@@ -11,17 +11,10 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 
 from skasim.config import (
-    CasaTaylorTermsModelEntry,
-    ComponentSkyModelEntry,
-    ContinuumIAlphaModelEntry,
     ImgConfig,
-    ModelEntry,
     ObsConfig,
     SimConfig,
     SpectralCubeModelEntry,
-    StaticStokesMapsModelEntry,
-    has_spectral_cube_model,
-    spectral_cube_model_entries,
 )
 from skasim.imaging import (
     SKY_MODEL_CMAP,
@@ -40,7 +33,6 @@ from skasim.imaging import (
     write_sky_model_previews,
     wsclean_output_prefix,
 )
-from skasim.loaders.image_models import run_moment8_for_spectral_cube
 from skasim.manifest import create_run_context
 
 
@@ -57,9 +49,7 @@ def test_resolve_spectral_cube_wsclean_config_forces_defaults():
             )
         ]
     )
-    resolved = _resolve_spectral_cube_wsclean_config(
-        config.imaging[0], n_channels=8
-    )
+    resolved = _resolve_spectral_cube_wsclean_config(config.imaging[0], n_channels=8)
     assert resolved.join_channels is False
     assert resolved.multiscale is False
     assert resolved.multiscale_scales is None
@@ -77,9 +67,7 @@ def test_resolve_spectral_cube_wsclean_config_keeps_user_channels_out():
             )
         ]
     )
-    resolved = _resolve_spectral_cube_wsclean_config(
-        config.imaging[0], n_channels=16
-    )
+    resolved = _resolve_spectral_cube_wsclean_config(config.imaging[0], n_channels=16)
     assert resolved.channels_out == 4
 
 
@@ -104,9 +92,7 @@ def test_build_wsclean_argv_spectral_cube_has_no_join_channels():
     assert argv[argv.index("-channels-out") + 1] == "8"
 
 
-def test_run_wsclean_imaging_triggers_moment8_for_spectral_cube(
-    tmp_path, monkeypatch
-):
+def test_run_wsclean_imaging_triggers_moment8_for_spectral_cube(tmp_path, monkeypatch):
     """A spectral cube run calls moment8 after WSClean."""
 
     class FakeImage:
@@ -161,7 +147,11 @@ def test_run_wsclean_imaging_triggers_moment8_for_spectral_cube(
 
     config = SimConfig(
         output_dir=str(tmp_path / "run"),
-        models=[SpectralCubeModelEntry(type="spectral_cube", cube=str(tmp_path / "cube.fits"))],
+        models=[
+            SpectralCubeModelEntry(
+                type="spectral_cube", cube=str(tmp_path / "cube.fits")
+            )
+        ],
         imaging=[ImgConfig(imager="wsclean")],
     )
     ctx = create_run_context(config)
@@ -178,9 +168,7 @@ def test_run_wsclean_imaging_triggers_moment8_for_spectral_cube(
     assert captured["moment8"][2] == config.imaging[0].tag
 
 
-def test_run_wsclean_imaging_skips_moment8_without_spectral_cube(
-    tmp_path, monkeypatch
-):
+def test_run_wsclean_imaging_skips_moment8_without_spectral_cube(tmp_path, monkeypatch):
     """Non-cube runs do not trigger moment8."""
 
     class FakeImage:

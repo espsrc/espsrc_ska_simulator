@@ -1,8 +1,6 @@
 """tests/test_utils.py"""
 
 import json
-import sys
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 

@@ -1,5 +1,9 @@
 """cli.py — command-line entry point (adapted from synthsim.py)"""
 
+# The environment and warning filters must be configured before importing the
+# application modules, which import plotting and xarray dependencies.
+# ruff: noqa: E402
+
 # suppress xarray accessor collision between rascil and ska-sdp-datamodels
 import os
 import warnings

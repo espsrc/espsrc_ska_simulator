@@ -39,5 +39,10 @@ dev = [
 [tool.ruff.lint]
 extend-select = ["I"]
 
+[tool.ruff.lint.per-file-ignores]
+# Legacy standalone scripts rely on runtime path mutation, star-imported names,
+# and other patterns that cannot be safely rewritten as part of a format baseline.
+"scripts/*.py" = ["E402", "E711", "E722", "E741", "F401", "F403", "F405", "F821", "F841"]
+
 [tool.setuptools.packages.find]
 where = ["src"]

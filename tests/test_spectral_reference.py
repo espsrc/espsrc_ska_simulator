@@ -1,22 +1,24 @@
 """Tests for spectral reference adjustment in image models."""
 
-import sys
 from pathlib import Path
-from types import ModuleType
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
-from skasim.config import CasaTaylorTermsModelEntry, ContinuumIAlphaModelEntry, ObsConfig, SimConfig
+from skasim.config import (
+    CasaTaylorTermsModelEntry,
+    ContinuumIAlphaModelEntry,
+    ObsConfig,
+    SimConfig,
+)
 from skasim.loaders.image_models.casa_interop import adjust_spectral_reference
 from skasim.manifest import create_run_context
-from skasim.runtime import CasacoreRuntimeError
-
 
 # ---------------------------------------------------------------------------
 # adjust_spectral_reference tests
 # ---------------------------------------------------------------------------
+
 
 def _make_casa_image_dir(tmp_path, name):
     """Create a minimal CASA image directory with table.dat."""
@@ -58,7 +60,8 @@ def _patch_require_casacore_and_table(monkeypatch, pixel_data_map):
         return FakeTable
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.casa_interop.require_casacore", fake_require_casacore,
+        "skasim.loaders.image_models.casa_interop.require_casacore",
+        fake_require_casacore,
     )
     return written
 
@@ -74,7 +77,10 @@ def test_adjust_spectral_reference_nterms1_crval_only(tmp_path, monkeypatch):
     )
 
     result = adjust_spectral_reference(
-        image_dir, old_ref_hz=1.5e9, new_ref_hz=1.284e9, alpha_map=None,
+        image_dir,
+        old_ref_hz=1.5e9,
+        new_ref_hz=1.284e9,
+        alpha_map=None,
     )
 
     assert result == pytest.approx(1.284e9)
@@ -94,7 +100,8 @@ def test_adjust_spectral_reference_nterms2_scales_pixel_data(tmp_path, monkeypat
     )
 
     written = _patch_require_casacore_and_table(
-        monkeypatch, {str(image_dir): pixel_data},
+        monkeypatch,
+        {str(image_dir): pixel_data},
     )
 
     old_ref = 1.5e9
@@ -103,12 +110,17 @@ def test_adjust_spectral_reference_nterms2_scales_pixel_data(tmp_path, monkeypat
     expected_factor = (new_ref / old_ref) ** alpha
 
     result = adjust_spectral_reference(
-        image_dir, old_ref_hz=old_ref, new_ref_hz=new_ref, alpha_map=np.full_like(pixel_data, alpha),
+        image_dir,
+        old_ref_hz=old_ref,
+        new_ref_hz=new_ref,
+        alpha_map=np.full_like(pixel_data, alpha),
     )
 
     assert result == pytest.approx(new_ref)
     assert str(image_dir) in written
-    np.testing.assert_allclose(written[str(image_dir)], 100.0 * expected_factor, rtol=1e-6)
+    np.testing.assert_allclose(
+        written[str(image_dir)], 100.0 * expected_factor, rtol=1e-6
+    )
 
 
 def test_adjust_spectral_reference_idempotent(tmp_path, monkeypatch):
@@ -122,12 +134,16 @@ def test_adjust_spectral_reference_idempotent(tmp_path, monkeypatch):
     )
 
     written = _patch_require_casacore_and_table(
-        monkeypatch, {str(image_dir): pixel_data},
+        monkeypatch,
+        {str(image_dir): pixel_data},
     )
 
     same_freq = 1.4e9
     result = adjust_spectral_reference(
-        image_dir, old_ref_hz=same_freq, new_ref_hz=same_freq, alpha_map=np.full_like(pixel_data, -0.7),
+        image_dir,
+        old_ref_hz=same_freq,
+        new_ref_hz=same_freq,
+        alpha_map=np.full_like(pixel_data, -0.7),
     )
 
     assert result == pytest.approx(same_freq)
@@ -146,11 +162,15 @@ def test_adjust_spectral_reference_alpha_zero(tmp_path, monkeypatch):
     )
 
     written = _patch_require_casacore_and_table(
-        monkeypatch, {str(image_dir): pixel_data},
+        monkeypatch,
+        {str(image_dir): pixel_data},
     )
 
     result = adjust_spectral_reference(
-        image_dir, old_ref_hz=5.99e9, new_ref_hz=1.284e9, alpha_map=np.zeros_like(pixel_data),
+        image_dir,
+        old_ref_hz=5.99e9,
+        new_ref_hz=1.284e9,
+        alpha_map=np.zeros_like(pixel_data),
     )
 
     assert result == pytest.approx(1.284e9)
@@ -168,16 +188,21 @@ def test_adjust_spectral_reference_positive_alpha(tmp_path, monkeypatch):
     )
 
     written = _patch_require_casacore_and_table(
-        monkeypatch, {str(image_dir): pixel_data},
+        monkeypatch,
+        {str(image_dir): pixel_data},
     )
 
     # alpha = 0.5, old = 1.0 GHz, new = 2.0 GHz
     # factor = (2.0/1.0)^0.5 = sqrt(2)
     # tt0' = 10.0 * sqrt(2) ≈ 14.142
     result = adjust_spectral_reference(
-        image_dir, old_ref_hz=1.0e9, new_ref_hz=2.0e9, alpha_map=np.full_like(pixel_data, 0.5),
+        image_dir,
+        old_ref_hz=1.0e9,
+        new_ref_hz=2.0e9,
+        alpha_map=np.full_like(pixel_data, 0.5),
     )
 
+    assert result == pytest.approx(2.0e9)
     expected = 10.0 * (2.0) ** 0.5
     np.testing.assert_allclose(written[str(image_dir)], expected, rtol=1e-6)
 
@@ -185,6 +210,7 @@ def test_adjust_spectral_reference_positive_alpha(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # prepare_casa_taylor_terms integration tests
 # ---------------------------------------------------------------------------
+
 
 def test_prepare_casa_taylor_terms_adjusts_spectral_reference(tmp_path, monkeypatch):
     """prepare_casa_taylor_terms adjusts reffreq and records a milestone."""
@@ -212,12 +238,14 @@ def test_prepare_casa_taylor_terms_adjusts_spectral_reference(tmp_path, monkeypa
     adjust_calls = []
 
     def fake_adjust(image_path, old_ref_hz, new_ref_hz, alpha_map=None):
-        adjust_calls.append({
-            "image_path": image_path,
-            "old_ref_hz": old_ref_hz,
-            "new_ref_hz": new_ref_hz,
-            "alpha_map": alpha_map,
-        })
+        adjust_calls.append(
+            {
+                "image_path": image_path,
+                "old_ref_hz": old_ref_hz,
+                "new_ref_hz": new_ref_hz,
+                "alpha_map": alpha_map,
+            }
+        )
         return new_ref_hz
 
     monkeypatch.setattr(
@@ -231,6 +259,7 @@ def test_prepare_casa_taylor_terms_adjusts_spectral_reference(tmp_path, monkeypa
     )
 
     from skasim.loaders.image_models import prepare_casa_taylor_terms
+
     product = prepare_casa_taylor_terms(ctx, cfg.models[0], 0)
 
     # reffreq should be observation centre frequency, not config reference
@@ -238,11 +267,17 @@ def test_prepare_casa_taylor_terms_adjusts_spectral_reference(tmp_path, monkeypa
     # two adjust calls: tt0 with element-wise alpha, tt1 scaled by the same factor
     assert len(adjust_calls) == 2
     assert adjust_calls[0]["alpha_map"] is not None  # tt0 gets pixel data correction
-    assert adjust_calls[1]["alpha_map"] is not None  # tt1 also scaled to preserve tt1/tt0 ratio
+    assert (
+        adjust_calls[1]["alpha_map"] is not None
+    )  # tt1 also scaled to preserve tt1/tt0 ratio
     # milestone recorded
-    milestone = [m for m in ctx.manifest.milestones if m.name == "adjusted_spectral_reference"]
+    milestone = [
+        m for m in ctx.manifest.milestones if m.name == "adjusted_spectral_reference"
+    ]
     assert len(milestone) == 1
-    assert milestone[0].details["old_reference_frequency_hz"] == pytest.approx(5.991892258e9)
+    assert milestone[0].details["old_reference_frequency_hz"] == pytest.approx(
+        5.991892258e9
+    )
     assert milestone[0].details["new_reference_frequency_hz"] == pytest.approx(1284.0e6)
 
 
@@ -277,6 +312,7 @@ def test_prepare_casa_taylor_terms_nterms1(tmp_path, monkeypatch):
     )
 
     from skasim.loaders.image_models import prepare_casa_taylor_terms
+
     product = prepare_casa_taylor_terms(ctx, cfg.models[0], 0)
 
     assert product.reffreq == f"{1284.0e6}Hz"
@@ -287,6 +323,7 @@ def test_prepare_casa_taylor_terms_nterms1(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # prepare_continuum_i_alpha_for_casa tests
 # ---------------------------------------------------------------------------
+
 
 def test_prepare_continuum_i_alpha_adjusts_spectral_reference(tmp_path, monkeypatch):
     """prepare_continuum_i_alpha_for_casa adjusts reffreq to observation centre."""
@@ -303,10 +340,17 @@ def test_prepare_continuum_i_alpha_adjusts_spectral_reference(tmp_path, monkeypa
 
     stokes_path = tmp_path / "stokes_i.fits"
     alpha_path = tmp_path / "alpha.fits"
-    fits.writeto(stokes_path, np.ones((16, 16), dtype=np.float32), header, overwrite=True)
+    fits.writeto(
+        stokes_path, np.ones((16, 16), dtype=np.float32), header, overwrite=True
+    )
     alpha_header = header.copy()
     alpha_header["BUNIT"] = "1"
-    fits.writeto(alpha_path, np.full((16, 16), -0.7, dtype=np.float32), alpha_header, overwrite=True)
+    fits.writeto(
+        alpha_path,
+        np.full((16, 16), -0.7, dtype=np.float32),
+        alpha_header,
+        overwrite=True,
+    )
 
     cfg = SimConfig(
         models=[
@@ -325,11 +369,13 @@ def test_prepare_continuum_i_alpha_adjusts_spectral_reference(tmp_path, monkeypa
     adjust_calls = []
 
     def fake_adjust(image_path, old_ref_hz, new_ref_hz, alpha_map=None):
-        adjust_calls.append({
-            "old_ref_hz": old_ref_hz,
-            "new_ref_hz": new_ref_hz,
-            "alpha_map": alpha_map,
-        })
+        adjust_calls.append(
+            {
+                "old_ref_hz": old_ref_hz,
+                "new_ref_hz": new_ref_hz,
+                "alpha_map": alpha_map,
+            }
+        )
         return new_ref_hz
 
     monkeypatch.setattr(
@@ -351,7 +397,10 @@ def test_prepare_continuum_i_alpha_adjusts_spectral_reference(tmp_path, monkeypa
         lambda: Path("/opt/casa/bin/casa"),
     )
 
-    from skasim.loaders.image_models.casa_interop import prepare_continuum_i_alpha_for_casa
+    from skasim.loaders.image_models.casa_interop import (
+        prepare_continuum_i_alpha_for_casa,
+    )
+
     product = prepare_continuum_i_alpha_for_casa(ctx, cfg.models[0], 0)
 
     assert product.reffreq == f"{1284.0e6}Hz"
@@ -363,6 +412,8 @@ def test_prepare_continuum_i_alpha_adjusts_spectral_reference(tmp_path, monkeypa
     assert adjust_calls[0]["new_ref_hz"] == pytest.approx(1284.0e6)
     assert adjust_calls[1]["alpha_map"] is None
     # milestone still records the mean spectral index used for pixel scaling
-    milestone = [m for m in ctx.manifest.milestones if m.name == "adjusted_spectral_reference"]
+    milestone = [
+        m for m in ctx.manifest.milestones if m.name == "adjusted_spectral_reference"
+    ]
     assert len(milestone) == 1
     assert milestone[0].details["alpha_mean"] == pytest.approx(-0.7)

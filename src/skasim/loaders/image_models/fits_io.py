@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import re
 import warnings
+from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.wcs import FITSFixedWarning, WCS
+from astropy.wcs import WCS, FITSFixedWarning
 from loguru import logger
 
 from ...config import (
@@ -25,13 +25,10 @@ from ...config import (
     StaticStokesMapsModelEntry,
 )
 
-
 # suppress fits formatting fixes
 warnings.simplefilter("ignore", category=FITSFixedWarning)
 # suppress polar motion fallback warnings
 warnings.filterwarnings("ignore", message=".*polar motions.*")
-
-
 
 
 def component_model_entries(config: SimConfig) -> list[ComponentSkyModelEntry]:
@@ -106,7 +103,6 @@ class FitsImageInfo:
     unit: str | None
     celestial_header: dict[str, object]
     center: SkyCoord | None
-
 
 
 def _select_wsclean_img_config(imaging_configs: list[ImgConfig]) -> ImgConfig:
@@ -193,8 +189,7 @@ def validate_static_stokes_maps(
             )
     if data.ndim != 2:
         raise ValueError(
-            f"{stokes_info.path} must be a 2D spatial image; "
-            f"got shape {data.shape}"
+            f"{stokes_info.path} must be a 2D spatial image; got shape {data.shape}"
         )
     unit = (stokes_info.unit or "").strip().lower()
     if unit not in _ACCEPTED_JY_PER_PIXEL_UNITS:
@@ -290,7 +285,9 @@ def _squeeze_degenerate_axes(
         )
 
     freq_axis = _find_frequency_axis(header)
-    single_axes = [axis for axis in range(1, data.ndim + 1) if header[f"NAXIS{axis}"] == 1]
+    single_axes = [
+        axis for axis in range(1, data.ndim + 1) if header[f"NAXIS{axis}"] == 1
+    ]
 
     if not single_axes:
         raise ValueError(
@@ -360,7 +357,9 @@ def read_fits_cube_info(path: Path) -> FitsCubeInfo:
             elif ctype.startswith("DEC") or ctype.startswith("GLAT"):
                 spatial_shape[1] = int(header[f"NAXIS{axis}"])
         if None in spatial_shape:
-            raise ValueError("spectral cube spatial axes are not labelled as RA/DEC or GLON/GLAT")
+            raise ValueError(
+                "spectral cube spatial axes are not labelled as RA/DEC or GLON/GLAT"
+            )
 
     return FitsCubeInfo(
         path=path,
@@ -374,7 +373,9 @@ def read_fits_cube_info(path: Path) -> FitsCubeInfo:
     )
 
 
-def _freq_axis_centres(header: fits.Header, n_channels: int, axis: int = 3) -> np.ndarray:
+def _freq_axis_centres(
+    header: fits.Header, n_channels: int, axis: int = 3
+) -> np.ndarray:
     """Return the frequency axis centre positions in Hz for the given 1-based axis."""
     crpix = float(header.get(f"CRPIX{axis}", 1.0))
     crval = float(header[f"CRVAL{axis}"])
@@ -445,7 +446,11 @@ def validate_spectral_cube(
             f"imaging pixels {img.pixels}"
         )
 
-    if obs.bandwidth_mhz is None or obs.n_channels is None or obs.channel_width_mhz is None:
+    if (
+        obs.bandwidth_mhz is None
+        or obs.n_channels is None
+        or obs.channel_width_mhz is None
+    ):
         raise ValueError("observation spectral grid is incomplete")
 
     obs_bw_hz = obs.bandwidth_mhz * 1e6

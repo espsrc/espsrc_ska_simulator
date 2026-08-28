@@ -77,6 +77,7 @@ def run_moment8_for_spectral_cube(
     png_spectrum = work_dir / f"{output_prefix}-avg_spectrum.png"
     try:
         import matplotlib
+
         matplotlib.use("Agg", force=True)
         import matplotlib.pyplot as plt
 
@@ -108,7 +109,9 @@ def run_moment8_for_spectral_cube(
     base_header["HISTORY"] = "produced by skasim.run_moment8_for_spectral_cube"
     if out_fits.exists():
         out_fits.unlink()
-    fits.writeto(out_fits, np.asarray(moment8, dtype=np.float32), base_header, overwrite=True)
+    fits.writeto(
+        out_fits, np.asarray(moment8, dtype=np.float32), base_header, overwrite=True
+    )
     ctx.manifest.add_output(
         "image_product",
         str(out_fits.relative_to(ctx.work_dir)),

@@ -11,7 +11,6 @@ from skasim.config import (
     ObsConfig,
     SimConfig,
     SpectralCubeModelEntry,
-    StaticStokesMapsModelEntry,
 )
 
 # ---------------------------------------------------------------------------

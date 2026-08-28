@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.wcs import WCS
 
 from skasim.config import (
     CasaTaylorTermsModelEntry,
@@ -24,7 +23,6 @@ from skasim.loaders.image_models import CasaModelProduct
 from skasim.manifest import create_run_context
 from skasim.pipeline import (
     _load_sky_from_file,
-    _load_sky_from_fits,
     build_sky_model,
     compute_fov,
     parse_center,

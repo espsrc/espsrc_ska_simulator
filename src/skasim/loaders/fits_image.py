@@ -5,13 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-import astropy.units as u
 import numpy as np
+import xarray as xr
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
 from loguru import logger
-import xarray as xr
 
 from ..runtime import require_oskar_module
 from ..sky import SkyModel
@@ -55,9 +54,7 @@ class FitsImageLoader:
         sky_model.phase_center = self._compute_phase_center()
         sky_model.get_center()
 
-        logger.info(
-            f"FITS image loaded: {self.fpath.name} — ref_freq={freq_hz:.3e} Hz"
-        )
+        logger.info(f"FITS image loaded: {self.fpath.name} — ref_freq={freq_hz:.3e} Hz")
         return sky_model
 
     def _extract_or_fallback_freq_hz(self) -> float:
@@ -111,8 +108,7 @@ class FitsImageLoader:
         else:
             # Fill extra pixel axes with their reference pixel (0-based)
             extra_pixels = [
-                header.get(f"CRPIX{i}", 1) - 1
-                for i in range(3, spatial_pixel_dim + 1)
+                header.get(f"CRPIX{i}", 1) - 1 for i in range(3, spatial_pixel_dim + 1)
             ]
             sky = wcs.pixel_to_world(center_x, center_y, *extra_pixels)
 

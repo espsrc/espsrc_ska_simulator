@@ -3,12 +3,11 @@
 import astropy.units as u
 import numpy as np
 import pytest
-from astropy.io import fits
-from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
+from astropy.io import fits
 
-from skasim.runtime import OskarRuntimeError
 from skasim.loaders import FitsImageLoader
+from skasim.runtime import OskarRuntimeError
 
 
 class _FakeOskarSky:
@@ -69,16 +68,20 @@ def test_fits_image_loader_happy_path(monkeypatch, tmp_path):
     """FITS image loads via mocked OSKAR and produces a SkyModel."""
     fpath = _make_fake_fits_image(tmp_path)
 
-    fake_array = np.array([
-        [10.0, 20.0, 1.0],
-        [10.01, 20.01, 0.5],
-    ])
+    fake_array = np.array(
+        [
+            [10.0, 20.0, 1.0],
+            [10.01, 20.01, 0.5],
+        ]
+    )
 
     class _MockSky:
         def __init__(self, array):
             self._array = array
+
         def to_array(self):
             return self._array
+
         @classmethod
         def from_fits_file(cls, fpath, **kwargs):
             return cls(fake_array)
@@ -112,11 +115,21 @@ def test_extracts_freq_from_header(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         "skasim.loaders.fits_image.require_oskar_module",
-        lambda: type("MockOskar", (), {
-            "Sky": type("Sky", (_FakeOskarSky,), {
-                "from_fits_file": lambda cls, fp, **kw: cls(np.array([[10.0, 20.0, 1.0]])),
-            })
-        }),
+        lambda: type(
+            "MockOskar",
+            (),
+            {
+                "Sky": type(
+                    "Sky",
+                    (_FakeOskarSky,),
+                    {
+                        "from_fits_file": lambda cls, fp, **kw: cls(
+                            np.array([[10.0, 20.0, 1.0]])
+                        ),
+                    },
+                )
+            },
+        ),
     )
 
     loader = FitsImageLoader(fpath, fallback_freq_mhz=700.0)
@@ -130,11 +143,21 @@ def test_fallback_when_no_freq_axis(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         "skasim.loaders.fits_image.require_oskar_module",
-        lambda: type("MockOskar", (), {
-            "Sky": type("Sky", (_FakeOskarSky,), {
-                "from_fits_file": lambda cls, fp, **kw: cls(np.array([[10.0, 20.0, 1.0]])),
-            })
-        }),
+        lambda: type(
+            "MockOskar",
+            (),
+            {
+                "Sky": type(
+                    "Sky",
+                    (_FakeOskarSky,),
+                    {
+                        "from_fits_file": lambda cls, fp, **kw: cls(
+                            np.array([[10.0, 20.0, 1.0]])
+                        ),
+                    },
+                )
+            },
+        ),
     )
 
     loader = FitsImageLoader(fpath, fallback_freq_mhz=1400.0)
@@ -179,10 +202,17 @@ def test_phase_center_from_wcs_list_return(monkeypatch, tmp_path):
     def fake_pixel_to_world(*args, **kwargs):
         return mock_list
 
-    monkeypatch.setattr("skasim.loaders.fits_image.WCS", lambda h: type("FakeWCS", (), {
-        "pixel_n_dim": 2,
-        "pixel_to_world": fake_pixel_to_world,
-    })())
+    monkeypatch.setattr(
+        "skasim.loaders.fits_image.WCS",
+        lambda h: type(
+            "FakeWCS",
+            (),
+            {
+                "pixel_n_dim": 2,
+                "pixel_to_world": fake_pixel_to_world,
+            },
+        )(),
+    )
 
     loader = FitsImageLoader(fpath)
     center = loader._compute_phase_center()
