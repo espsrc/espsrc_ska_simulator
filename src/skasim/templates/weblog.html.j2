@@ -12,6 +12,7 @@
       --accent: #0969da;
       --success: #1a7f37;
       --danger: #cf222e;
+      --warning: #9a6700;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, sans-serif; color: var(--fg); line-height: 1.5; }
@@ -37,6 +38,12 @@
     .badge.fits-file { background: rgba(0,129,138,0.13); color: #00818a; }
     .badge.random { background: rgba(101,109,118,0.13); color: var(--muted); }
     .badge.spectral-cube { background: rgba(183,33,117,0.13); color: #b72175; }
+
+    /* warnings banner */
+    .warning-banner { background: rgba(191,135,0,0.10); border: 1px solid rgba(191,135,0,0.35); border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; font-size: 0.85rem; }
+    .warning-banner .warning-title { color: var(--warning); font-weight: 600; margin-bottom: 0.35rem; }
+    .warning-banner ul { margin: 0; padding-left: 1.2rem; }
+    .warning-banner li { margin: 0.15rem 0; }
 
     /* durations summary */
     .durations-summary { display: flex; gap: 2rem; margin: 1.5rem 0; font-size: 0.85rem; color: var(--muted); }
@@ -120,6 +127,7 @@
         {% if total_elapsed %} · {{ total_elapsed }}{% endif %}
         {% if simulation_duration %} · simulation {{ simulation_duration }}{% endif %}
         {% if imaging_duration %} · imaging {{ imaging_duration }}{% endif %}
+        {% if disk_usage %} · {{ disk_usage }} on disk{% endif %}
       </div>
       {% if manifest.config.title %}
       <div style="font-size: 1.05rem; font-weight: 500; margin-top: 0.5rem;">{{ manifest.config.title }}</div>
@@ -127,7 +135,24 @@
       {% if manifest.config.description %}
       <div style="color: var(--muted); font-size: 0.9rem; margin-top: 0.2rem; line-height: 1.4;">{{ manifest.config.description }}</div>
       {% endif %}
+      {% if invocation_command %}
+      <div style="margin-top: 0.5rem;">
+        <code style="font-size: 0.78rem; color: var(--muted); word-break: break-all;">{{ invocation_command }}</code>
+      </div>
+      {% endif %}
     </div>
+
+    <!-- Run-level warnings: failed milestones and geometry warnings, surfaced up front -->
+    {% if report_warnings %}
+    <div class="warning-banner">
+      <div class="warning-title">⚠ {{ report_warnings | length }} issue{{ "s" if report_warnings | length != 1 else "" }} to review</div>
+      <ul>
+        {% for warning in report_warnings %}
+        <li>{{ warning }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
 
     <!-- Observation configuration -->
     <h2>Observation & Telescope</h2>
@@ -156,6 +181,9 @@
         {% endif %}
         {% if observation_summary.integration_time_s %}
         <tr><th>Integration</th><td>{{ observation_summary.integration_time_s }} s</td></tr>
+        {% endif %}
+        {% if noise_summary.enabled %}
+        <tr><th>Noise</th><td>Enabled — {{ noise_summary.detail }}</td></tr>
         {% endif %}
       </table>
       {% if telescope_plot %}
@@ -363,7 +391,15 @@
           <tr><th>Pixels per Beam</th><td>{{ tab.imaging_summary.pixels_per_beam }}</td></tr>
           {% endif %}
           {% if tab.imaging_summary.beam %}
-          <tr><th>Beam</th><td>{{ tab.imaging_summary.beam }}</td></tr>
+          <tr>
+            <th>{% if tab.imaging_summary.theoretical_beam_arcsec %}Achieved Beam{% else %}Beam{% endif %}</th>
+            <td>
+              {{ tab.imaging_summary.beam }}
+              {% if tab.imaging_summary.beam_vs_theoretical %}
+              <span style="color:var(--muted); font-size:0.78rem;">({{ tab.imaging_summary.beam_vs_theoretical }})</span>
+              {% endif %}
+            </td>
+          </tr>
           {% endif %}
           {% for label, value in tab.imager_parameter_rows %}
           <tr><th>{{ label }}</th><td>{{ value }}</td></tr>
@@ -379,19 +415,12 @@
     <table class="timeline">
       <thead><tr><th>Time</th><th>Event</th><th>Duration</th><th>Details</th></tr></thead>
       <tbody>
-        {% for ms in manifest.milestones %}
+        {% for row in timeline_rows %}
         <tr>
-          <td style="white-space:nowrap;">{{ ms.timestamp_utc.strftime("%H:%M:%S") }}</td>
-          <td><span class="dot dot-{{ ms.status }}"></span>{{ ms.name }}</td>
-          <td>{% if ms.elapsed_s %}{{ (ms.elapsed_s // 60)|int }}m {{ (ms.elapsed_s % 60)|int }}s{% endif %}</td>
-          <td style="color: var(--muted); font-size: 0.78rem;">
-            {% if ms.details %}
-              {% if ms.name == "sky_model_loaded" %}{{ ms.details.get("n_sources", "?") }} sources ({{ ms.details.get("format", "?") }})
-              {% elif ms.name == "telescope_built" %}{{ ms.details.get("n_stations", "?") }} stations
-              {% else %}{{ ms.details | tojson | truncate(120) }}
-              {% endif %}
-            {% endif %}
-          </td>
+          <td style="white-space:nowrap;">{{ row.time }}</td>
+          <td><span class="dot dot-{{ row.status }}"></span>{{ row.name }}</td>
+          <td>{% if row.duration %}{{ row.duration }}{% endif %}</td>
+          <td style="color: var(--muted); font-size: 0.78rem;">{{ row.detail }}</td>
         </tr>
         {% endfor %}
       </tbody>

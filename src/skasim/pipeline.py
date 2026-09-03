@@ -715,8 +715,8 @@ def _run_uv_coverage(ctx: RunContext, visibility_path: Path) -> None:
             "completed",
             details={"path": str(png_path.relative_to(ctx.work_dir))},
         )
-    except Exception:
-        ctx.add_milestone("uv_coverage_failed", "failed")
+    except Exception as exc:
+        ctx.add_milestone("uv_coverage_failed", "failed", details={"error": str(exc)})
         logger.exception("UV coverage plot failed")
 
 
@@ -913,6 +913,9 @@ def run(config: SimConfig) -> None:
         except Exception as exc:
             logger.warning(f"Sky model previews failed: {exc}")
             logger.exception("Sky model preview traceback")
+            ctx.add_milestone(
+                "sky_model_previews_failed", "failed", details={"error": str(exc)}
+            )
 
         observation, _, bandwidth, n_channels, delta_freq, start_freq = (
             build_observation(ctx, center, telescope)
