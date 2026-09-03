@@ -140,10 +140,13 @@
         {% if n_stations %}
         <tr><th>Antennas</th><td>{{ n_stations }}</td></tr>
         {% endif %}
+        {% if maximum_baseline %}
+        <tr><th>Maximum Baseline</th><td>{{ maximum_baseline }}</td></tr>
+        {% endif %}
         {% if derived_fov %}
         <tr><th>Beam FoV (FWHM)</th><td>{{ derived_fov }} <span style="color:var(--muted); font-size:0.75rem; font-style:italic;">(diffraction limit: 1.25 &lambda;/D)</span></td></tr>
         {% endif %}
-        <tr><th>Frequency Range</th><td>{{ observation_summary.frequency_min_mhz }}-{{ observation_summary.frequency_max_mhz }} MHz</td></tr>
+        <tr><th>Frequency Range</th><td>{{ observation_summary.band_edge_min_mhz }}-{{ observation_summary.band_edge_max_mhz }} MHz</td></tr>
         <tr><th>Central Frequency</th><td>{{ observation_summary.central_frequency_mhz }} MHz</td></tr>
         <tr><th>Channels</th><td>{{ observation_summary.n_channels }} x {{ observation_summary.channel_bandwidth_mhz }} MHz</td></tr>
         <tr><th>Total Bandwidth</th><td>{{ observation_summary.total_bandwidth_mhz }} MHz</td></tr>
@@ -338,6 +341,26 @@
           {% endif %}
           {% if tab.imaging_summary.pixel_size_arcsec %}
           <tr><th>Pixel Size</th><td>{{ tab.imaging_summary.pixel_size_arcsec }} arcsec</td></tr>
+          {% endif %}
+          {% if tab.imaging_summary.requested_geometry %}
+          {% set rg = tab.imaging_summary.requested_geometry %}
+          <tr><th>Requested Geometry</th><td>
+            {% if rg.requested_fov_deg is not none %}FoV {{ rg.requested_fov_deg }}° {% endif %}
+            {% if rg.requested_pixels is not none %}{{ rg.requested_pixels }} px {% endif %}
+            {% if rg.requested_cell_size_arcsec is not none %}cell {{ rg.requested_cell_size_arcsec }}″{% endif %}
+            {% if rg.requested_fov_deg is none and rg.requested_pixels is none and rg.requested_cell_size_arcsec is none %}none{% endif %}
+          </td></tr>
+          <tr><th>Power-of-two Rounding</th><td>{{ "applied" if rg.pixels_rounded_up else "not required" }}</td></tr>
+          <tr><th>Legacy Fallback</th><td>{{ "yes" if rg.legacy_fallback else "no" }}</td></tr>
+          <tr><th>Geometry Warnings</th><td>
+            {% if rg.warnings %}{{ rg.warnings | join(" · ") }}{% else %}none{% endif %}
+          </td></tr>
+          {% endif %}
+          {% if tab.imaging_summary.theoretical_beam_arcsec %}
+          <tr><th>Theoretical Beam</th><td>{{ tab.imaging_summary.theoretical_beam_arcsec }} arcsec ({% if tab.imaging_summary.reference_frequency_mhz %}{{ tab.imaging_summary.reference_frequency_mhz }} MHz {% endif %}{{ tab.imaging_summary.requested_geometry.reference_frequency_label or "upper band edge" }})</td></tr>
+          {% endif %}
+          {% if tab.imaging_summary.pixels_per_beam %}
+          <tr><th>Pixels per Beam</th><td>{{ tab.imaging_summary.pixels_per_beam }}</td></tr>
           {% endif %}
           {% if tab.imaging_summary.beam %}
           <tr><th>Beam</th><td>{{ tab.imaging_summary.beam }}</td></tr>

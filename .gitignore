@@ -197,8 +197,6 @@ analysis/
 **.backup
 **.log
 **.csv
-test**
-!tests/*py
 *.bak
 fits**
 **.mod

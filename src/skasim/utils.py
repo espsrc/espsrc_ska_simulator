@@ -88,6 +88,7 @@ DIAMETERS = {
     "SMA": 6.5 * u.m,
     "SKA1LOW": 38 * u.m,
     "SKA1MID": 15 * u.m,
+    "VLA": 25 * u.m,
 }
 
 

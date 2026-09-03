@@ -35,7 +35,7 @@ def _resolve_spectral_cube_wsclean_config(
     - channels_out forced to n_channels if the user did not explicitly set it
     - multiscale disabled (line cubes rarely benefit from multiscale)
     """
-    kwargs = img_config.model_dump()
+    kwargs = img_config.model_dump(exclude_unset=True)
     kwargs["join_channels"] = False
     kwargs["multiscale"] = False
     kwargs["multiscale_scales"] = None

@@ -721,13 +721,21 @@ def test_inject_image_models_runs_spectral_cube_with_wsclean_predict(
         lambda visibility_path: calls.append({"merged": visibility_path}),
     )
 
-    inject_image_models(ctx, tmp_path / "visibilities.MS")
+    effective_img = cfg.imaging[0].model_copy(
+        update={"fov_deg": 0.2, "cell_size_arcsec": 11.25}
+    )
+    inject_image_models(
+        ctx,
+        tmp_path / "visibilities.MS",
+        imaging_configs=[effective_img],
+    )
 
     wsclean_calls = [c["wsclean_predict"] for c in calls if "wsclean_predict" in c]
     merge_calls = [c["merged"] for c in calls if "merged" in c]
 
     assert len(wsclean_calls) == 1
     assert wsclean_calls[0]["n_channels"] == 8
+    assert wsclean_calls[0]["img_config"] is effective_img
     assert len(merge_calls) == 1
     assert ctx.manifest.milestones[-1].name == "image_injection_completed"
 
@@ -1188,7 +1196,7 @@ def test_validate_spectral_cube_accepts_narrow_cube_inside_wide_observation(tmp_
 
 def test_validate_spectral_cube_rejects_spatial_shape_mismatch(tmp_path):
     """Cube spatial dimensions must match imaging pixels."""
-    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=32)
+    cube_path = _write_spectral_cube(tmp_path, n_channels=8, pixels=128)
     obs = ObsConfig(frequency_mhz=700.0, bandwidth_mhz=100.0, n_channels=8)
     img = ImgConfig(pixels=64)
     entry = SpectralCubeModelEntry(type="spectral_cube", cube=str(cube_path))

@@ -168,8 +168,8 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
         started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
         config=SimConfig(
             observation=ObsConfig(
-                frequency_mhz=1300.0,
-                bandwidth_mhz=100.0,
+                frequency_mhz=1284.0,
+                bandwidth_mhz=856.0,
                 n_channels=8,
                 observation_time_s=60,
             ),
@@ -189,8 +189,8 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
         "observation_configured",
         "completed",
         details={
-            "min_frequency_mhz": 1250.0,
-            "max_frequency_mhz": 1350.0,
+            "min_frequency_mhz": 856.0,
+            "max_frequency_mhz": 1712.0,
             "n_timesteps": 7,
             "phase_center_ra_deg": 150.0,
             "phase_center_dec_deg": 2.0,
@@ -210,14 +210,14 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
     assert "Observation & Telescope" in html
     assert "Frequency Setup" not in html
     assert "Frequency Range" in html
-    assert "1250-1350 MHz" in html
+    assert "856-1712 MHz" in html
     assert "Central Frequency" in html
-    assert "1300 MHz" in html
+    assert "1284 MHz" in html
     assert "Channels" in html
-    assert "8 x 12.5 MHz" in html
-    assert "12.5 MHz" in html
+    assert "8 x 107 MHz" in html
+    assert "107 MHz" in html
     assert "Total Bandwidth" in html
-    assert "100 MHz" in html
+    assert "856 MHz" in html
     assert "Imaging Products" in html
     assert "1024 x 1024 pixels" in html
     assert "Pixels</th>" not in html
@@ -255,6 +255,25 @@ def test_weblog_renders_antenna_count_in_telescope_section(tmp_path):
 
     assert "Antennas" in html
     assert "64" in html
+
+
+def test_weblog_renders_maximum_baseline_in_metres(tmp_path):
+    """Resolved array geometry exposes the maximum baseline in metres."""
+    manifest = RunManifest(
+        run_id="baseline",
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
+        config=SimConfig(telescope="MeerKAT"),
+    )
+    manifest.add_milestone(
+        "image_geometry_resolved",
+        "completed",
+        details={"maximum_baseline_m": 7698.1234},
+    )
+
+    html = render_weblog(manifest, tmp_path)
+
+    assert "Maximum Baseline" in html
+    assert "7698.123 m" in html
 
 
 def test_weblog_renders_uv_coverage_next_to_telescope_layout(tmp_path):

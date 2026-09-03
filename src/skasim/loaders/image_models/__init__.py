@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import List, Optional
 
 from loguru import logger
 
@@ -69,11 +70,18 @@ from .previews import (
 # inject_image_models when a wsclean_predict backend is selected.
 
 
-def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
+def inject_image_models(
+    ctx: RunContext,
+    visibility_path: Path,
+    imaging_configs: Optional[List[ImgConfig]] = None,
+) -> None:
     """Inject configured image models into an existing Measurement Set."""
     entries = image_model_entries(ctx.config)
     if not entries:
         return
+    effective_imaging = (
+        imaging_configs if imaging_configs is not None else ctx.config.imaging
+    )
 
     backends = {"casa_ft", "wsclean_predict"}
     ctx.add_milestone(
@@ -84,7 +92,7 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
 
     for index, entry in enumerate(entries):
         if isinstance(entry, StaticStokesMapsModelEntry):
-            img_config = _select_wsclean_img_config(ctx.config.imaging)
+            img_config = _select_wsclean_img_config(effective_imaging)
             report = validate_static_stokes_maps(
                 entry, ctx.config.observation, img_config
             )
@@ -106,7 +114,7 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
                 model_paths=[Path(p) for p in report_predict.get("model_paths", [])],
             )
         elif isinstance(entry, ContinuumIAlphaModelEntry):
-            img_config = _select_wsclean_img_config(ctx.config.imaging)
+            img_config = _select_wsclean_img_config(effective_imaging)
             report = validate_continuum_i_alpha(entry)
             product = prepare_continuum_i_alpha_for_casa(ctx, entry, index)
 
@@ -173,7 +181,7 @@ def inject_image_models(ctx: RunContext, visibility_path: Path) -> None:
                 reffreq=product.reffreq,
             )
         elif isinstance(entry, SpectralCubeModelEntry):
-            img_config = _select_wsclean_img_config(ctx.config.imaging)
+            img_config = _select_wsclean_img_config(effective_imaging)
             report = validate_spectral_cube(entry, ctx.config.observation, img_config)
             product = prepare_spectral_cube_for_casa(ctx, entry, index, report)
             from ..wsclean_predict import inject_spectral_cube_with_wsclean_predict
