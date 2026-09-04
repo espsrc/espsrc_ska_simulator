@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import math
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, List, Literal, Optional, Union
+from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .image_geometry import (
+    MAX_IMAGE_PIXELS,
+    ImageGeometry,
+    resolve_image_geometry,
+    validate_geometry_triplet,
+)
 
 # spectral-grid defaults (used when all three are omitted)
 _DEFAULT_BW_MHZ = 100.0
@@ -298,6 +306,12 @@ class ImgConfig(BaseModel):
     WSClean-specific flags (mgain, multiscale, auto-threshold, etc.) are
     ignored when ``imager`` is ``oskar-dirty``; they only affect argv building
     for ``wsclean``.
+
+    Geometry triplet: ``fov_deg``, ``pixels``, ``cell_size_arcsec`` are linked.
+    Any two determine the third.  A fully specified triplet must satisfy
+    ``fov_deg == pixels * cell_size_arcsec / 3600`` within a relative tolerance
+    of ``1e-6``.  Omitting all three selects the legacy defaults and emits a
+    deprecation warning.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -305,6 +319,7 @@ class ImgConfig(BaseModel):
     tag: str = "default"
     pixels: int = 512
     fov_deg: Optional[float] = None
+    cell_size_arcsec: Optional[float] = None
     robust: float = 0.0
     imager: Literal["oskar-dirty", "wsclean"] = "oskar-dirty"
     wsclean_command: str = "wsclean"
@@ -314,7 +329,7 @@ class ImgConfig(BaseModel):
     # WSClean-only flags.  None means "use the skasim default".
     mgain: Optional[float] = None
     multiscale: Optional[bool] = None
-    multiscale_scales: Optional[List[int]] = None
+    multiscale_scales: Optional[list[int]] = None
     auto_threshold: Optional[float] = None
     auto_mask: Optional[float] = None
     local_rms: Optional[bool] = None
@@ -328,7 +343,21 @@ class ImgConfig(BaseModel):
     def _min_pixels(cls, v: int) -> int:
         if v < 64:
             raise ValueError("pixels must be >= 64")
+        if v > MAX_IMAGE_PIXELS:
+            raise ValueError(f"pixels must be <= {MAX_IMAGE_PIXELS}")
         return v
+
+    @field_validator("fov_deg", "cell_size_arcsec")
+    @classmethod
+    def _positive_geometry_value(cls, value: Optional[float], info) -> Optional[float]:
+        if value is None:
+            return value
+        if not math.isfinite(value) or value <= 0:
+            field_name = info.field_name
+            raise ValueError(
+                f"{field_name} must be a finite positive value; got {value!r}"
+            )
+        return value
 
     @field_validator("tag")
     @classmethod
@@ -340,10 +369,55 @@ class ImgConfig(BaseModel):
             raise ValueError("tag must not contain whitespace or path-special chars")
         return v
 
+    def _geometry_fields_set(self) -> set[str]:
+        """Return geometry fields explicitly supplied by the user."""
+        geometry_fields = {"fov_deg", "pixels", "cell_size_arcsec"}
+        explicit = self.model_fields_set & geometry_fields
+        if self.fov_deg is None:
+            explicit.discard("fov_deg")
+        if self.cell_size_arcsec is None:
+            explicit.discard("cell_size_arcsec")
+        return explicit
 
-# --------------------------------------------------------------------------- #
-# SimConfig
-# --------------------------------------------------------------------------- #
+    @model_validator(mode="after")
+    def _validate_image_geometry(self):
+        explicit = self._geometry_fields_set()
+        if not explicit:
+            warnings.warn(
+                "Legacy image geometry is in use; explicitly set fov_deg, "
+                "pixels, or cell_size_arcsec.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return self
+        if explicit == {"fov_deg", "pixels", "cell_size_arcsec"}:
+            assert self.fov_deg is not None and self.pixels is not None
+            assert self.cell_size_arcsec is not None
+            validate_geometry_triplet(
+                self.fov_deg,
+                self.pixels,
+                self.cell_size_arcsec,
+            )
+        return self
+
+    def resolve_geometry(
+        self,
+        diffraction_fov_deg: float,
+        theoretical_beam_arcsec: float,
+        reference_frequency_hz: float,
+    ) -> ImageGeometry:
+        """Resolve this block's geometry against the observation-level beam."""
+        explicit = self._geometry_fields_set()
+        return resolve_image_geometry(
+            fov_deg=self.fov_deg if "fov_deg" in explicit else None,
+            pixels=self.pixels if "pixels" in explicit else None,
+            cell_size_arcsec=(
+                self.cell_size_arcsec if "cell_size_arcsec" in explicit else None
+            ),
+            diffraction_fov_deg=diffraction_fov_deg,
+            theoretical_beam_arcsec=theoretical_beam_arcsec,
+            reference_frequency_hz=reference_frequency_hz,
+        )
 
 
 class SimConfig(BaseModel):
@@ -355,7 +429,7 @@ class SimConfig(BaseModel):
     telescope_version: Optional[str] = None
 
     # sky input (pipeline resolves one explicit source, else generated sources)
-    models: List[ModelEntry] = Field(default_factory=list)
+    models: list[ModelEntry] = Field(default_factory=list)
     sky_file: Optional[str] = None
     sky_format: Literal["auto", "fits", "json", "pickle", "random"] = "auto"
     catalog: Optional[CatalogName] = None
@@ -364,10 +438,10 @@ class SimConfig(BaseModel):
     flux_scale: float = 1.0
 
     # inline / random source generation
-    source_flux_jy: Optional[List[float]] = Field(default=None)
-    stokes_q_jy: Optional[List[float]] = None
-    stokes_u_jy: Optional[List[float]] = None
-    stokes_v_jy: Optional[List[float]] = None
+    source_flux_jy: Optional[list[float]] = Field(default=None)
+    stokes_q_jy: Optional[list[float]] = None
+    stokes_u_jy: Optional[list[float]] = None
+    stokes_v_jy: Optional[list[float]] = None
 
     # field center string
     center: Optional[str] = None
@@ -381,7 +455,7 @@ class SimConfig(BaseModel):
 
     # nested configs
     observation: ObsConfig = ObsConfig()
-    imaging: List[ImgConfig] = Field(default_factory=lambda: [ImgConfig()])
+    imaging: list[ImgConfig] = Field(default_factory=lambda: [ImgConfig()])
 
     # UV coverage (shadeMS) identical for any imaging pass
     uv_coverage: bool = True
@@ -405,6 +479,10 @@ class SimConfig(BaseModel):
                 if "tag" not in img:
                     img["tag"] = "default"
                 data["imaging"] = [img]
+            elif isinstance(img, list):
+                for item in img:
+                    if isinstance(item, dict) and "tag" not in item:
+                        item["tag"] = "default"
         return data
 
     @model_validator(mode="before")
@@ -536,6 +614,11 @@ class SimConfig(BaseModel):
         if v < 1:
             raise ValueError("uv_coverage_canvas_size must be >= 1")
         return v
+
+
+# --------------------------------------------------------------------------- #
+# geometry helpers
+# --------------------------------------------------------------------------- #
 
 
 def has_spectral_cube_model(config: SimConfig) -> bool:

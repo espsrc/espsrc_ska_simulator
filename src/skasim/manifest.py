@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
@@ -54,6 +55,7 @@ class RunManifest(BaseModel):
     started_at: datetime
     completed_at: Optional[datetime] = None
     config: SimConfig
+    invocation: Optional[list[str]] = None
     milestones: list[Milestone] = Field(default_factory=list)
     outputs: list[OutputRecord] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
@@ -156,6 +158,7 @@ def create_run_context(config: SimConfig) -> RunContext:
         run_id=run_id,
         started_at=datetime.now(timezone.utc),
         config=config,
+        invocation=list(sys.argv) if sys.argv else None,
     )
 
     ctx = RunContext(

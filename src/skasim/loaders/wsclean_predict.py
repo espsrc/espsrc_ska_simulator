@@ -115,9 +115,23 @@ def write_per_channel_model_fits(
     return out_paths
 
 
-def _imaging_cellsize(fov_deg: float | None, pixels: int) -> u.Quantity:
-    """Return angular pixel size from FoV and number of pixels."""
-    fov = float(fov_deg if fov_deg is not None else 1.0) * u.deg
+def _imaging_cellsize(
+    fov_deg: float | None, pixels: int, cell_size_arcsec: float | None = None
+) -> u.Quantity:
+    """Return angular pixel size from explicit geometry, never a fabricated default.
+
+    If ``cell_size_arcsec`` is supplied it is returned directly.  Otherwise the
+    pixel size is computed from ``fov_deg`` and ``pixels``.  If neither are
+    available, raise an error rather than silently substituting a 1.0° field.
+    """
+    if cell_size_arcsec is not None:
+        return cell_size_arcsec * u.arcsec
+    if fov_deg is None:
+        raise ValueError(
+            "cannot derive wsclean-predict pixel size: fov_deg and "
+            "cell_size_arcsec are both unset"
+        )
+    fov = float(fov_deg) * u.deg
     return fov / pixels
 
 
@@ -136,10 +150,20 @@ def build_wsclean_predict_argv(
     flags (``-niter``, ``-mgain``, ``-auto-mask``, etc.) are stripped because
     they are invalid in predict mode.  Use ``wsclean_predict_command`` if you
     need custom predict-only flags.
+
+    When ``pixel_size_arcsec`` or ``n_pixels`` are not supplied, they fall back
+    to the values in ``img_config``.  Callers that already know the exact model
+    image geometry (e.g. spectral-cube predict) should pass them explicitly so
+    that the predict image size matches the model images regardless of any
+    auto-derived imaging geometry.
     """
     if pixel_size_arcsec is None or n_pixels is None:
-        imaging_cellsize = _imaging_cellsize(img_config.fov_deg, img_config.pixels)
-        pixel_size_arcsec = imaging_cellsize.to(u.arcsec).value
+        pixel_size_arcsec = img_config.cell_size_arcsec
+        if pixel_size_arcsec is None:
+            imaging_cellsize = _imaging_cellsize(
+                img_config.fov_deg, img_config.pixels, img_config.cell_size_arcsec
+            )
+            pixel_size_arcsec = imaging_cellsize.to(u.arcsec).value
         n_pixels = img_config.pixels
 
     # Keep only the executable from the supplied command line; imaging flags
@@ -252,6 +276,20 @@ def inject_spectral_cube_with_wsclean_predict(
         cube_data, header, model_dir, prefix, freq_axis=freq_axis
     )
 
+    # Use the cube's own spatial geometry for predict; this keeps spectral-cube
+    # models valid even when the imaging geometry was auto-derived from fov_deg.
+    n_pixels = max(int(header["NAXIS1"]), int(header["NAXIS2"]))
+    cdelt1 = float(header["CDELT1"])
+    cunit1 = str(header.get("CUNIT1") or "").strip().lower()
+    if cunit1 == "deg":
+        pixel_size_arcsec = abs(cdelt1) * 3600.0
+    elif cunit1 in {"asec", "arcsec"}:
+        pixel_size_arcsec = abs(cdelt1)
+    elif cunit1 == "rad":
+        pixel_size_arcsec = abs(np.degrees(cdelt1)) * 3600.0
+    else:
+        raise ValueError(f"unsupported CUNIT1={cunit1!r} for spectral-cube predict")
+
     run_wsclean_predict(
         wsclean_command=img_config.wsclean_command,
         visibility_path=visibility_path,
@@ -259,6 +297,8 @@ def inject_spectral_cube_with_wsclean_predict(
         prefix=prefix,
         n_channels=cube_data.shape[0],
         work_dir=model_dir,
+        pixel_size_arcsec=pixel_size_arcsec,
+        n_pixels=n_pixels,
     )
 
     return {

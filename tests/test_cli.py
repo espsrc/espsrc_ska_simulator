@@ -1,6 +1,7 @@
 """CLI configuration behavior."""
 
 import json
+import warnings
 
 import pytest
 from pydantic import ValidationError
@@ -37,6 +38,17 @@ def test_config_file_loads_simconfig(monkeypatch, tmp_path):
     assert captured[0].imaging[0].imager == "oskar-dirty"
 
 
+def test_config_file_allows_explicit_default_pixel_value(monkeypatch, tmp_path):
+    """--config plus --pixels 512 must not be treated as a content conflict."""
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    config_path = _make_config_json(tmp_path, flux=[2.5, 5.0])
+    cli.main(["--config", config_path, "--pixels", "512"])
+
+    assert captured[0].imaging[0]._geometry_fields_set() == {"pixels"}
+
+
 def test_config_file_overrides_output_dir_and_overwrite(monkeypatch, tmp_path):
     """--output-dir and --overwrite are permitted alongside --config."""
     captured = []
@@ -59,6 +71,8 @@ def test_config_file_overrides_output_dir_and_overwrite(monkeypatch, tmp_path):
 
 def test_config_file_blocks_content_flags(monkeypatch, tmp_path, capsys):
     """--config rejects content arguments such as --frequency-mhz."""
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
     config_path = _make_config_json(tmp_path)
     with pytest.raises(SystemExit):
         cli.main(["--config", config_path, "--frequency-mhz", "900"])
@@ -69,6 +83,8 @@ def test_config_file_blocks_content_flags(monkeypatch, tmp_path, capsys):
 
 def test_config_file_blocks_content_flags_equals_syntax(monkeypatch, tmp_path, capsys):
     """--config catches content arguments even with --flag=value syntax."""
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
     config_path = _make_config_json(tmp_path)
     with pytest.raises(SystemExit):
         cli.main(["--config", config_path, "--frequency-mhz=900"])
@@ -172,6 +188,27 @@ def test_default_imager_is_oskar_dirty(monkeypatch):
     cli.main([])
 
     assert captured[0].imaging[0].imager == "oskar-dirty"
+
+
+def test_default_cli_geometry_uses_legacy_path(monkeypatch):
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cli.main([])
+
+    assert captured[0].imaging[0]._geometry_fields_set() == set()
+    assert any(item.category is DeprecationWarning for item in caught)
+
+
+def test_explicit_cli_default_pixel_count_remains_explicit(monkeypatch):
+    captured = []
+    monkeypatch.setattr(skasim.pipeline, "run", lambda config: captured.append(config))
+
+    cli.main(["--pixels", "512"])
+
+    assert captured[0].imaging[0]._geometry_fields_set() == {"pixels"}
 
 
 def test_wsclean_imager_is_selected_explicitly(monkeypatch):

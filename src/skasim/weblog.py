@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
+import shlex
+import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from astropy.io import fits
@@ -177,6 +180,7 @@ def _read_fits_beam(path: Path) -> dict | None:
         "bmaj": _format_angle_deg(bmaj) if bmaj is not None else None,
         "bmin": _format_angle_deg(bmin) if bmin is not None else None,
         "bpa": f"{float(bpa):.2f} deg" if bpa is not None else None,
+        "bmaj_arcsec": float(bmaj) * 3600.0 if bmaj is not None else None,
     }
 
 
@@ -191,8 +195,10 @@ def _format_angle_deg(value_deg: float) -> str:
     return f"{value * 3600.0:.3f} arcsec"
 
 
-def _format_float(value: float, digits: int = 3) -> str:
+def _format_float(value: Optional[float], digits: int = 3) -> Optional[str]:
     """Format a number without distracting trailing zeroes."""
+    if value is None:
+        return None
     return f"{float(value):.{digits}f}".rstrip("0").rstrip(".")
 
 
@@ -211,8 +217,8 @@ def _observation_summary(manifest: RunManifest) -> dict:
     if n_timesteps:
         integration_time = float(obs.observation_time_s) / float(n_timesteps)
     return {
-        "frequency_min_mhz": _format_float(min_freq),
-        "frequency_max_mhz": _format_float(max_freq),
+        "band_edge_min_mhz": _format_float(min_freq),
+        "band_edge_max_mhz": _format_float(max_freq),
         "central_frequency_mhz": _format_float(centre),
         "n_channels": n_channels,
         "channel_bandwidth_mhz": _format_float(channel_width),
@@ -229,12 +235,13 @@ def _imaging_summary_for_block(
     img_config,
     fov_deg: float | None,
     beam: dict | None,
+    geometry: Optional[dict] = None,
 ) -> dict:
     """Build display rows for imaging geometry and pixelization for a single ImgConfig block."""
     pixel_size_arcsec = None
     if fov_deg is not None:
         pixel_size_arcsec = fov_deg * 3600.0 / img_config.pixels
-    return {
+    summary = {
         "imager": img_config.imager,
         "pixels": img_config.pixels,
         "image_size": f"{img_config.pixels} x {img_config.pixels}",
@@ -246,6 +253,22 @@ def _imaging_summary_for_block(
         ),
         "beam": _format_beam(beam),
     }
+    if geometry is not None:
+        summary["requested_geometry"] = geometry
+        summary["theoretical_beam_arcsec"] = _format_float(
+            geometry.get("theoretical_beam_arcsec"), 4
+        )
+        summary["pixels_per_beam"] = _format_float(geometry.get("pixels_per_beam"), 3)
+        ref_hz = geometry.get("reference_frequency_hz")
+        if ref_hz is not None:
+            summary["reference_frequency_mhz"] = _format_float(ref_hz / 1e6, 4)
+        theoretical = geometry.get("theoretical_beam_arcsec")
+        achieved = beam.get("bmaj_arcsec") if beam else None
+        if theoretical and achieved:
+            summary["beam_vs_theoretical"] = (
+                f"{_format_float(achieved / theoretical, 2)}× theoretical"
+            )
+    return summary
 
 
 def _format_beam(beam: dict | None) -> str | None:
@@ -378,13 +401,27 @@ def _build_imaging_tabs(
     if not config.imaging:
         return []
 
+    geometry_records = _find_milestone_details(manifest, "image_geometry_resolved").get(
+        "blocks", {}
+    )
+
     tabs: list[dict] = []
 
     for img_config in config.imaging:
         tag = img_config.tag
+        geometry = geometry_records.get(tag)
+        effective_img_config = img_config
+        if geometry is not None:
+            effective_img_config = img_config.model_copy(
+                update={
+                    "pixels": geometry["effective_pixels"],
+                    "fov_deg": geometry["effective_fov_deg"],
+                    "cell_size_arcsec": geometry["effective_cell_size_arcsec"],
+                }
+            )
 
         # Compute FoV for this block
-        fov_deg = img_config.fov_deg
+        fov_deg = effective_img_config.fov_deg
         if fov_deg is None:
             fov_deg = fov_deg_default
 
@@ -400,10 +437,10 @@ def _build_imaging_tabs(
             {
                 "tag": tag,
                 "imaging_summary": _imaging_summary_for_block(
-                    img_config, fov_deg, beam
+                    effective_img_config, fov_deg, beam, geometry
                 ),
                 "imager_parameter_rows": _imager_parameter_rows_for_block(
-                    img_config,
+                    effective_img_config,
                     manifest,
                     fov_deg,
                     center,
@@ -448,6 +485,212 @@ def _antenna_count(manifest: RunManifest) -> int | None:
     return KNOWN_ANTENNA_COUNTS.get(manifest.config.telescope.upper())
 
 
+def _maximum_baseline_m(manifest: RunManifest) -> Optional[str]:
+    """Return the resolved maximum baseline for display when the run recorded it."""
+    value = _find_milestone_details(manifest, "image_geometry_resolved").get(
+        "maximum_baseline_m"
+    )
+    if value is None:
+        return None
+    value = float(value)
+    if not np.isfinite(value) or value <= 0:
+        return None
+    return f"{_format_float(value, 3)} m"
+
+
+def _format_jy_amount(val_jy: float) -> str:
+    """Format a plain flux/noise amount using the most suitable unit (no '/beam' suffix)."""
+    val_abs = abs(val_jy)
+    if val_abs >= 1.0:
+        return f"{val_jy:.3f} Jy"
+    elif val_abs >= 1e-3:
+        return f"{val_jy * 1e3:.3f} mJy"
+    elif val_abs >= 1e-6:
+        return f"{val_jy * 1e6:.2f} μJy"
+    else:
+        return f"{val_jy * 1e9:.2f} nJy"
+
+
+def _noise_summary(manifest: RunManifest) -> dict:
+    """Build a display summary for injected thermal noise, when enabled.
+
+    Returns {"enabled": False} when noise was not injected, so the report can
+    omit the row rather than imply noise-free runs carry a meaningful zero.
+    """
+    config = manifest.config
+    enabled = bool(config.rms) or config.noise_rms_start is not None
+    if not enabled:
+        return {"enabled": False}
+    if config.noise_rms_start is not None:
+        start = config.noise_rms_start
+        end = config.noise_rms_end if config.noise_rms_end is not None else start
+        if start == end:
+            detail = f"Fixed override: {_format_jy_amount(start)} RMS"
+        else:
+            detail = (
+                f"Range override: {_format_jy_amount(start)} – "
+                f"{_format_jy_amount(end)} RMS"
+            )
+    else:
+        detail = "Telescope model (per-station SEFD-based RMS)"
+    return {"enabled": True, "detail": detail}
+
+
+_FRIENDLY_MILESTONE_LABELS = {
+    "uv_coverage_failed": "UV coverage plot",
+    "simulation_failed": "Simulation",
+    "sky_model_previews_failed": "Sky model preview plots",
+}
+
+
+def _report_warnings(manifest: RunManifest) -> list[str]:
+    """Collect run-level issues worth flagging near the top of the report.
+
+    Surfaces failed milestones (including ones that a non-fatal `except` may
+    have swallowed without aborting the run) and image-geometry warnings,
+    both of which otherwise only show up buried in the timeline or in a
+    collapsed imaging tab.
+    """
+    warnings: list[str] = []
+    for ms in manifest.milestones:
+        if ms.status != "failed":
+            continue
+        label = _FRIENDLY_MILESTONE_LABELS.get(ms.name)
+        if (
+            label is None
+            and ms.name.startswith("imaging_")
+            and ms.name.endswith("_failed")
+        ):
+            tag = (ms.details or {}).get(
+                "tag", ms.name[len("imaging_") : -len("_failed")]
+            )
+            label = f"Imaging [{tag}]"
+        if label is None:
+            label = ms.name.replace("_", " ").capitalize()
+        message = f"{label} failed"
+        error = (ms.details or {}).get("error")
+        if error:
+            message += f": {error}"
+        warnings.append(message)
+
+    geometry = _find_milestone_details(manifest, "image_geometry_resolved")
+    for tag, block in (geometry.get("blocks") or {}).items():
+        for w in block.get("warnings") or []:
+            warnings.append(f"Geometry [{tag}]: {w}")
+
+    return warnings
+
+
+def _milestone_detail_text(ms) -> str:
+    """Return a concise, human-readable one-liner for a milestone's details."""
+    details = ms.details or {}
+    if not details:
+        return ""
+    error = details.get("error")
+    if error:
+        text = str(error)
+        return f"Error: {text[:160]}{'…' if len(text) > 160 else ''}"
+    if ms.name == "sky_model_loaded":
+        return f"{details.get('n_sources', '?')} sources ({details.get('format', '?')})"
+    if ms.name == "telescope_built":
+        return f"{details.get('n_stations', '?')} stations"
+    if ms.name == "image_geometry_resolved":
+        parts = []
+        if details.get("maximum_baseline_m") is not None:
+            parts.append(
+                f"max baseline {_format_float(details['maximum_baseline_m'], 1)} m"
+            )
+        if details.get("simulation_fov_deg") is not None:
+            parts.append(f"sim FoV {_format_float(details['simulation_fov_deg'], 4)}°")
+        n_blocks = len(details.get("blocks") or {})
+        if n_blocks:
+            parts.append(f"{n_blocks} imaging block{'s' if n_blocks != 1 else ''}")
+        return " · ".join(parts)
+    if ms.name.startswith("imaging_") and ("imager" in details or "tag" in details):
+        parts = [str(details[k]) for k in ("imager", "tag") if details.get(k)]
+        return " · ".join(parts)
+    if ms.name == "uv_coverage_completed":
+        return f"plot: {details.get('path', '?')}"
+    if ms.name == "base_ms_fallback":
+        return f"strategy: {details.get('strategy', '?')}"
+    text = json.dumps(details)
+    return text if len(text) <= 120 else text[:117] + "..."
+
+
+def _build_timeline_rows(manifest: RunManifest) -> list[dict]:
+    """Build display rows for the timeline table, with friendly detail text."""
+    rows = []
+    for ms in manifest.milestones:
+        duration = None
+        if ms.elapsed_s:
+            minutes, seconds = divmod(int(ms.elapsed_s), 60)
+            duration = f"{minutes}m {seconds}s"
+        rows.append(
+            {
+                "time": ms.timestamp_utc.strftime("%H:%M:%S"),
+                "name": ms.name,
+                "status": ms.status,
+                "duration": duration,
+                "detail": _milestone_detail_text(ms),
+            }
+        )
+    return rows
+
+
+def _humanize_bytes(n: float) -> str:
+    """Format a byte count using the most suitable binary unit."""
+    value = float(n)
+    if value < 1024.0:
+        return f"{int(value)} B"
+    for unit in ("KB", "MB", "GB", "TB"):
+        value /= 1024.0
+        if value < 1024.0 or unit == "TB":
+            return f"{value:.1f} {unit}"
+    return f"{value:.1f} TB"
+
+
+def _run_disk_usage(work_dir: Path) -> Optional[str]:
+    """Return the total on-disk footprint of the run directory, formatted for display."""
+    total = 0
+    try:
+        for path in work_dir.rglob("*"):
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        return None
+    if total == 0:
+        return None
+    return _humanize_bytes(total)
+
+
+def _skasim_git_commit() -> Optional[str]:
+    """Return the short git commit of the running skasim checkout, when available."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _format_invocation(manifest: RunManifest) -> Optional[str]:
+    """Return the CLI invocation that produced this run, shell-quoted for display."""
+    argv = manifest.invocation
+    if not argv:
+        return None
+    return " ".join(shlex.quote(a) for a in argv)
+
+
 def _software_versions() -> list[tuple[str, str]]:
     """Return concise runtime software versions for weblog reproducibility."""
     versions = [
@@ -456,6 +699,9 @@ def _software_versions() -> list[tuple[str, str]]:
         ("OSKAR", _conda_package_version("oskarpy") or _package_version("oskarpy")),
         ("WSClean", _conda_package_version("wsclean") or _package_version("wsclean")),
     ]
+    commit = _skasim_git_commit()
+    if commit:
+        versions.append(("skasim commit", commit))
     casa_ver = _casa_version()
     if casa_ver:
         versions.append(("CASA", casa_ver))
@@ -786,6 +1032,7 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
         pass
 
     n_stations = _antenna_count(manifest)
+    maximum_baseline = _maximum_baseline_m(manifest)
 
     # Resolve telescope plot if present
     telescope_plot = None
@@ -921,10 +1168,16 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
         sky_model_summary=sky_model_summary,
         fits_model_plots=fits_model_plots,
         observation_summary=_observation_summary(manifest),
+        noise_summary=_noise_summary(manifest),
         software_versions=_software_versions(),
         dish_diameter=dish_diameter,
         derived_fov=derived_fov,
         n_stations=n_stations,
+        maximum_baseline=maximum_baseline,
+        report_warnings=_report_warnings(manifest),
+        timeline_rows=_build_timeline_rows(manifest),
+        disk_usage=_run_disk_usage(work_dir),
+        invocation_command=_format_invocation(manifest),
     )
 
     weblog_path = work_dir / "weblog.html"

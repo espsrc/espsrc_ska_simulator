@@ -2,6 +2,7 @@
 
 import json
 import os
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
@@ -96,9 +97,62 @@ class _FakeTelescope:
     def plot_telescope(self, file):
         Path(file).write_text("plot", encoding="utf-8")
 
+    def max_baseline(self):
+        return 10_000.0
+
 
 class _FakeVersions(Enum):
     SKA_OST_ARRAY_CONFIG_2_3_1 = "ska-ost-array-config-2.3.1"
+
+
+def test_build_observation_centres_the_channel_grid_and_records_band_edges(
+    tmp_path, monkeypatch
+):
+    """A 1284 MHz observation spans 856--1712 MHz without shifting channels."""
+    import skasim.pipeline as pipeline
+
+    captured = {}
+    monkeypatch.setattr(
+        pipeline,
+        "require_karabo_module",
+        lambda _: type(
+            "ObservationModule",
+            (),
+            {"Observation": staticmethod(lambda **kwargs: captured.update(kwargs))},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "source_ref_get_best_observation_time",
+        lambda center, telescope: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    ctx = create_run_context(
+        SimConfig(
+            output_dir=str(tmp_path / "lband"),
+            observation=ObsConfig(
+                frequency_mhz=1284.0,
+                bandwidth_mhz=856.0,
+                n_channels=8,
+            ),
+        )
+    )
+
+    _, center, _, n_channels, channel_width, start_frequency = (
+        pipeline.build_observation(ctx, SkyCoord(0.0 * u.deg, 0.0 * u.deg), object())
+    )
+    milestone = next(
+        item
+        for item in ctx.manifest.milestones
+        if item.name == "observation_configured"
+    )
+
+    assert center.to_value(u.MHz) == pytest.approx(1284.0)
+    assert n_channels == 8
+    assert channel_width.to_value(u.MHz) == pytest.approx(107.0)
+    assert start_frequency.to_value(u.MHz) == pytest.approx(856.0)
+    assert captured["start_frequency_hz"] == pytest.approx(856.0e6)
+    assert milestone.details["min_frequency_mhz"] == pytest.approx(856.0)
+    assert milestone.details["max_frequency_mhz"] == pytest.approx(1712.0)
 
 
 def test_run_spectral_cube_pipeline_calls_wsclean_and_logs_summary(
@@ -136,7 +190,7 @@ def test_run_spectral_cube_pipeline_calls_wsclean_and_logs_summary(
         monkeypatch.setattr(
             pipeline,
             "run_simulation",
-            lambda ctx, telescope, observation, sky_model: ctx.visibility_path,
+            lambda ctx, telescope, observation, sky_model, fov_sim: ctx.visibility_path,
         )
 
         captured = []
@@ -666,13 +720,20 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
         fake_sky = MagicMock()
         fake_sky.get_center.return_value = center
         called = []
+        simulation_fovs = []
 
         monkeypatch.setattr(pipeline, "build_telescope", lambda ctx: _FakeTelescope())
         monkeypatch.setattr(
-            pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg
+            pipeline,
+            "compute_fov",
+            lambda telescope, fov_deg, freq: (
+                0.2 * u.deg if fov_deg is None else fov_deg * u.deg
+            ),
         )
         monkeypatch.setattr(
-            pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center)
+            pipeline,
+            "build_sky_model",
+            lambda ctx, fov: simulation_fovs.append(fov) or (fake_sky, center),
         )
         monkeypatch.setattr(
             pipeline,
@@ -689,7 +750,7 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
         monkeypatch.setattr(
             pipeline,
             "run_simulation",
-            lambda ctx, telescope, observation, sky_model: ctx.visibility_path,
+            lambda ctx, telescope, observation, sky_model, fov_sim: ctx.visibility_path,
         )
         monkeypatch.setattr(
             pipeline,
@@ -713,7 +774,7 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
 
         config = SimConfig(
             output_dir="imager_run",
-            imaging=[ImgConfig(imager="wsclean")],
+            imaging=[ImgConfig(imager="wsclean", fov_deg=0.05)],
             observation=ObsConfig(observation_time_s=1),
         )
         pipeline.run(config)
@@ -725,6 +786,7 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
         os.chdir(old_cwd)
 
     assert called == ["uv", "wsclean"]
+    assert simulation_fovs == [0.2 * u.deg]
     assert manifest["config"]["imaging"][0]["imager"] == "wsclean"
     assert (tmp_path / "imager_run" / "weblog.html").exists()
     assert any(output["kind"] == "weblog" for output in manifest["outputs"])
@@ -807,9 +869,9 @@ def test_run_records_failure_milestone_details_as_dict(tmp_path, monkeypatch):
         monkeypatch.setattr(
             pipeline,
             "run_simulation",
-            lambda ctx, telescope, observation, sky_model: (_ for _ in ()).throw(
-                RuntimeError("phase failed")
-            ),
+            lambda ctx, telescope, observation, sky_model, fov_sim: (
+                _ for _ in ()
+            ).throw(RuntimeError("phase failed")),
         )
         config = SimConfig(
             output_dir="failed_milestone",
@@ -862,7 +924,9 @@ def test_run_simulation_does_not_rebuild_observation(tmp_path, monkeypatch):
     ctx = create_run_context(config)
     sky_model = MagicMock()
 
-    visibility_path = run_simulation(ctx, object(), object(), sky_model)
+    visibility_path = run_simulation(
+        ctx, object(), object(), sky_model, fov_sim=0.2 * u.deg
+    )
 
     assert visibility_path == ctx.visibility_path
     assert FakeInterferometerSimulation.params["channel_bandwidth_hz"] == pytest.approx(
@@ -889,13 +953,20 @@ def test_run_batch_imaging_creates_subdirs_and_calls_both_imagers(
         fake_sky = MagicMock()
         fake_sky.get_center.return_value = center
         called = []
+        simulation_fovs = []
 
         monkeypatch.setattr(pipeline, "build_telescope", lambda ctx: _FakeTelescope())
         monkeypatch.setattr(
-            pipeline, "compute_fov", lambda telescope, fov_deg, freq: 0.2 * u.deg
+            pipeline,
+            "compute_fov",
+            lambda telescope, fov_deg, freq: (
+                0.2 * u.deg if fov_deg is None else fov_deg * u.deg
+            ),
         )
         monkeypatch.setattr(
-            pipeline, "build_sky_model", lambda ctx, fov: (fake_sky, center)
+            pipeline,
+            "build_sky_model",
+            lambda ctx, fov: simulation_fovs.append(fov) or (fake_sky, center),
         )
         monkeypatch.setattr(
             pipeline,
@@ -912,7 +983,7 @@ def test_run_batch_imaging_creates_subdirs_and_calls_both_imagers(
         monkeypatch.setattr(
             pipeline,
             "run_simulation",
-            lambda ctx, telescope, observation, sky_model: ctx.visibility_path,
+            lambda ctx, telescope, observation, sky_model, fov_sim: ctx.visibility_path,
         )
         monkeypatch.setattr(
             pipeline,
@@ -932,8 +1003,8 @@ def test_run_batch_imaging_creates_subdirs_and_calls_both_imagers(
         config = SimConfig(
             output_dir="batch_run",
             imaging=[
-                ImgConfig(tag="robust0", imager="wsclean", robust=0.0),
-                ImgConfig(tag="robust2", imager="wsclean", robust=2.0),
+                ImgConfig(tag="robust0", imager="wsclean", robust=0.0, fov_deg=0.05),
+                ImgConfig(tag="robust2", imager="wsclean", robust=2.0, fov_deg=0.5),
             ],
             observation=ObsConfig(observation_time_s=1),
         )
@@ -943,7 +1014,7 @@ def test_run_batch_imaging_creates_subdirs_and_calls_both_imagers(
         assert len(called) == 2
         tags = {c[1] for c in called}
         assert tags == {"robust0", "robust2"}
-
+        assert simulation_fovs == [0.5 * u.deg]
         # subdirectories created under work_dir
         work_dir = tmp_path / "batch_run"
         assert (work_dir / "robust0").is_dir()
@@ -993,7 +1064,7 @@ def test_run_batch_imaging_fail_fast_on_first_error(tmp_path, monkeypatch):
         monkeypatch.setattr(
             pipeline,
             "run_simulation",
-            lambda ctx, telescope, observation, sky_model: ctx.visibility_path,
+            lambda ctx, telescope, observation, sky_model, fov_sim: ctx.visibility_path,
         )
         monkeypatch.setattr(
             pipeline,
@@ -1059,7 +1130,7 @@ def test_weblog_has_tabs_for_multiple_tags(tmp_path, monkeypatch):
         monkeypatch.setattr(
             pipeline,
             "run_simulation",
-            lambda ctx, telescope, observation, sky_model: ctx.visibility_path,
+            lambda ctx, telescope, observation, sky_model, fov_sim: ctx.visibility_path,
         )
         monkeypatch.setattr(
             pipeline,

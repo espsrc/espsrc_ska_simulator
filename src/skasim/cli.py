@@ -23,8 +23,27 @@ from .runtime import require_karabo_module
 _CONFIG_COMPATIBLE = frozenset({"config", "output_dir", "overwrite", "show_telescopes"})
 
 
-def _has_non_default_content_args(parser, args):
-    """Return True if any content argument was explicitly set (not default)."""
+def _has_non_default_content_args(parser, args, argv):
+    """Return True if any content argument was explicitly set (not default).
+
+    For actions with ``argparse.SUPPRESS`` defaults, we inspect ``argv`` to
+    decide whether the option was supplied, because argparse cannot distinguish
+    an explicit value that happens to equal a legacy default from an omitted
+    option once the default is removed.
+    """
+    # Build a set of option strings that appeared literally in argv, including
+    # --key=value variants.
+    explicit_options: set[str] = set()
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token.startswith("--"):
+            if "=" in token:
+                explicit_options.add(token.split("=", 1)[0])
+            else:
+                explicit_options.add(token)
+        i += 1
+
     for action in parser._actions:
         dest = action.dest
         if dest in _CONFIG_COMPATIBLE or dest == "help":
@@ -32,6 +51,14 @@ def _has_non_default_content_args(parser, args):
         # deprecated hidden actions already error before reaching here
         if action.help is argparse.SUPPRESS:
             continue
+        if action.default is argparse.SUPPRESS:
+            if not any(opt in explicit_options for opt in action.option_strings):
+                continue
+            # --pixels 512 is the Pydantic default; treat it as not supplying
+            # a content argument so that legacy invocations still work.
+            if dest == "pixels" and getattr(args, dest, None) == 512:
+                continue
+            return True
         value = getattr(args, dest, action.default)
         if value != action.default:
             return True
@@ -164,24 +191,30 @@ def main(argv: Optional[List[str]] = None) -> None:
     pointing.add_argument(
         "--frequency-mhz",
         type=float,
-        default=700.0,
+        default=argparse.SUPPRESS,
         help="Central observing frequency in MHz",
     )
     pointing.add_argument(
-        "--bandwidth-mhz", type=float, default=None, help="Bandwidth in MHz"
+        "--bandwidth-mhz",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="Bandwidth in MHz",
     )
     pointing.add_argument(
-        "--n-channels", type=int, default=None, help="Number of channels"
+        "--n-channels", type=int, default=argparse.SUPPRESS, help="Number of channels"
     )
     pointing.add_argument(
-        "--channel-width-mhz", type=float, default=None, help="Channel width in MHz"
+        "--channel-width-mhz",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="Channel width in MHz",
     )
     pointing.add_argument(
         "--observation-time",
         dest="observation_time_s",
         metavar="SECONDS",
         type=int,
-        default=10,
+        default=argparse.SUPPRESS,
         help="Observation duration in seconds",
     )
 
@@ -197,7 +230,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         default="wsclean",
         help="Command used for WSClean imaging",
     )
-    imaging.add_argument("--pixels", type=int, default=512, help="Image size in pixels")
+    imaging.add_argument(
+        "--pixels",
+        type=int,
+        default=argparse.SUPPRESS,
+        help="Image size in pixels (legacy default: 512)",
+    )
     imaging.add_argument(
         "--fov", type=str, default=None, help="Field of view, e.g. '1deg'"
     )
@@ -400,7 +438,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     # --config branch: load SimConfig from JSON
     # ------------------------------------------------------------------- #
     if args.config is not None:
-        if _has_non_default_content_args(p, args):
+        if _has_non_default_content_args(p, args, argv or sys.argv[1:]):
             p.error("--config is exclusive with content arguments")
         config_path = Path(args.config).expanduser().resolve()
         if not config_path.exists():
@@ -441,11 +479,11 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     # map CLI args to SimConfig
     obs = ObsConfig(
-        frequency_mhz=args.frequency_mhz,
-        bandwidth_mhz=args.bandwidth_mhz,
-        n_channels=args.n_channels,
-        channel_width_mhz=args.channel_width_mhz,
-        observation_time_s=args.observation_time_s,
+        frequency_mhz=getattr(args, "frequency_mhz", 700.0),
+        bandwidth_mhz=getattr(args, "bandwidth_mhz", None),
+        n_channels=getattr(args, "n_channels", None),
+        channel_width_mhz=getattr(args, "channel_width_mhz", None),
+        observation_time_s=getattr(args, "observation_time_s", 10),
     )
 
     fov_deg = None
@@ -457,15 +495,17 @@ def main(argv: Optional[List[str]] = None) -> None:
         except Exception:
             fov_deg = float(args.fov)
 
-    img = ImgConfig(
-        tag="default",
-        pixels=args.pixels,
-        fov_deg=fov_deg,
-        robust=args.robust,
-        imager=args.imager,
-        wsclean_command=args.wsclean_command,
-        clean_iterations=args.clean_iterations,
-    )
+    img_kwargs = {
+        "tag": "default",
+        "fov_deg": fov_deg,
+        "pixels": getattr(args, "pixels", None),
+        "robust": args.robust,
+        "imager": args.imager,
+        "wsclean_command": args.wsclean_command,
+        "clean_iterations": args.clean_iterations,
+    }
+    img_kwargs = {k: v for k, v in img_kwargs.items() if v is not None}
+    img = ImgConfig(**img_kwargs)
 
     # Build typed model entries from legacy CLI flags
     model_entries = []

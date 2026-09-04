@@ -10,14 +10,15 @@ import subprocess
 import time
 from datetime import timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
 from loguru import logger
 
-from .config import SimConfig, has_spectral_cube_model
+from .config import ImgConfig, SimConfig, has_spectral_cube_model
+from .image_geometry import ImageGeometry
 from .imaging import run_dirty_imaging, run_wsclean_imaging
 from .loaders import (
     FitsCatalogLoader,
@@ -120,9 +121,122 @@ def compute_fov(
     return fov
 
 
-# --------------------------------------------------------------------------- #
-# phase centre
-# --------------------------------------------------------------------------- #
+def maximum_baseline_m(telescope) -> float:
+    """Return Karabo's maximum antenna separation in metres."""
+    try:
+        baseline_m = float(telescope.max_baseline())
+        if not np.isfinite(baseline_m) or baseline_m <= 0:
+            raise ValueError(
+                f"Karabo returned an invalid maximum baseline: {baseline_m!r} m"
+            )
+        return baseline_m
+    except Exception as exc:
+        raise RuntimeError(
+            "Could not extract a valid maximum baseline from the telescope; "
+            f"cannot resolve image geometry: {exc}"
+        ) from exc
+
+
+def _simulation_fov_deg(
+    diffraction_fov_deg: float,
+    geometries: Dict[str, ImageGeometry],
+) -> float:
+    """Return a run-level field covering the primary beam and every image block."""
+    return max(
+        [diffraction_fov_deg]
+        + [geometry.effective_fov_deg for geometry in geometries.values()]
+    )
+
+
+def _resolve_run_geometry(
+    ctx: RunContext,
+    telescope,
+) -> Tuple[float, float, float, Dict[str, ImageGeometry]]:
+    """Compute observation-level beam and resolve per-block geometries.
+
+    Returns (diffraction_fov_deg, beam_arcsec, upper_frequency_hz, geometries).
+    """
+    obs = ctx.config.observation
+    if obs.bandwidth_mhz is None:
+        raise RuntimeError(
+            "Observation bandwidth is not resolved; cannot compute band edges."
+        )
+    center_frequency = obs.frequency_mhz * u.MHz
+    center_frequency_hz = center_frequency.to(u.Hz).value
+    baseline_m = maximum_baseline_m(telescope)
+    # Both the simulation field of view and the theoretical beam are evaluated at
+    # the observing frequency (band centre) per the current PRD.
+    wavelength_m = center_frequency.to(u.m, equivalencies=u.spectral()).value
+    beam_arcsec = (wavelength_m / baseline_m * u.rad).to(u.arcsec).value
+    diffraction_fov_deg = (
+        compute_fov(ctx.config.telescope, None, center_frequency).to(u.deg).value
+    )
+
+    geometries: Dict[str, ImageGeometry] = {}
+    records: Dict[str, dict] = {}
+    for img_config in ctx.config.imaging:
+        geometry = img_config.resolve_geometry(
+            diffraction_fov_deg=diffraction_fov_deg,
+            theoretical_beam_arcsec=beam_arcsec,
+            reference_frequency_hz=center_frequency_hz,
+        )
+        geometry_record = geometry.as_dict()
+        geometry_record["reference_frequency_label"] = "band centre"
+        records[img_config.tag] = geometry_record
+        geometries[img_config.tag] = geometry
+        logger.info(
+            "Image geometry [{}]: requested_fov_deg={requested_fov_deg}, "
+            "requested_pixels={requested_pixels}, "
+            "requested_cell_size_arcsec={requested_cell_size_arcsec}, "
+            "effective={effective_pixels} px, {effective_fov_deg:.6g} deg, "
+            "{effective_cell_size_arcsec:.6g} arcsec; "
+            "theoretical beam {theoretical_beam_arcsec:.6g} arcsec at {ref:.6g} MHz; "
+            "{pixels_per_beam:.4g} pixels/beam; rounded_up={rounded_up}; "
+            "legacy_fallback={legacy_fallback}".format(
+                img_config.tag,
+                requested_fov_deg=geometry.requested_fov_deg,
+                requested_pixels=geometry.requested_pixels,
+                requested_cell_size_arcsec=geometry.requested_cell_size_arcsec,
+                effective_pixels=geometry.effective_pixels,
+                effective_fov_deg=geometry.effective_fov_deg,
+                effective_cell_size_arcsec=geometry.effective_cell_size_arcsec,
+                theoretical_beam_arcsec=geometry.theoretical_beam_arcsec,
+                ref=center_frequency.to(u.MHz).value,
+                pixels_per_beam=geometry.pixels_per_beam,
+                rounded_up=geometry.pixels_rounded_up,
+                legacy_fallback=geometry.legacy_fallback,
+            )
+        )
+        for message in geometry.warnings:
+            logger.warning("Image geometry [{}]: {}", img_config.tag, message)
+
+    ctx.add_milestone(
+        "image_geometry_resolved",
+        "completed",
+        details={
+            "maximum_baseline_m": baseline_m,
+            "diffraction_fov_deg": diffraction_fov_deg,
+            "diffraction_fov_frequency_label": "band centre",
+            "simulation_fov_deg": _simulation_fov_deg(diffraction_fov_deg, geometries),
+            "reference_frequency_label": "band centre",
+            "blocks": records,
+        },
+    )
+    return diffraction_fov_deg, beam_arcsec, center_frequency_hz, geometries
+
+
+def _effective_img_config(
+    img_config: ImgConfig,
+    geometry: ImageGeometry,
+) -> ImgConfig:
+    """Return an effective config while retaining the user's request in the manifest."""
+    return img_config.model_copy(
+        update={
+            "pixels": geometry.effective_pixels,
+            "fov_deg": geometry.effective_fov_deg,
+            "cell_size_arcsec": geometry.effective_cell_size_arcsec,
+        }
+    )
 
 
 def parse_center(center_str: Optional[str], fallback: SkyCoord) -> SkyCoord:
@@ -483,6 +597,7 @@ def run_simulation(
     telescope,
     observation,
     sky_model: SkyModel,
+    fov_sim: u.Quantity,
 ) -> Path:
     """Run InterferometerSimulation and return visibility path."""
     interferometer_module = require_karabo_module("karabo.simulation.interferometer")
@@ -500,7 +615,6 @@ def run_simulation(
             )
 
     freq = config.observation.frequency_mhz * u.MHz
-    fov_sim = compute_fov(config.telescope, config.imaging[0].fov_deg, freq)
     delta_freq = config.observation.channel_width_mhz * u.MHz
 
     params = {
@@ -601,8 +715,8 @@ def _run_uv_coverage(ctx: RunContext, visibility_path: Path) -> None:
             "completed",
             details={"path": str(png_path.relative_to(ctx.work_dir))},
         )
-    except Exception:
-        ctx.add_milestone("uv_coverage_failed", "failed")
+    except Exception as exc:
+        ctx.add_milestone("uv_coverage_failed", "failed", details={"error": str(exc)})
         logger.exception("UV coverage plot failed")
 
 
@@ -612,6 +726,8 @@ def _run_simulation_phase(
     observation,
     sky_model: SkyModel,
     center: SkyCoord,
+    fov_sim: u.Quantity,
+    imaging_configs: List[ImgConfig],
 ) -> Path:
     """Run OSKAR simulation + image-model injection.
 
@@ -624,7 +740,9 @@ def _run_simulation_phase(
     t_phase_a = time.time()
     try:
         try:
-            visibility_path = run_simulation(ctx, telescope, observation, sky_model)
+            visibility_path = run_simulation(
+                ctx, telescope, observation, sky_model, fov_sim
+            )
         except Exception:
             if image_model_entries(config) and not component_model_entries(config):
                 logger.warning(
@@ -643,10 +761,11 @@ def _run_simulation_phase(
                     telescope,
                     observation,
                     build_zero_flux_sky_model(center),
+                    fov_sim,
                 )
             else:
                 raise
-        inject_image_models(ctx, visibility_path)
+        inject_image_models(ctx, visibility_path, imaging_configs=imaging_configs)
         ctx.add_milestone(
             "simulation_completed", "completed", elapsed_s=time.time() - t_phase_a
         )
@@ -741,7 +860,6 @@ def run(config: SimConfig) -> None:
         logger.info(f"Bandwidth : {config.observation.bandwidth_mhz} MHz")
         logger.info(f"Channels  : {config.observation.n_channels}")
         logger.info(f"Obs time  : {config.observation.observation_time_s} s")
-        logger.info(f"Pixels    : {config.imaging[0].pixels}")
         logger.info(f"Imager(s) : {', '.join(img.imager for img in config.imaging)}")
 
         telescope = build_telescope(ctx)
@@ -761,11 +879,23 @@ def run(config: SimConfig) -> None:
             role="telescope",
         )
 
+        # Resolve per-block image geometry once we have a telescope.
+        diffraction_fov_deg, _beam_arcsec, _upper_frequency_hz, geometries = (
+            _resolve_run_geometry(ctx, telescope)
+        )
+        effective_images = [
+            _effective_img_config(img, geometries[img.tag])
+            for img in ctx.config.imaging
+        ]
         freq = config.observation.frequency_mhz * u.MHz
-        fov0 = compute_fov(config.telescope, config.imaging[0].fov_deg, freq)
-        logger.info(f"FoV       : {fov0.to(u.deg).value:.4f} deg")
+        simulation_fov_deg = _simulation_fov_deg(diffraction_fov_deg, geometries)
+        simulation_fov = simulation_fov_deg * u.deg
+        logger.info(
+            "Simulation FoV: {:.4f} deg (covers diffraction limit and all image blocks)",
+            simulation_fov.to(u.deg).value,
+        )
 
-        sky_model, center = build_sky_model(ctx, fov0)
+        sky_model, center = build_sky_model(ctx, simulation_fov)
         center = parse_center(config.center, center)
         logger.info(f"Centre    : {center.to_string('hmsdms')}")
         try:
@@ -774,15 +904,18 @@ def run(config: SimConfig) -> None:
             for path, role in write_sky_model_previews(
                 sky_model,
                 center,
-                fov0,
+                simulation_fov,
                 ctx.work_dir,
                 ctx.work_dir.name,
             ):
                 ctx.manifest.add_output("plot", path, role=role)
-            write_image_model_previews(ctx, fov0)
+            write_image_model_previews(ctx, simulation_fov)
         except Exception as exc:
             logger.warning(f"Sky model previews failed: {exc}")
             logger.exception("Sky model preview traceback")
+            ctx.add_milestone(
+                "sky_model_previews_failed", "failed", details={"error": str(exc)}
+            )
 
         observation, _, bandwidth, n_channels, delta_freq, start_freq = (
             build_observation(ctx, center, telescope)
@@ -793,7 +926,13 @@ def run(config: SimConfig) -> None:
 
         # phase 1: simulation
         visibility_path = _run_simulation_phase(
-            ctx, telescope, observation, sky_model, center
+            ctx,
+            telescope,
+            observation,
+            sky_model,
+            center,
+            simulation_fov,
+            effective_images,
         )
 
         # UV coverage (shadeMS) — once per run, before imaging
@@ -801,7 +940,7 @@ def run(config: SimConfig) -> None:
             _run_uv_coverage(ctx, visibility_path)
 
         # phase 2: batch imaging
-        for img_config in config.imaging:
+        for img_config in effective_images:
             _run_imaging_pass(ctx, visibility_path, img_config, freq, center)
 
         ctx.manifest.mark_completed()

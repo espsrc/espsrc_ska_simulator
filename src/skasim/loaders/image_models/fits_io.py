@@ -24,6 +24,7 @@ from ...config import (
     SpectralCubeModelEntry,
     StaticStokesMapsModelEntry,
 )
+from ...image_geometry import MIN_IMAGE_PIXELS
 
 # suppress fits formatting fixes
 warnings.simplefilter("ignore", category=FITSFixedWarning)
@@ -431,7 +432,14 @@ def validate_spectral_cube(
     obs: ObsConfig,
     img: ImgConfig,
 ) -> dict:
-    """Validate the spectral-cube contract against observation/imaging config."""
+    """Validate the spectral-cube contract against observation/imaging config.
+
+    The cube's spatial dimensions are checked against the user's explicit
+    ``pixels`` setting when present.  If ``pixels`` was not supplied (e.g. only
+    ``fov_deg`` was given and skasim derives the image size automatically), the
+    cube dimensions are accepted as the authoritative model geometry and a
+    warning is recorded so the run log remains traceable.
+    """
     path = Path(entry.cube).expanduser().resolve()
     info = read_fits_cube_info(path)
 
@@ -440,10 +448,29 @@ def validate_spectral_cube(
             f"{path} must declare Jy/pixel-compatible BUNIT; found {info.unit!r}"
         )
 
-    if info.spatial_shape != (img.pixels, img.pixels):
+    spatial_shape = info.spatial_shape
+    if spatial_shape[0] != spatial_shape[1]:
         raise ValueError(
-            f"spectral_cube spatial dimensions {info.spatial_shape} do not match "
-            f"imaging pixels {img.pixels}"
+            f"spectral_cube spatial dimensions {spatial_shape} must be square"
+        )
+    if spatial_shape[0] < MIN_IMAGE_PIXELS:
+        raise ValueError(
+            f"spectral_cube spatial dimension {spatial_shape[0]} is below the "
+            f"minimum of {MIN_IMAGE_PIXELS} pixels"
+        )
+
+    explicit_pixels = "pixels" in img.model_fields_set
+    if explicit_pixels and spatial_shape != (img.pixels, img.pixels):
+        raise ValueError(
+            f"spectral_cube spatial dimensions {spatial_shape} do not match "
+            f"the explicitly requested imaging pixels {img.pixels}"
+        )
+
+    warnings: list[str] = []
+    if not explicit_pixels:
+        warnings.append(
+            f"spectral_cube spatial dimensions {spatial_shape} override the "
+            f"auto-derived imaging geometry because no explicit 'pixels' value was supplied"
         )
 
     if (
@@ -481,10 +508,11 @@ def validate_spectral_cube(
     return {
         "cube": str(path),
         "shape": info.shape,
-        "spatial_shape": list(info.spatial_shape),
+        "spatial_shape": list(spatial_shape),
         "unit": info.unit,
         "n_channels": n_channels,
         "channel_width_hz": channel_width_hz,
         "reference_frequency_hz": cube_center_hz,
         "frequency_range_hz": [cube_min_hz, cube_max_hz],
+        "warnings": warnings,
     }
