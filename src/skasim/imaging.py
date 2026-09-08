@@ -277,10 +277,18 @@ def run_wsclean_imaging(
             title = "Residual (WSClean)"
         elif "MFS-dirty" in img_path.name:
             title = "Dirty image (WSClean)"
-        elif "MFS-psf" in img_path.name:
+        is_psf = "MFS-psf" in img_path.name
+        if is_psf:
             title = "Point spread function (WSClean)"
 
-        write_fits_preview(img_path, png_path, title)
+        if is_psf:
+            try:
+                write_psf_profile_preview(img_path, png_path, title)
+            except Exception as exc:
+                logger.warning(f"Failed to generate PSF profile preview: {exc}")
+                write_fits_preview(img_path, png_path, title)
+        else:
+            write_fits_preview(img_path, png_path, title)
         role = "image"
         lower_name = img_path.name.lower()
         if "model" in lower_name:
@@ -507,6 +515,142 @@ def _make_2d_preview_hdu(
     if bunit is not None:
         preview_header["BUNIT"] = bunit
     return fits.PrimaryHDU(data=data, header=preview_header)
+
+
+def _gaussian_fwhm(x: np.ndarray, fwhm: float, amplitude: float = 1.0) -> np.ndarray:
+    """Return a Gaussian curve with the given FWHM, evaluated at ``x`` around zero."""
+    sigma = fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    return amplitude * np.exp(-0.5 * (x / sigma) ** 2)
+
+
+def write_psf_profile_preview(
+    psf_path: Path,
+    png_path: Path,
+    title: str = "Point spread function",
+) -> None:
+    """Write a PSF preview with 1D x/y cuts through the peak, to judge gaussianity.
+
+    The 2D panel shows the PSF core; the two line panels are slices through the
+    peak along x and y so an asymmetric or non-Gaussian main lobe (a common
+    sign of poor UV coverage or excessive weighting) is visible by eye.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+
+    with fits.open(psf_path) as hdul:
+        header = hdul[0].header
+        data = np.asarray(hdul[0].data, dtype=float).squeeze()
+    while data.ndim > 2:
+        data = data[0]
+    if data.ndim != 2 or data.size == 0:
+        raise ValueError(f"{psf_path}: expected a 2D PSF image")
+
+    finite = np.isfinite(data)
+    if not finite.any():
+        raise ValueError(f"{psf_path}: PSF has no finite pixels")
+    data = np.where(finite, data, 0.0)
+    ny, nx = data.shape
+    py, px = np.unravel_index(np.argmax(data), data.shape)
+
+    pixel_scale_deg = abs(header.get("CDELT1") or header.get("CD1_1") or 0.0)
+    bmaj_deg = header.get("BMAJ")
+    bmin_deg = header.get("BMIN")
+    bpa_deg = header.get("BPA")
+    if bmaj_deg and pixel_scale_deg:
+        half_window = max(8, int(round(4.0 * bmaj_deg / pixel_scale_deg)))
+    else:
+        half_window = max(8, min(nx, ny) // 8)
+    half_window = min(half_window, px, py, nx - 1 - px, ny - 1 - py)
+    if half_window <= 0:
+        half_window = min(nx, ny) // 2
+
+    x_slice = slice(px - half_window, px + half_window + 1)
+    y_slice = slice(py - half_window, py + half_window + 1)
+    x_profile = data[py, x_slice]
+    y_profile = data[y_slice, px]
+
+    if pixel_scale_deg:
+        unit = "arcsec"
+        x_axis = (
+            (np.arange(x_slice.start, x_slice.stop) - px) * pixel_scale_deg * 3600.0
+        )
+        y_axis = (
+            (np.arange(y_slice.start, y_slice.stop) - py) * pixel_scale_deg * 3600.0
+        )
+    else:
+        unit = "pixels"
+        x_axis = np.arange(x_slice.start, x_slice.stop) - px
+        y_axis = np.arange(y_slice.start, y_slice.stop) - py
+
+    peak_value = float(data[py, px])
+
+    # Reference Gaussians at the CLEAN restoring beam's major/minor FWHM, so a
+    # non-Gaussian or mismatched main lobe is visible against the nominal beam.
+    # These are overlaid on both panels since a cut along x or y generally
+    # isn't aligned with the beam's major/minor axes when BPA != 0/90.
+    beam_curves: list[tuple[float, str, str]] = []
+    x_dense = y_dense = None
+    if unit == "arcsec":
+        x_dense = np.linspace(x_axis.min(), x_axis.max(), 200)
+        y_dense = np.linspace(y_axis.min(), y_axis.max(), 200)
+        if bmaj_deg:
+            bmaj_arcsec = bmaj_deg * 3600.0
+            pa_label = f", PA {bpa_deg:.0f}°" if bpa_deg is not None else ""
+            beam_curves.append(
+                (bmaj_arcsec, f'BMAJ {bmaj_arcsec:.2f}"{pa_label}', "#f0883e")
+            )
+        if bmin_deg:
+            bmin_arcsec = bmin_deg * 3600.0
+            beam_curves.append((bmin_arcsec, f'BMIN {bmin_arcsec:.2f}"', "#8250df"))
+
+    fig, (ax_img, ax_x, ax_y) = plt.subplots(1, 3, figsize=(10.5, 3.2))
+    fig.suptitle(title)
+
+    cutout = data[y_slice, x_slice]
+    ax_img.imshow(cutout, origin="lower", cmap="viridis")
+    ax_img.axhline(half_window, color="white", lw=0.6, ls="--")
+    ax_img.axvline(half_window, color="white", lw=0.6, ls="--")
+    ax_img.set_title("PSF core")
+    ax_img.set_xticks([])
+    ax_img.set_yticks([])
+
+    ax_x.plot(x_axis, x_profile, color="#0969da", label="PSF")
+    ax_x.axhline(0.0, color="#888", lw=0.5)
+    ax_x.set_title("X profile")
+    ax_x.set_xlabel(f"offset from peak ({unit})")
+    ax_x.set_ylabel("normalized amplitude")
+
+    ax_y.plot(y_axis, y_profile, color="#cf222e", label="PSF")
+    ax_y.axhline(0.0, color="#888", lw=0.5)
+    ax_y.set_title("Y profile")
+    ax_y.set_xlabel(f"offset from peak ({unit})")
+
+    for fwhm, label, color in beam_curves:
+        ax_x.plot(
+            x_dense,
+            _gaussian_fwhm(x_dense, fwhm, peak_value),
+            color=color,
+            ls="--",
+            lw=1.1,
+            label=label,
+        )
+        ax_y.plot(
+            y_dense,
+            _gaussian_fwhm(y_dense, fwhm, peak_value),
+            color=color,
+            ls="--",
+            lw=1.1,
+            label=label,
+        )
+    if beam_curves:
+        ax_x.legend(fontsize=6.5, frameon=False, loc="upper right")
+        ax_y.legend(fontsize=6.5, frameon=False, loc="upper right")
+
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
+    fig.savefig(str(png_path), dpi=140)
+    plt.close(fig)
 
 
 def write_sky_model_previews(

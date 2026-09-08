@@ -153,6 +153,44 @@ def test_build_observation_centres_the_channel_grid_and_records_band_edges(
     assert captured["start_frequency_hz"] == pytest.approx(856.0e6)
     assert milestone.details["min_frequency_mhz"] == pytest.approx(856.0)
     assert milestone.details["max_frequency_mhz"] == pytest.approx(1712.0)
+    # no sky_center passed: it defaults to the effective centre, so no drift.
+    assert milestone.details["sky_model_center_ra_deg"] == pytest.approx(0.0)
+
+
+def test_build_observation_records_sky_model_centre_drift(tmp_path, monkeypatch):
+    """A distinct sky_center is recorded separately from the effective centre."""
+    import skasim.pipeline as pipeline
+
+    monkeypatch.setattr(
+        pipeline,
+        "require_karabo_module",
+        lambda _: type(
+            "ObservationModule",
+            (),
+            {"Observation": staticmethod(lambda **kwargs: kwargs)},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "source_ref_get_best_observation_time",
+        lambda center, telescope: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    ctx = create_run_context(SimConfig(output_dir=str(tmp_path / "drift")))
+
+    pipeline.build_observation(
+        ctx,
+        SkyCoord(10.0 * u.deg, 5.0 * u.deg),
+        object(),
+        sky_center=SkyCoord(10.0 * u.deg, 5.1 * u.deg),
+    )
+    milestone = next(
+        item
+        for item in ctx.manifest.milestones
+        if item.name == "observation_configured"
+    )
+
+    assert milestone.details["phase_center_dec_deg"] == pytest.approx(5.0)
+    assert milestone.details["sky_model_center_dec_deg"] == pytest.approx(5.1)
 
 
 def test_run_spectral_cube_pipeline_calls_wsclean_and_logs_summary(
@@ -178,7 +216,7 @@ def test_run_spectral_cube_pipeline_calls_wsclean_and_logs_summary(
         monkeypatch.setattr(
             pipeline,
             "build_observation",
-            lambda ctx, center, telescope: (
+            lambda ctx, center, telescope, **kwargs: (
                 object(),
                 700 * u.MHz,
                 100 * u.MHz,
@@ -651,6 +689,37 @@ def test_build_sky_model_uses_generated_source_polarization(tmp_path):
     assert sky.sources[1, 5] == pytest.approx(-0.1)
 
 
+def test_build_sky_model_records_flux_range_and_polarization(tmp_path):
+    """sky_model_loaded records flux min/max and polarization presence."""
+    config = SimConfig(
+        source_flux_jy=[1.0, 5.0],
+        stokes_q_jy=[0.1, 0.0],
+        stokes_u_jy=[0.0, 0.0],
+        stokes_v_jy=[0.0, 0.0],
+    )
+    ctx = _make_ctx(tmp_path, config)
+
+    build_sky_model(ctx, fov=0.2 * u.deg)
+
+    details = ctx.manifest.milestones[-1].details
+    assert details["flux_min_jy"] == pytest.approx(1.0)
+    assert details["flux_max_jy"] == pytest.approx(5.0)
+    assert details["has_polarization"] is True
+
+
+def test_build_sky_model_omits_polarization_flag_when_unpolarized(tmp_path):
+    """Unpolarized random sources record flux range but no polarization flag."""
+    config = SimConfig(source_flux_jy=[2.0, 3.0])
+    ctx = _make_ctx(tmp_path, config)
+
+    build_sky_model(ctx, fov=0.2 * u.deg)
+
+    details = ctx.manifest.milestones[-1].details
+    assert details["flux_min_jy"] == pytest.approx(2.0)
+    assert details["flux_max_jy"] == pytest.approx(3.0)
+    assert "has_polarization" not in details
+
+
 @pytest.mark.parametrize(
     ("catalog", "loader_name"),
     [
@@ -738,7 +807,7 @@ def test_run_uses_resolved_wsclean_imager(tmp_path, monkeypatch):
         monkeypatch.setattr(
             pipeline,
             "build_observation",
-            lambda ctx, center, telescope: (
+            lambda ctx, center, telescope, **kwargs: (
                 object(),
                 700 * u.MHz,
                 100 * u.MHz,
@@ -857,7 +926,7 @@ def test_run_records_failure_milestone_details_as_dict(tmp_path, monkeypatch):
         monkeypatch.setattr(
             pipeline,
             "build_observation",
-            lambda ctx, center, telescope: (
+            lambda ctx, center, telescope, **kwargs: (
                 object(),
                 700 * u.MHz,
                 100 * u.MHz,
@@ -971,7 +1040,7 @@ def test_run_batch_imaging_creates_subdirs_and_calls_both_imagers(
         monkeypatch.setattr(
             pipeline,
             "build_observation",
-            lambda ctx, center, telescope: (
+            lambda ctx, center, telescope, **kwargs: (
                 object(),
                 700 * u.MHz,
                 100 * u.MHz,
@@ -1052,7 +1121,7 @@ def test_run_batch_imaging_fail_fast_on_first_error(tmp_path, monkeypatch):
         monkeypatch.setattr(
             pipeline,
             "build_observation",
-            lambda ctx, center, telescope: (
+            lambda ctx, center, telescope, **kwargs: (
                 object(),
                 700 * u.MHz,
                 100 * u.MHz,
@@ -1118,7 +1187,7 @@ def test_weblog_has_tabs_for_multiple_tags(tmp_path, monkeypatch):
         monkeypatch.setattr(
             pipeline,
             "build_observation",
-            lambda ctx, center, telescope: (
+            lambda ctx, center, telescope, **kwargs: (
                 object(),
                 700 * u.MHz,
                 100 * u.MHz,

@@ -536,6 +536,81 @@ def test_write_fits_preview_uses_aplpy_cmasher_renderer(tmp_path):
     assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_write_psf_profile_preview_writes_png_with_x_y_cuts(tmp_path):
+    """The PSF preview renders a valid PNG (2D core + x/y profile panels)."""
+    from skasim.imaging import write_psf_profile_preview
+
+    psf_path = tmp_path / "psf.fits"
+    png_path = tmp_path / "psf.png"
+    size = 32
+    yy, xx = np.mgrid[0:size, 0:size]
+    center = size // 2
+    data = np.exp(-((xx - center) ** 2 + (yy - center) ** 2) / (2 * 3.0**2))
+    header = fits.Header()
+    header["CDELT1"] = -1.0 / 3600.0
+    header["CDELT2"] = 1.0 / 3600.0
+    header["BMAJ"] = 5.0 / 3600.0
+    header["BMIN"] = 4.0 / 3600.0
+    fits.writeto(psf_path, data.astype(np.float32), header, overwrite=True)
+
+    write_psf_profile_preview(psf_path, png_path, "Test PSF")
+
+    assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_gaussian_fwhm_peak_and_half_max_points():
+    """_gaussian_fwhm peaks at the given amplitude and reaches half-max at ±FWHM/2."""
+    from skasim.imaging import _gaussian_fwhm
+
+    fwhm = 6.0
+    amplitude = 2.5
+    x = np.array([0.0, fwhm / 2.0, -fwhm / 2.0, fwhm * 10.0])
+    y = _gaussian_fwhm(x, fwhm, amplitude)
+
+    assert y[0] == pytest.approx(amplitude)
+    assert y[1] == pytest.approx(amplitude / 2.0)
+    assert y[2] == pytest.approx(amplitude / 2.0)
+    assert y[3] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_write_psf_profile_preview_handles_missing_bmin(tmp_path):
+    """The PSF preview still renders when only BMAJ (no BMIN) is present."""
+    from skasim.imaging import write_psf_profile_preview
+
+    psf_path = tmp_path / "psf_bmaj_only.fits"
+    png_path = tmp_path / "psf_bmaj_only.png"
+    size = 32
+    yy, xx = np.mgrid[0:size, 0:size]
+    center = size // 2
+    data = np.exp(-((xx - center) ** 2 + (yy - center) ** 2) / (2 * 3.0**2))
+    header = fits.Header()
+    header["CDELT1"] = -1.0 / 3600.0
+    header["CDELT2"] = 1.0 / 3600.0
+    header["BMAJ"] = 5.0 / 3600.0
+    fits.writeto(psf_path, data.astype(np.float32), header, overwrite=True)
+
+    write_psf_profile_preview(psf_path, png_path, "BMAJ-only PSF")
+
+    assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_write_psf_profile_preview_falls_back_to_pixel_units_without_wcs(tmp_path):
+    """Without a pixel scale in the header, the preview still renders in pixel units."""
+    from skasim.imaging import write_psf_profile_preview
+
+    psf_path = tmp_path / "psf_no_wcs.fits"
+    png_path = tmp_path / "psf_no_wcs.png"
+    size = 32
+    yy, xx = np.mgrid[0:size, 0:size]
+    center = size // 2
+    data = np.exp(-((xx - center) ** 2 + (yy - center) ** 2) / (2 * 3.0**2))
+    fits.writeto(psf_path, data.astype(np.float32), overwrite=True)
+
+    write_psf_profile_preview(psf_path, png_path, "No-WCS PSF")
+
+    assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_write_sky_model_previews_writes_full_and_fov_pngs(tmp_path):
     """Sky model previews include full-catalog and FoV-matched views."""
     from astropy.coordinates import SkyCoord

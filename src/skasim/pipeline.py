@@ -322,6 +322,42 @@ def _load_sky_from_fits(
 
 
 # --------------------------------------------------------------------------- #
+# sky model — flux/polarization summary helper
+# --------------------------------------------------------------------------- #
+
+
+def _sky_flux_details(sky_model: SkyModel) -> dict:
+    """Return best-effort flux-range and polarization presence for a tabular sky model.
+
+    Returns {} when the model has no readable per-source flux column (e.g. an
+    empty model, or one backed by something other than a plain source array).
+    """
+    sources = getattr(sky_model, "sources", None)
+    if sources is None:
+        return {}
+    try:
+        values = getattr(sources, "values", sources)
+        arr = np.asarray(values, dtype=float)
+    except Exception:
+        return {}
+    if arr.ndim != 2 or arr.shape[0] == 0 or arr.shape[1] < 3:
+        return {}
+    flux_jy = arr[:, 2]
+    finite_flux = flux_jy[np.isfinite(flux_jy)]
+    if finite_flux.size == 0:
+        return {}
+    details: dict = {
+        "flux_min_jy": float(np.min(finite_flux)),
+        "flux_max_jy": float(np.max(finite_flux)),
+    }
+    if arr.shape[1] >= 6:
+        pol = arr[:, 3:6]
+        if bool(np.any(np.isfinite(pol) & (pol != 0.0))):
+            details["has_polarization"] = True
+    return details
+
+
+# --------------------------------------------------------------------------- #
 # sky model — catalog loader helper
 # --------------------------------------------------------------------------- #
 
@@ -382,16 +418,14 @@ def build_sky_model(
             sky_model, component_format = _load_sky_from_catalog(entry.catalog)
         center = sky_model.get_center()
         n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
-        ctx.add_milestone(
-            "sky_model_loaded",
-            "completed",
-            details={
-                "path": str(component_path) if component_path is not None else None,
-                "format": component_format,
-                "n_sources": n_srcs,
-                "model_entries": len(config.models),
-            },
-        )
+        sky_details = {
+            "path": str(component_path) if component_path is not None else None,
+            "format": component_format,
+            "n_sources": n_srcs,
+            "model_entries": len(config.models),
+        }
+        sky_details.update(_sky_flux_details(sky_model))
+        ctx.add_milestone("sky_model_loaded", "completed", details=sky_details)
         if component_path is not None:
             ctx.manifest.add_output(
                 "sky_model",
@@ -425,15 +459,13 @@ def build_sky_model(
         )
         center = sky_model.get_center()
         n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
-        ctx.add_milestone(
-            "sky_model_loaded",
-            "completed",
-            details={
-                "path": str(ctx.sky_file_resolved),
-                "format": config.sky_format,
-                "n_sources": n_srcs,
-            },
-        )
+        sky_details = {
+            "path": str(ctx.sky_file_resolved),
+            "format": config.sky_format,
+            "n_sources": n_srcs,
+        }
+        sky_details.update(_sky_flux_details(sky_model))
+        ctx.add_milestone("sky_model_loaded", "completed", details=sky_details)
         ctx.manifest.add_output(
             "sky_model",
             str(ctx.sky_file_resolved),
@@ -446,11 +478,9 @@ def build_sky_model(
         sky_model, fmt = _load_sky_from_catalog(config.catalog)
         center = sky_model.get_center()
         n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
-        ctx.add_milestone(
-            "sky_model_loaded",
-            "completed",
-            details={"format": fmt, "n_sources": n_srcs},
-        )
+        sky_details = {"format": fmt, "n_sources": n_srcs}
+        sky_details.update(_sky_flux_details(sky_model))
+        ctx.add_milestone("sky_model_loaded", "completed", details=sky_details)
         return sky_model, center
 
     # 3) FITS image ingestion (legacy path)
@@ -467,15 +497,13 @@ def build_sky_model(
         sky_model = loader.load()
         center = sky_model.get_center()
         n_srcs = len(sky_model.sources) if hasattr(sky_model, "sources") else None
-        ctx.add_milestone(
-            "sky_model_loaded",
-            "completed",
-            details={
-                "path": str(fpath),
-                "format": "fits_image",
-                "n_sources": n_srcs,
-            },
-        )
+        sky_details = {
+            "path": str(fpath),
+            "format": "fits_image",
+            "n_sources": n_srcs,
+        }
+        sky_details.update(_sky_flux_details(sky_model))
+        ctx.add_milestone("sky_model_loaded", "completed", details=sky_details)
         ctx.manifest.add_output(
             "sky_model",
             str(fpath),
@@ -519,11 +547,9 @@ def build_sky_model(
     arr = np.array([s.to_sky_model(reduced_form=not has_polarization) for s in sources])
     sky_model.add_point_sources(arr)
     center = sky_model.get_center()
-    ctx.add_milestone(
-        "sky_model_loaded",
-        "completed",
-        details={"format": "random", "n_sources": n_sources, "reference": "HCG16"},
-    )
+    sky_details = {"format": "random", "n_sources": n_sources, "reference": "HCG16"}
+    sky_details.update(_sky_flux_details(sky_model))
+    ctx.add_milestone("sky_model_loaded", "completed", details=sky_details)
     return sky_model, center
 
 
@@ -531,8 +557,16 @@ def build_observation(
     ctx: RunContext,
     center: SkyCoord,
     telescope,
+    sky_center: Optional[SkyCoord] = None,
 ) -> tuple:
-    """Return (observation, frequency, bandwidth, n_channels, delta_freq, start_freq)."""
+    """Return (observation, frequency, bandwidth, n_channels, delta_freq, start_freq).
+
+    ``sky_center`` is the sky model's own centre, before any ``SimConfig.center``
+    override is applied to ``center``. When omitted it defaults to ``center``, so
+    a caller that doesn't track the pre-override centre simply reports no drift.
+    """
+    if sky_center is None:
+        sky_center = center
     observation_module = require_karabo_module("karabo.simulation.observation")
     config = ctx.config
     obs = config.observation
@@ -576,6 +610,8 @@ def build_observation(
             "n_timesteps": n_timesteps,
             "phase_center_ra_deg": center.ra.to(u.deg).value,
             "phase_center_dec_deg": center.dec.to(u.deg).value,
+            "sky_model_center_ra_deg": sky_center.ra.to(u.deg).value,
+            "sky_model_center_dec_deg": sky_center.dec.to(u.deg).value,
         },
     )
     return observation, freq, bandwidth, n_channels, delta_freq, start_freq
@@ -895,8 +931,8 @@ def run(config: SimConfig) -> None:
             simulation_fov.to(u.deg).value,
         )
 
-        sky_model, center = build_sky_model(ctx, simulation_fov)
-        center = parse_center(config.center, center)
+        sky_model, sky_center = build_sky_model(ctx, simulation_fov)
+        center = parse_center(config.center, sky_center)
         logger.info(f"Centre    : {center.to_string('hmsdms')}")
         try:
             from .imaging import write_sky_model_previews
@@ -918,7 +954,7 @@ def run(config: SimConfig) -> None:
             )
 
         observation, _, bandwidth, n_channels, delta_freq, start_freq = (
-            build_observation(ctx, center, telescope)
+            build_observation(ctx, center, telescope, sky_center=sky_center)
         )
         logger.info(f"StartFreq : {start_freq.to(u.MHz).value:.3f} MHz")
         logger.info(f"DeltaFreq : {delta_freq.to(u.MHz).value:.3f} MHz")

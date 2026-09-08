@@ -39,8 +39,23 @@
     .badge.random { background: rgba(101,109,118,0.13); color: var(--muted); }
     .badge.spectral-cube { background: rgba(183,33,117,0.13); color: #b72175; }
 
+    /* top-of-report summary card */
+    .summary-card { border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; background: #fbfbfc; }
+    .summary-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+    .summary-title { font-size: 1.05rem; font-weight: 500; margin-top: 0.5rem; }
+    .summary-description { color: var(--muted); font-size: 0.9rem; margin-top: 0.2rem; line-height: 1.4; }
+    .summary-status-chip { font-size: 0.78rem; font-weight: 600; padding: 0.35rem 0.75rem; border-radius: 999px; white-space: nowrap; }
+    .summary-status-chip.chip-ok { background: rgba(26,127,55,0.12); color: var(--success); }
+    .summary-status-chip.chip-warn { background: rgba(191,135,0,0.14); color: var(--warning); }
+    .summary-stats { display: flex; gap: 2rem; flex-wrap: wrap; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .summary-stat-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.25rem; }
+    .summary-stat-value { font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+    .summary-stat-value .badge { margin-left: 0; margin-right: 0.3rem; }
+    .summary-invocation { margin-top: 0.75rem; }
+    .summary-invocation code { font-size: 0.78rem; color: var(--muted); word-break: break-all; }
+
     /* warnings banner */
-    .warning-banner { background: rgba(191,135,0,0.10); border: 1px solid rgba(191,135,0,0.35); border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; font-size: 0.85rem; }
+    .warning-banner { background: rgba(191,135,0,0.10); border: 1px solid rgba(191,135,0,0.35); border-radius: 6px; padding: 0.75rem 1rem; margin: 1rem 0 0; font-size: 0.85rem; }
     .warning-banner .warning-title { color: var(--warning); font-weight: 600; margin-bottom: 0.35rem; }
     .warning-banner ul { margin: 0; padding-left: 1.2rem; }
     .warning-banner li { margin: 0.15rem 0; }
@@ -69,6 +84,8 @@
     .science-grid img { width: 100%; height: auto; display: block; }
     .science-grid figcaption { font-size: 0.8rem; color: var(--muted); margin-top: 0.3rem; }
     .stats-line { font-size: 0.85rem; color: var(--muted); margin-top: 0.5rem; font-variant-numeric: tabular-nums; }
+    .psf-profile { margin-top: 0.75rem; }
+    .psf-profile img { width: 100%; max-width: 900px; display: block; }
 
     /* timeline */
     table.timeline { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
@@ -119,40 +136,73 @@
 <body>
   <div class="container">
 
-    <!-- header -->
-    <div class="header">
-      <h1>{{ manifest.run_id }}<span class="badge {{ manifest.status }}">{{ manifest.status }}</span></h1>
-      <div class="meta">
-        {{ manifest.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}
-        {% if total_elapsed %} · {{ total_elapsed }}{% endif %}
-        {% if simulation_duration %} · simulation {{ simulation_duration }}{% endif %}
-        {% if imaging_duration %} · imaging {{ imaging_duration }}{% endif %}
-        {% if disk_usage %} · {{ disk_usage }} on disk{% endif %}
+    <!-- top-of-report summary card: status, timing, and at-a-glance run info -->
+    <div class="summary-card">
+      <div class="summary-top">
+        <div>
+          <h1>{{ manifest.run_id }}<span class="badge {{ status_class }}">{{ manifest.status }}</span></h1>
+          <div class="meta">
+            {{ manifest.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}
+            {% if total_elapsed %} · {{ total_elapsed }}{% endif %}
+            {% if simulation_duration %} · simulation {{ simulation_duration }}{% endif %}
+            {% if imaging_duration %} · imaging {{ imaging_duration }}{% endif %}
+            {% if disk_usage %} · {{ disk_usage }} on disk{% endif %}
+          </div>
+          {% if manifest.config.title %}
+          <div class="summary-title">{{ manifest.config.title }}</div>
+          {% endif %}
+          {% if manifest.config.description %}
+          <div class="summary-description">{{ manifest.config.description }}</div>
+          {% endif %}
+        </div>
+        {% if report_warnings %}
+        <div class="summary-status-chip chip-warn">⚠ {{ report_warnings | length }} issue{{ "s" if report_warnings | length != 1 else "" }}</div>
+        {% else %}
+        <div class="summary-status-chip chip-ok">✓ No issues</div>
+        {% endif %}
       </div>
-      {% if manifest.config.title %}
-      <div style="font-size: 1.05rem; font-weight: 500; margin-top: 0.5rem;">{{ manifest.config.title }}</div>
-      {% endif %}
-      {% if manifest.config.description %}
-      <div style="color: var(--muted); font-size: 0.9rem; margin-top: 0.2rem; line-height: 1.4;">{{ manifest.config.description }}</div>
-      {% endif %}
-      {% if invocation_command %}
-      <div style="margin-top: 0.5rem;">
-        <code style="font-size: 0.78rem; color: var(--muted); word-break: break-all;">{{ invocation_command }}</code>
-      </div>
-      {% endif %}
-    </div>
 
-    <!-- Run-level warnings: failed milestones and geometry warnings, surfaced up front -->
-    {% if report_warnings %}
-    <div class="warning-banner">
-      <div class="warning-title">⚠ {{ report_warnings | length }} issue{{ "s" if report_warnings | length != 1 else "" }} to review</div>
-      <ul>
-        {% for warning in report_warnings %}
-        <li>{{ warning }}</li>
-        {% endfor %}
-      </ul>
+      <div class="summary-stats">
+        <div>
+          <div class="summary-stat-label">Telescope</div>
+          <div class="summary-stat-value">
+            {{ manifest.config.telescope }}{% if observation_summary.central_frequency_mhz %} · {{ observation_summary.central_frequency_mhz }} MHz{% endif %}
+          </div>
+        </div>
+        {% if imagers_used %}
+        <div>
+          <div class="summary-stat-label">Imager{{ "s" if imagers_used | length != 1 else "" }}</div>
+          <div class="summary-stat-value">{{ imagers_used | join(", ") }}</div>
+        </div>
+        {% endif %}
+        {% if sky_model_summary %}
+        <div>
+          <div class="summary-stat-label">Sky Model</div>
+          <div class="summary-stat-value">
+            {% for entry in sky_model_summary %}<span class="badge {{ entry.color }}">{{ entry.label }}</span>{% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      {% if invocation_command %}
+      <div class="summary-invocation">
+        <code>{{ invocation_command }}</code>
+      </div>
+      {% endif %}
+
+      <!-- Run-level warnings: failed milestones, geometry, and phase-centre checks -->
+      {% if report_warnings %}
+      <div class="warning-banner">
+        <div class="warning-title">⚠ {{ report_warnings | length }} issue{{ "s" if report_warnings | length != 1 else "" }} to review</div>
+        <ul>
+          {% for warning in report_warnings %}
+          <li>{{ warning }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
     </div>
-    {% endif %}
 
     <!-- Observation configuration -->
     <h2>Observation & Telescope</h2>
@@ -225,9 +275,12 @@
             {%- if entry.channel_width_khz %} · {{ entry.channel_width_khz | round(3) }} kHz/ch{% endif %}
             {%- if entry.spatial_shape %} · {{ entry.spatial_shape[0] }}×{{ entry.spatial_shape[1] }}{% endif %}
             {%- if entry.reference %} · ref={{ entry.reference }}{% endif %}
+            {%- if entry.flux_range %} · flux {{ entry.flux_range }}{% endif %}
+            {%- if entry.polarization_label %} · {{ entry.polarization_label }}{% endif %}
             <br>
           {% endfor %}
         </td></tr>
+        <tr><th>Coordinate Frame</th><td>ICRS (J2000)</td></tr>
         {% elif sky_ms and sky_ms.details %}
         <tr><th>Format</th><td>{{ sky_ms.details.get("format", "?") }}</td></tr>
         <tr><th>Sources</th><td>{{ sky_ms.details.get("n_sources", "?") }} sources</td></tr>
@@ -237,6 +290,7 @@
         {% if sky_ms.details.get("path") %}
         <tr><th>Path</th><td style="word-break: break-all; font-size: 0.78rem; font-family: monospace;">{{ sky_ms.details.get("path") }}</td></tr>
         {% endif %}
+        <tr><th>Coordinate Frame</th><td>ICRS (J2000)</td></tr>
         {% endif %}
       </table>
         {% if fits_model_plots %}
@@ -302,9 +356,6 @@
         <div style="font-size: 0.9rem; margin-bottom: 0.4rem;">
           <strong>{{ product.product_id }}</strong>
           <span class="badge running">{{ product.imager }}</span>
-          {% if product.psf and product.psf.preview %}
-            · <a href="{{ product.psf.preview }}" target="_blank" rel="noopener">View PSF</a>
-          {% endif %}
         </div>
         {% if product.stats %}
         <div class="stats-line">
@@ -318,7 +369,7 @@
         {% endif %}
         <div class="science-grid">
           {% if product.model or product.clean or product.residual %}
-          {% for item, caption in [(product.model, "Model"), (product.clean, "Clean"), (product.residual, "Residual")] %}
+          {% for item, caption in [(product.clean, "Clean"), (product.model, "Model"), (product.residual, "Residual")] %}
           <figure>
             {% if item and item.preview and item.data %}
               <a href="{{ item.preview }}" target="_blank" rel="noopener"><img src="{{ item.data }}" alt="{{ caption }}"></a>
@@ -359,6 +410,14 @@
           </figure>
           {% endif %}
         </div>
+        {% if product.psf and product.psf.preview and product.psf.data %}
+        <div class="psf-profile">
+          <div class="plot-title">Point Spread Function — x/y profile</div>
+          <a href="{{ product.psf.preview }}" target="_blank" rel="noopener">
+            <img src="{{ product.psf.data }}" alt="PSF x/y profile through the peak">
+          </a>
+        </div>
+        {% endif %}
       </div>
       {% endfor %}
       <div class="info-grid" style="margin-top: 1.5rem;">

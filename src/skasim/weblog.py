@@ -11,7 +11,9 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Optional
 
+import astropy.units as u
 import numpy as np
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from jinja2 import Environment, PackageLoader, select_autoescape
 
@@ -24,6 +26,27 @@ from .manifest import RunManifest
 KNOWN_ANTENNA_COUNTS = {
     "MEERKAT": 64,
 }
+
+_IMAGER_LABELS = {
+    "wsclean": "WSClean",
+    "oskar-dirty": "OSKAR dirty",
+}
+
+_STATUS_BADGE_CLASSES = {
+    "completed": "success",
+    "failed": "danger",
+    "running": "running",
+}
+
+
+def _imagers_used(manifest: RunManifest) -> list[str]:
+    """Return the distinct imagers configured for this run, in first-use order."""
+    return list(
+        dict.fromkeys(
+            _IMAGER_LABELS.get(img.imager, img.imager)
+            for img in manifest.config.imaging
+        )
+    )
 
 
 def _humanize_seconds(total_s: float) -> str:
@@ -542,6 +565,42 @@ _FRIENDLY_MILESTONE_LABELS = {
     "sky_model_previews_failed": "Sky model preview plots",
 }
 
+PHASE_CENTRE_TOLERANCE_ARCSEC = 10.0
+
+
+def _phase_centre_warning(manifest: RunManifest) -> Optional[str]:
+    """Flag when the resolved phase centre drifts from the sky model's own centre.
+
+    ``SimConfig.center`` can override the observation's phase centre away from
+    the sky model's natural centre (catalog centroid, FITS image centre, ...).
+    A drift beyond tolerance usually means the imaged field is no longer
+    centred on where the injected sources actually are.
+    """
+    details = _find_milestone_details(manifest, "observation_configured")
+    required = (
+        "phase_center_ra_deg",
+        "phase_center_dec_deg",
+        "sky_model_center_ra_deg",
+        "sky_model_center_dec_deg",
+    )
+    if not all(details.get(k) is not None for k in required):
+        return None
+    effective = SkyCoord(
+        ra=details["phase_center_ra_deg"] * u.deg,
+        dec=details["phase_center_dec_deg"] * u.deg,
+    )
+    sky_model_centre = SkyCoord(
+        ra=details["sky_model_center_ra_deg"] * u.deg,
+        dec=details["sky_model_center_dec_deg"] * u.deg,
+    )
+    offset_arcsec = effective.separation(sky_model_centre).arcsec
+    if offset_arcsec <= PHASE_CENTRE_TOLERANCE_ARCSEC:
+        return None
+    return (
+        f"Phase centre is {offset_arcsec:.1f}\" from the sky model's own centre "
+        f'(tolerance {PHASE_CENTRE_TOLERANCE_ARCSEC:.0f}")'
+    )
+
 
 def _report_warnings(manifest: RunManifest) -> list[str]:
     """Collect run-level issues worth flagging near the top of the report.
@@ -572,6 +631,10 @@ def _report_warnings(manifest: RunManifest) -> list[str]:
         if error:
             message += f": {error}"
         warnings.append(message)
+
+    phase_centre_warning = _phase_centre_warning(manifest)
+    if phase_centre_warning:
+        warnings.append(phase_centre_warning)
 
     geometry = _find_milestone_details(manifest, "image_geometry_resolved")
     for tag, block in (geometry.get("blocks") or {}).items():
@@ -851,6 +914,7 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
 
     config = manifest.config
     entries: list[dict] = []
+    sky_ms_details = _find_milestone_details(manifest, "sky_model_loaded")
 
     # typed models first
     for model in config.models:
@@ -862,6 +926,7 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
                         "label": "Catalog",
                         "color": "catalog",
                         "source": model.catalog,
+                        **_flux_polarization_fields(sky_ms_details),
                     }
                 )
             elif model.path:
@@ -870,6 +935,7 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
                         "label": "FITS catalog",
                         "color": "fits-catalog",
                         "source": model.path,
+                        **_flux_polarization_fields(sky_ms_details),
                     }
                 )
         elif mtype == "continuum_i_alpha":
@@ -925,9 +991,10 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
 
     # legacy paths
     if not config.models:
-        milestone = _find_milestone_details(manifest, "sky_model_loaded")
+        milestone = sky_ms_details
         fmt = milestone.get("format", "?")
         n_sources = milestone.get("n_sources")
+        flux_fields = _flux_polarization_fields(milestone)
         if config.sky_file:
             entries.append(
                 {
@@ -935,6 +1002,7 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
                     "color": "fits-file",
                     "source": str(milestone.get("path", config.sky_file)),
                     "n_sources": n_sources,
+                    **flux_fields,
                 }
             )
         elif config.catalog:
@@ -944,6 +1012,7 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
                     "color": "catalog",
                     "source": config.catalog,
                     "n_sources": n_sources,
+                    **flux_fields,
                 }
             )
         elif config.fits_image:
@@ -953,6 +1022,7 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
                     "color": "fits-file",
                     "source": config.fits_image,
                     "n_sources": n_sources,
+                    **flux_fields,
                 }
             )
         elif fmt == "random":
@@ -962,10 +1032,32 @@ def _sky_model_summary(manifest: RunManifest) -> list[dict]:
                     "color": "random",
                     "n_sources": n_sources,
                     "reference": milestone.get("reference"),
+                    **flux_fields,
                 }
             )
 
     return entries
+
+
+def _flux_polarization_fields(details: dict) -> dict:
+    """Return formatted flux-range/polarization display fields from sky-model details.
+
+    ``details`` is a ``sky_model_loaded`` milestone's details dict; older
+    manifests without ``flux_min_jy``/``flux_max_jy``/``has_polarization``
+    simply yield {} so the report omits the row rather than showing "None".
+    """
+    fields: dict = {}
+    flux_min = details.get("flux_min_jy")
+    flux_max = details.get("flux_max_jy")
+    if flux_min is not None and flux_max is not None:
+        fields["flux_range"] = (
+            f"{_format_jy_amount(flux_min)} – {_format_jy_amount(flux_max)}"
+        )
+    if "has_polarization" in details:
+        fields["polarization_label"] = (
+            "polarized (Q/U/V)" if details["has_polarization"] else "Stokes I only"
+        )
+    return fields
 
 
 def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
@@ -1178,6 +1270,8 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
         timeline_rows=_build_timeline_rows(manifest),
         disk_usage=_run_disk_usage(work_dir),
         invocation_command=_format_invocation(manifest),
+        imagers_used=_imagers_used(manifest),
+        status_class=_STATUS_BADGE_CLASSES.get(manifest.status, "running"),
     )
 
     weblog_path = work_dir / "weblog.html"
