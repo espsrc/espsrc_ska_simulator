@@ -1243,13 +1243,22 @@ def render_weblog(manifest: RunManifest, work_dir: Path) -> str:
             continue
         fpath = work_dir / output_path
         if fpath.exists() and output_path.endswith((".png", ".jpg", ".jpeg")):
+            metadata = o.metadata if hasattr(o, "metadata") else {}
             fits_model_plots.append(
                 {
                     "path": output_path,
                     "data": _file_to_base64_data_uri(fpath),
-                    "model_type": o.metadata.get("model_type")
-                    if hasattr(o, "metadata")
-                    else None,
+                    "model_type": metadata.get("model_type"),
+                    "image_size": metadata.get("image_size"),
+                    "pixel_scale_arcsec": metadata.get("pixel_scale_arcsec"),
+                    "extent_width_deg": metadata.get("extent_width_deg"),
+                    "extent_height_deg": metadata.get("extent_height_deg"),
+                    "center_ra_deg": metadata.get("center_ra_deg"),
+                    "center_dec_deg": metadata.get("center_dec_deg"),
+                    "offset_from_center_arcsec": metadata.get(
+                        "offset_from_center_arcsec"
+                    ),
+                    "fov_fraction": metadata.get("fov_fraction"),
                 }
             )
 

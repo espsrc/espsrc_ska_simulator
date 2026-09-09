@@ -945,7 +945,7 @@ def run(config: SimConfig) -> None:
                 ctx.work_dir.name,
             ):
                 ctx.manifest.add_output("plot", path, role=role)
-            write_image_model_previews(ctx, simulation_fov)
+            write_image_model_previews(ctx, simulation_fov, center)
         except Exception as exc:
             logger.warning(f"Sky model previews failed: {exc}")
             logger.exception("Sky model preview traceback")

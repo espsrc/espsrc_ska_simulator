@@ -297,34 +297,36 @@
         {% endif %}
         <tr><th>Coordinate Frame</th><td>ICRS (J2000)</td></tr>
         {% endif %}
-      </table>
-        {% if fits_model_plots %}
         {% for plot in fits_model_plots %}
         <tr>
-          <th>FITS Model{% if plot.model_type %} ({{ plot.model_type }}){% endif %}</th>
+          <th>Footprint{% if fits_model_plots|length > 1 %} ({{ loop.index }}){% endif %}</th>
           <td>
-            <div class="plot-container" style="margin-top:0.5rem;">
-              <a href="{{ plot.path }}" target="_blank" rel="noopener">
-                <img src="{{ plot.data }}" alt="FITS model preview" style="max-width:260px;">
-              </a>
-            </div>
+            {%- if plot.image_size %}{{ plot.image_size[0] }} × {{ plot.image_size[1] }} px{% endif -%}
+            {%- if plot.pixel_scale_arcsec is not none %} · {{ plot.pixel_scale_arcsec | round(3) }}″/px{% endif -%}
+            {%- if plot.extent_width_deg is not none and plot.extent_height_deg is not none %} · {{ (plot.extent_width_deg * 3600) | round(1) }}″ × {{ (plot.extent_height_deg * 3600) | round(1) }}″{% endif %}
+            {% if plot.center_ra_deg is not none and plot.center_dec_deg is not none %}<br>Center: {{ plot.center_ra_deg | round(5) }}°, {{ plot.center_dec_deg | round(5) }}°{% endif -%}
+            {%- if plot.offset_from_center_arcsec is not none %} · {{ plot.offset_from_center_arcsec | round(2) }}″ from phase centre{% endif %}
+            {% if plot.fov_fraction is not none %}<br>{{ (plot.fov_fraction * 100) | round(1) }}% of FoV{% endif %}
           </td>
         </tr>
         {% endfor %}
-        {% endif %}
-        {% if input_cube_moment8_plot %}
-        <tr>
-          <th>Input spectral cube — Moment 8 (peak)</th>
-          <td>
-            <div class="plot-container" style="margin-top:0.5rem;">
-              <a href="{{ input_cube_moment8_plot.path }}" target="_blank" rel="noopener">
-                <img src="{{ input_cube_moment8_plot.data }}" alt="Input cube moment 8 preview" style="max-width:260px;">
-              </a>
-            </div>
-          </td>
-        </tr>
-        {% endif %}
       </table>
+      {% for plot in fits_model_plots %}
+      <div class="plot-container">
+        <div class="plot-title">Natural Extent — FoV Context{% if fits_model_plots|length > 1 %} ({{ loop.index }}){% endif %}</div>
+        <a href="{{ plot.path }}" target="_blank" rel="noopener">
+          <img src="{{ plot.data }}" alt="FITS model preview">
+        </a>
+      </div>
+      {% endfor %}
+      {% if input_cube_moment8_plot %}
+      <div class="plot-container">
+        <div class="plot-title">Input spectral cube — Moment 8 (peak)</div>
+        <a href="{{ input_cube_moment8_plot.path }}" target="_blank" rel="noopener">
+          <img src="{{ input_cube_moment8_plot.data }}" alt="Input cube moment 8 preview">
+        </a>
+      </div>
+      {% endif %}
       {% if sky_model_plot %}
       <div class="plot-container">
         <div class="plot-title">Full Sky Model</div>
