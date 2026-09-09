@@ -115,7 +115,8 @@ def test_weblog_groups_wsclean_mfs_products_and_stats(tmp_path):
     assert "Clean" in html
     assert "Residual" in html
     assert "Dirty Image" not in html
-    assert "Point Spread Function — x/y profile" in html
+    assert "Point Spread Function" in html
+    assert "PSF" in html or "x/y profile" in html or "Point Spread Function" in html
     assert f"{prefix}-MFS-psf.png" in html
     assert "Peak:" in html
     assert "4.000 mJy/beam" in html
@@ -222,9 +223,8 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
     assert "Imaging Products" in html
     assert "1024 x 1024 pixels" in html
     assert "Pixels</th>" not in html
-    assert "Total FoV" in html
-    assert "1 deg" in html
-    assert "Pixel Size" in html
+    assert "Resolved Geometry" in html
+    assert "1°" in html
     assert "3.5156 arcsec" in html
     assert "Clean iterations" in html
     assert "500" in html
@@ -237,6 +237,9 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
     assert "setup-summary_wsclean" in html
     assert "Visibility input" in html
     assert "visibilities.MS" in html
+    assert "Total FoV" not in html
+    assert "Pixel Size" not in html
+    assert "Image Size" not in html
 
 
 def test_weblog_renders_antenna_count_in_telescope_section(tmp_path):

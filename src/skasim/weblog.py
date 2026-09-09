@@ -146,6 +146,10 @@ def _find_science_products(manifest: RunManifest, work_dir: Path) -> list[dict]:
             "beam": _read_fits_beam(fpath)
             if key in ("model", "clean", "residual", "dirty", "psf")
             else None,
+            "peak": _read_fits_peak(fpath) if key == "psf" else None,
+            "pixel_scale_arcsec": _read_fits_pixel_scale_arcsec(fpath)
+            if key == "psf"
+            else None,
         }
 
     for product in products.values():
@@ -216,6 +220,34 @@ def _format_angle_deg(value_deg: float) -> str:
     if abs_value >= 1.0 / 60.0:
         return f"{value * 60.0:.3f} arcmin"
     return f"{value * 3600.0:.3f} arcsec"
+
+
+def _read_fits_peak(path: Path) -> float | None:
+    """Return peak value of a FITS image, or None on failure."""
+    if not path.exists():
+        return None
+    try:
+        with fits.open(path) as hdul:
+            data = np.asarray(hdul[0].data, dtype=float).squeeze()
+        finite = np.isfinite(data)
+        return float(data[finite].max()) if finite.any() else None
+    except Exception:
+        return None
+
+
+def _read_fits_pixel_scale_arcsec(path: Path) -> float | None:
+    """Return pixel scale in arcseconds from CDELT1/CD1_1, or None."""
+    if not path.exists():
+        return None
+    try:
+        with fits.open(path) as hdul:
+            header = hdul[0].header
+            cdelt = header.get("CDELT1") or header.get("CD1_1")
+        if cdelt is None:
+            return None
+        return abs(float(cdelt)) * 3600.0
+    except Exception:
+        return None
 
 
 def _format_float(value: Optional[float], digits: int = 3) -> Optional[str]:

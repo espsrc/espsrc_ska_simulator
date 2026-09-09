@@ -237,7 +237,9 @@ def test_pipeline_resolves_blocks_independently_and_records_weblog(tmp_path):
     assert "Theoretical Beam" in html
     assert "1000 MHz" in html
     assert "band centre" in html
-    assert "Pixels per Beam" in html
-    assert "Power-of-two Rounding" in html
-    assert "Legacy Fallback" in html
-    assert "Geometry Warnings" in html
+    assert "pixels/beam" in html
+    assert "Resolved Geometry" in html
+    assert "rounded to power of two" in html
+    assert "Legacy Fallback" not in html
+    assert "Power-of-two Rounding" not in html
+    assert "Geometry Warnings" not in html
