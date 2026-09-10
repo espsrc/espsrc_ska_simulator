@@ -182,7 +182,7 @@ def test_weblog_renders_fits_model_preview(tmp_path):
     )
     html = render_weblog(ctx.manifest, ctx.work_dir)
 
-    assert "FITS Model" in html
+    assert "Footprint" in html
     assert "continuum_i_alpha" in html
 
 
@@ -208,8 +208,8 @@ def test_weblog_renders_existing_fits_model_output(tmp_path):
 
     html = render_weblog(manifest, tmp_path)
 
-    assert "FITS Model" in html
-    assert "continuum_i_alpha" in html
+    assert "Footprint" in html
+    assert "FITS model preview" in html
 
 
 def test_weblog_renders_casa_taylor_term_preview(tmp_path, monkeypatch):
@@ -252,7 +252,7 @@ def test_weblog_renders_casa_taylor_term_preview(tmp_path, monkeypatch):
     html = render_weblog(ctx.manifest, ctx.work_dir)
 
     assert calls[0][1] == tt0.resolve()
-    assert "FITS Model" in html
+    assert "Footprint" in html
     assert "casa_taylor_terms" in html
     assert (ctx.work_dir / "run_fits_model.png").exists()
 
@@ -1013,7 +1013,7 @@ def test_inject_static_stokes_i_generates_per_channel_fits(tmp_path, monkeypatch
 
 
 def test_weblog_renders_static_stokes_map_preview(tmp_path, monkeypatch):
-    """The weblog shows a preview for a static_stokes_maps model entry."""
+    """Static Stokes entries use the two-panel FITS preview generator."""
     image_path = _write_static_stokes_image(tmp_path, shape=(64, 64))
     cfg = SimConfig(
         output_dir=str(tmp_path / "run"),
@@ -1031,18 +1031,16 @@ def test_weblog_renders_static_stokes_map_preview(tmp_path, monkeypatch):
         preview_calls.append((args, kwargs))
 
     monkeypatch.setattr(
-        "skasim.loaders.image_models.previews.write_fits_preview",
+        "skasim.loaders.image_models.previews._write_image_model_two_panel_preview",
         fake_preview,
     )
 
-    from skasim.loaders.image_models.previews import (
-        write_image_model_previews as _previews,
-    )
-
-    _previews(ctx, 1.0 * u.deg)
+    write_image_model_previews(ctx, 1.0 * u.deg)
 
     assert len(preview_calls) == 1
     assert preview_calls[0][0][0] == image_path
+    assert preview_calls[0][0][2] == 1.0 * u.deg
+    assert ctx.manifest.outputs[-1].role == "fits_model"
 
 
 # ---------------------------------------------------------------------------

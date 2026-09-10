@@ -115,7 +115,9 @@ def test_weblog_groups_wsclean_mfs_products_and_stats(tmp_path):
     assert "Clean" in html
     assert "Residual" in html
     assert "Dirty Image" not in html
-    assert "View PSF" in html
+    assert "Point Spread Function" in html
+    assert "PSF" in html or "x/y profile" in html or "Point Spread Function" in html
+    assert f"{prefix}-MFS-psf.png" in html
     assert "Peak:" in html
     assert "4.000 mJy/beam" in html
     assert "RMS:" in html
@@ -221,9 +223,8 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
     assert "Imaging Products" in html
     assert "1024 x 1024 pixels" in html
     assert "Pixels</th>" not in html
-    assert "Total FoV" in html
-    assert "1 deg" in html
-    assert "Pixel Size" in html
+    assert "Resolved Geometry" in html
+    assert "1°" in html
     assert "3.5156 arcsec" in html
     assert "Clean iterations" in html
     assert "500" in html
@@ -236,6 +237,9 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
     assert "setup-summary_wsclean" in html
     assert "Visibility input" in html
     assert "visibilities.MS" in html
+    assert "Total FoV" not in html
+    assert "Pixel Size" not in html
+    assert "Image Size" not in html
 
 
 def test_weblog_renders_antenna_count_in_telescope_section(tmp_path):
@@ -425,3 +429,141 @@ def test_sky_model_summary_weblog_renders_typed_labels(tmp_path):
 
     assert "Catalog" in html
     assert "Taylor terms" in html
+
+
+def test_phase_centre_warning_flags_drift_beyond_tolerance(tmp_path):
+    """A phase centre drifting >10\" from the sky model's own centre is flagged."""
+    from skasim.weblog import _report_warnings
+
+    manifest = RunManifest(
+        run_id="phase-drift",
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
+        config=SimConfig(),
+    )
+    manifest.add_milestone(
+        "observation_configured",
+        "completed",
+        details={
+            "phase_center_ra_deg": 150.0,
+            "phase_center_dec_deg": 2.0,
+            "sky_model_center_ra_deg": 150.0,
+            # 60 arcsec of dec drift, well beyond the 10" tolerance
+            "sky_model_center_dec_deg": 2.0 + 60.0 / 3600.0,
+        },
+    )
+
+    warnings = _report_warnings(manifest)
+
+    assert any("Phase centre" in w and "60.0" in w for w in warnings)
+    html = render_weblog(manifest, tmp_path)
+    assert "Phase centre is 60.0" in html
+
+
+def test_phase_centre_warning_absent_within_tolerance(tmp_path):
+    """A small (<10\") phase-centre drift is not flagged as a warning."""
+    from skasim.weblog import _report_warnings
+
+    manifest = RunManifest(
+        run_id="phase-ok",
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
+        config=SimConfig(),
+    )
+    manifest.add_milestone(
+        "observation_configured",
+        "completed",
+        details={
+            "phase_center_ra_deg": 150.0,
+            "phase_center_dec_deg": 2.0,
+            "sky_model_center_ra_deg": 150.0,
+            "sky_model_center_dec_deg": 2.0 + 1.0 / 3600.0,
+        },
+    )
+
+    assert not any("Phase centre" in w for w in _report_warnings(manifest))
+
+
+def test_sky_model_summary_includes_flux_range_and_polarization():
+    """Flux range and polarization presence surface from sky_model_loaded details."""
+    from skasim.weblog import _sky_model_summary
+
+    config = SimConfig(catalog="GLEAM")
+    manifest = RunManifest(
+        run_id="flux-summary",
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        config=config,
+    )
+    manifest.add_milestone(
+        "sky_model_loaded",
+        "completed",
+        details={
+            "format": "GLEAM",
+            "n_sources": 3,
+            "flux_min_jy": 0.002,
+            "flux_max_jy": 4.5,
+            "has_polarization": True,
+        },
+    )
+
+    summary = _sky_model_summary(manifest)
+
+    assert summary[0]["flux_range"] == "2.000 mJy – 4.500 Jy"
+    assert summary[0]["polarization_label"] == "polarized (Q/U/V)"
+
+
+def test_imaging_products_render_clean_before_model_and_residual(tmp_path):
+    """Product figures render in Clean, Model, Residual order."""
+    manifest = RunManifest(
+        run_id="product-order",
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
+        config=SimConfig(),
+    )
+    prefix = "product-order_wsclean"
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+        b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    for role in ("model", "image", "residual"):
+        stem = f"{prefix}-MFS-{role}"
+        fits_path = tmp_path / f"{stem}.fits"
+        png_path = tmp_path / f"{stem}.png"
+        fits.writeto(fits_path, np.ones((2, 2)), overwrite=True)
+        png_path.write_bytes(png_bytes)
+        manifest.add_output(
+            "image_product",
+            fits_path.name,
+            image_product_id=prefix,
+            imager="wsclean",
+            role=role,
+        )
+        manifest.add_output(
+            "image_product",
+            png_path.name,
+            image_product_id=prefix,
+            imager="wsclean",
+            role=f"{role}_preview",
+        )
+
+    html = render_weblog(manifest, tmp_path)
+
+    assert (
+        html.index("<figcaption>Clean</figcaption>")
+        < html.index("<figcaption>Model</figcaption>")
+        < html.index("<figcaption>Residual</figcaption>")
+    )
+
+
+def test_summary_card_reports_status_class_imagers_and_no_issues(tmp_path):
+    """The top summary card uses a real status badge class and lists imagers used."""
+    manifest = RunManifest(
+        run_id="summary-card",
+        started_at=datetime(2026, 5, 22, 17, 30, 0, tzinfo=timezone.utc),
+        config=SimConfig(imaging=[ImgConfig(imager="wsclean")]),
+    )
+    manifest.mark_completed()
+
+    html = render_weblog(manifest, tmp_path)
+
+    assert 'class="badge success"' in html
+    assert "WSClean" in html
+    assert "No issues" in html
