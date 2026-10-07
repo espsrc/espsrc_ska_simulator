@@ -583,6 +583,8 @@ def build_observation(
 
     # best observation time (culmination)
     obs_time = source_ref_get_best_observation_time(center, telescope)
+    start_time_utc = obs_time.strftime("%Y-%m-%d %H:%M:%S")
+    logger.info(f"Observation start: {start_time_utc} UTC")
     n_timesteps = max(1, int(seconds / 7.997))
 
     observation = observation_module.Observation(
@@ -607,6 +609,7 @@ def build_observation(
             "n_channels": n_channels,
             "channel_width_mhz": df_mhz,
             "observation_time_s": seconds,
+            "start_time_utc": start_time_utc,
             "n_timesteps": n_timesteps,
             "phase_center_ra_deg": center.ra.to(u.deg).value,
             "phase_center_dec_deg": center.dec.to(u.deg).value,
