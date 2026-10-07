@@ -231,6 +231,9 @@
         <tr><th>Channels</th><td>{{ observation_summary.n_channels }} x {{ observation_summary.channel_bandwidth_mhz }} MHz</td></tr>
         <tr><th>Total Bandwidth</th><td>{{ observation_summary.total_bandwidth_mhz }} MHz</td></tr>
         <tr><th>Obs Time</th><td>{{ observation_summary.observation_time_s }} s</td></tr>
+        {% if observation_summary.start_time_utc %}
+        <tr><th>Observation Start</th><td>{{ observation_summary.start_time_utc }} UTC</td></tr>
+        {% endif %}
         {% if observation_summary.n_timesteps %}
         <tr><th>Timesteps</th><td>{{ observation_summary.n_timesteps }}</td></tr>
         {% endif %}

@@ -1,12 +1,45 @@
 """tests/test_sky.py for Source and SkyModel classes"""
 
+from types import SimpleNamespace
+
 import astropy.units as u
 import numpy as np
 import pytest
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import AltAz, EarthLocation, SkyCoord
 from astropy.table import Table
+from astropy.time import Time
 
 from skasim.sky import SkyModel, Source
+
+
+@pytest.mark.parametrize("ra_deg", [32.4, 120.0, 220.0])
+def test_best_observation_time_finds_culmination_across_utc_day(ra_deg):
+    """Find the elevation peak before, within, and after the old search window."""
+    telescope = SimpleNamespace(
+        centre_latitude=-30.713, centre_longitude=21.4439, centre_altitude=1050.0
+    )
+    location = EarthLocation(
+        lat=telescope.centre_latitude * u.deg,
+        lon=telescope.centre_longitude * u.deg,
+        height=telescope.centre_altitude * u.m,
+    )
+    source = Source(ra=ra_deg, dec=-10.15, I=1.0)
+    midnight = Time("2026-10-07 00:00:00", scale="utc")
+
+    best_time = source.get_best_observation_time(telescope, date="2026-10-07")
+
+    assert best_time.scale == "utc"
+    assert 0 <= (best_time - midnight).to_value(u.hour) < 24
+    sample_times = best_time + np.array([-1, 0, 1]) * u.minute
+    altitudes = (
+        source.coords()
+        .transform_to(AltAz(obstime=sample_times, location=location))
+        .alt.to_value(u.deg)
+    )
+    # Upper culmination is near 90 - abs(latitude - declination) = 69.4 deg.
+    assert altitudes[1] > 69.0
+    assert altitudes[1] >= max(altitudes[0], altitudes[2])
+
 
 # -----------------------------------------------------------------------------
 # Source creation

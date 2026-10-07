@@ -368,7 +368,7 @@ class Source:
 
     def get_best_observation_time(self, telescope, date=None):
         """
-        Returns the local time at which an object with a given RA/Dec culminates (best observation time).
+        Return the UTC time of maximum source elevation on the requested date.
 
         Parameters:
         - ra_hours: Right Ascension in hours (float)
@@ -395,11 +395,11 @@ class Source:
         iers_conf.auto_download = False
         iers_conf.auto_max_age = None
 
-        midnight = Time(f"{date} 00:00:00") + 12 * u.hour  # mediodía UTC
+        midnight = Time(f"{date} 00:00:00", scale="utc")
         best_time = None
         max_alt = -90
 
-        for minutes in range(-360, 360):
+        for minutes in range(24 * 60):
             current_time = midnight + minutes * u.minute
             altaz = coord.transform_to(AltAz(obstime=current_time, location=location))
             if altaz.alt.deg > max_alt:

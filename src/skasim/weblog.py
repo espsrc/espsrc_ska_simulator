@@ -279,6 +279,7 @@ def _observation_summary(manifest: RunManifest) -> dict:
         "channel_bandwidth_mhz": _format_float(channel_width),
         "total_bandwidth_mhz": _format_float(total_bandwidth),
         "observation_time_s": _format_float(obs.observation_time_s),
+        "start_time_utc": details.get("start_time_utc"),
         "integration_time_s": (
             _format_float(integration_time) if integration_time is not None else None
         ),

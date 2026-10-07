@@ -153,6 +153,8 @@ def test_build_observation_centres_the_channel_grid_and_records_band_edges(
     assert captured["start_frequency_hz"] == pytest.approx(856.0e6)
     assert milestone.details["min_frequency_mhz"] == pytest.approx(856.0)
     assert milestone.details["max_frequency_mhz"] == pytest.approx(1712.0)
+    assert captured["start_date_and_time"] == datetime(2026, 1, 1, tzinfo=timezone.utc)
+    assert milestone.details["start_time_utc"] == "2026-01-01 00:00:00"
     # no sky_center passed: it defaults to the effective centre, so no drift.
     assert milestone.details["sky_model_center_ra_deg"] == pytest.approx(0.0)
 

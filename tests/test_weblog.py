@@ -194,6 +194,7 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
             "min_frequency_mhz": 856.0,
             "max_frequency_mhz": 1712.0,
             "n_timesteps": 7,
+            "start_time_utc": "2026-10-07 23:39:00",
             "phase_center_ra_deg": 150.0,
             "phase_center_dec_deg": 2.0,
         },
@@ -210,6 +211,8 @@ def test_weblog_renders_observation_imaging_and_cleaning_parameters(tmp_path):
     html = render_weblog(manifest, tmp_path)
 
     assert "Observation & Telescope" in html
+    assert "Observation Start" in html
+    assert "2026-10-07 23:39:00 UTC" in html
     assert "Frequency Setup" not in html
     assert "Frequency Range" in html
     assert "856-1712 MHz" in html
