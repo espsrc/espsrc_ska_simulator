@@ -4,6 +4,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import MagicMock
 
 import astropy.units as u
 import numpy as np
@@ -20,6 +21,7 @@ from skasim.config import (
 )
 from skasim.loaders.image_models import (
     _resample_spectral_axis_to_ms_channels,
+    _set_crval4_via_script,
     image_model_center,
     inject_image_models,
     merge_model_data_into_data,
@@ -33,6 +35,11 @@ from skasim.loaders.image_models import (
     validate_spectral_cube,
     validate_static_stokes_maps,
     write_image_model_previews,
+)
+from skasim.loaders.image_models.casa_interop import (
+    _spectral_axis_number,
+    run_casa_script,
+    run_casa_set_spectral_coordinate,
 )
 from skasim.loaders.wsclean_predict import (
     inject_static_stokes_i_with_wsclean_predict,
@@ -496,7 +503,7 @@ def test_casa_taylor_terms_validate_and_prepare_existing_images(tmp_path, monkey
 
         def getkeyword(self, name):
             if name == "coords":
-                return {"spectral0": {}}
+                return {"spectral0": {}, "pixelmap0": [3]}
             return {}
 
     monkeypatch.setattr(
@@ -576,7 +583,7 @@ def test_inject_image_models_runs_casa_taylor_terms(tmp_path, monkeypatch):
 
         def getkeyword(self, name):
             if name == "coords":
-                return {"spectral0": {}}
+                return {"spectral0": {}, "pixelmap0": [3]}
             return {}
 
     monkeypatch.setattr(
@@ -1375,3 +1382,208 @@ def test_resample_spectral_axis_beats_naive_interp_for_offcentre_line():
         assert total_out > 10 * total_interp, (
             f"resampler {total_out:.3f} not better than interp {total_interp:.3f}"
         )
+
+
+# CASA pixel maps use coordinate-system order, not NumPy array order.
+_COORDS_FREQ_THEN_STOKES = {
+    "direction0": {},
+    "pixelmap0": [0, 1],
+    "stokes1": {"stokes": ["I"]},
+    "pixelmap1": [3],
+    "spectral2": {},
+    "pixelmap2": [2],
+}
+_COORDS_STOKES_THEN_FREQ = {
+    "direction0": {},
+    "pixelmap0": [0, 1],
+    "stokes1": {"stokes": ["I"]},
+    "pixelmap1": [2],
+    "spectral2": {},
+    "pixelmap2": [3],
+}
+
+
+def _fake_casacore_with_coords(coords):
+    class FakeTable:
+        def __init__(self, path, readonly=True, ack=False):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def keywordnames(self):
+            return [] if coords is None else ["coords"]
+
+        def getkeyword(self, name):
+            assert name == "coords"
+            return coords
+
+    return FakeTable
+
+
+@pytest.mark.parametrize(
+    "coords, expected_axis",
+    [(_COORDS_FREQ_THEN_STOKES, 3), (_COORDS_STOKES_THEN_FREQ, 4)],
+)
+@pytest.mark.parametrize("in_process", [False, True])
+def test_set_spectral_coordinate_preserves_stokes_axis(
+    monkeypatch, tmp_path, coords, expected_axis, in_process
+):
+    """Single-channel Taylor images must update frequency without changing Stokes."""
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.require_casacore",
+        lambda: _fake_casacore_with_coords(coords),
+    )
+    image_path = tmp_path / "model.image"
+    if in_process:
+        casatasks = ModuleType("casatasks")
+        casatasks.imhead = MagicMock()
+        monkeypatch.setitem(sys.modules, "casatasks", casatasks)
+
+        _set_crval4_via_script(tmp_path, [image_path], 1.31e9)
+
+        casatasks.imhead.assert_called_once_with(
+            imagename=str(image_path),
+            mode="put",
+            hdkey=f"crval{expected_axis}",
+            hdvalue="1310000000.0Hz",
+        )
+    else:
+        monkeypatch.setattr(
+            "skasim.loaders.image_models.casa_interop.require_casa_executable",
+            lambda: Path("casa"),
+        )
+        scripts = []
+        monkeypatch.setattr(
+            "skasim.loaders.image_models.casa_interop.run_casa_script",
+            lambda executable, script_path, lines: scripts.append(lines),
+        )
+
+        run_casa_set_spectral_coordinate(tmp_path, [image_path], 1.31e9)
+
+        imhead_lines = [line for line in scripts[0] if line.startswith("imhead(")]
+        assert imhead_lines == [
+            f"imhead(imagename={str(image_path)!r}, mode='put', "
+            f"hdkey='crval{expected_axis}', hdvalue='1310000000.0Hz')"
+        ]
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_run_casa_script_raises_on_severe_log_lines(monkeypatch, tmp_path, returncode):
+    """CASA ft can report failure but exit zero with MODEL_DATA left at unity."""
+    script_path = tmp_path / "skasim_casa_ft.py"
+
+    def fake_run(command, **kwargs):
+        kwargs["stdout"].write(
+            "2026-08-19 09:42:43\tINFO\tft::casa\tTask ft complete.\n"
+            "2026-08-19 09:42:43\tSEVERE\tft::imager::ft()\tException: Failed AlwaysAssert nStokesOut\n"
+        )
+        kwargs["stdout"].flush()
+        return MagicMock(returncode=returncode)
+
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.subprocess.run", fake_run
+    )
+    with pytest.raises(RuntimeError, match="nStokesOut") as error:
+        run_casa_script(Path("casa"), script_path, ["ft()"])
+    assert str(script_path) in str(error.value)
+    assert "SEVERE" in str(error.value)
+
+
+def test_run_casa_script_accepts_clean_log(monkeypatch, tmp_path):
+    def fake_run(command, **kwargs):
+        kwargs["stdout"].write(
+            "2026-06-24 15:23:10\tINFO\tft::casa\tTask ft complete.\n"
+        )
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.subprocess.run", fake_run
+    )
+    run_casa_script(Path("casa"), tmp_path / "skasim_casa_ft.py", ["ft()"])
+
+
+@pytest.mark.parametrize(
+    "coords, expected",
+    [
+        (_COORDS_FREQ_THEN_STOKES, 3),
+        (_COORDS_STOKES_THEN_FREQ, 4),
+        ({"direction0": {}, "pixelmap0": [0, 1]}, None),
+        (None, None),
+        ({"spectral2": {}, "pixelmap2": [-1]}, None),
+        ({"spectral2": {}}, None),
+        ({"spectral2": {}, "pixelmap2": [2, 3]}, None),
+    ],
+)
+def test_spectral_axis_number_reads_coordinate_mapping(
+    monkeypatch, tmp_path, coords, expected
+):
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.require_casacore",
+        lambda: _fake_casacore_with_coords(coords),
+    )
+    assert _spectral_axis_number(tmp_path / "model.image") == expected
+
+
+def test_set_spectral_coordinate_skips_2d_image(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.require_casacore",
+        lambda: _fake_casacore_with_coords({"direction0": {}, "pixelmap0": [0, 1]}),
+    )
+    casatasks = ModuleType("casatasks")
+    casatasks.imhead = MagicMock()
+    monkeypatch.setitem(sys.modules, "casatasks", casatasks)
+    batch = MagicMock()
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.run_casa_set_spectral_coordinate",
+        batch,
+    )
+
+    _set_crval4_via_script(tmp_path, [tmp_path / "model.image"], 1.31e9)
+
+    casatasks.imhead.assert_not_called()
+    batch.assert_not_called()
+
+
+def test_set_spectral_coordinate_fallback_handles_mixed_axes(monkeypatch, tmp_path):
+    """Batch fallback selects an axis per image and skips spectrally flat inputs."""
+    image_paths = [
+        tmp_path / name for name in ("freq3.image", "freq4.image", "flat.image")
+    ]
+    coords_by_path = dict(
+        zip(image_paths, [_COORDS_FREQ_THEN_STOKES, _COORDS_STOKES_THEN_FREQ, None])
+    )
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.require_casacore",
+        lambda: (
+            lambda path, **kwargs: _fake_casacore_with_coords(
+                coords_by_path[Path(path)]
+            )(path, **kwargs)
+        ),
+    )
+    casatasks = ModuleType("casatasks")
+    casatasks.imhead = MagicMock(
+        side_effect=RuntimeError("in-process CASA unavailable")
+    )
+    monkeypatch.setitem(sys.modules, "casatasks", casatasks)
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.require_casa_executable",
+        lambda: Path("casa"),
+    )
+    scripts = []
+    monkeypatch.setattr(
+        "skasim.loaders.image_models.casa_interop.run_casa_script",
+        lambda executable, script_path, lines: scripts.append(lines),
+    )
+
+    _set_crval4_via_script(tmp_path, image_paths, 1.31e9)
+
+    imhead_lines = [line for line in scripts[0] if line.startswith("imhead(")]
+    assert len(imhead_lines) == 2
+    for line, path, axis in zip(imhead_lines, image_paths, (3, 4)):
+        assert f"imagename={str(path)!r}" in line
+        assert f"hdkey='crval{axis}'" in line
+        assert "hdvalue='1310000000.0Hz'" in line

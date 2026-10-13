@@ -7,6 +7,7 @@ import subprocess
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from astropy.coordinates import SkyCoord
@@ -419,7 +420,7 @@ def prepare_casa_taylor_terms(
     The reference frequency is adjusted to the observation band centre.
     For nterms≥2, tt0 pixel data is scaled:  tt0' = tt0 · (ν_obs / ν_old)^α
     where α = mean(tt1) / mean(tt0).  tt1 pixel data is unchanged.
-    For nterms=1, only CRVAL4 is updated.
+    For nterms=1, only the spectral CRVAL is updated.
     """
     new_ref_hz = ctx.config.observation.frequency_mhz * 1e6
     old_ref_hz = entry.reference_frequency_hz
@@ -478,7 +479,7 @@ def prepare_casa_taylor_terms(
             alpha_map=alpha_map,
         )
     else:
-        # nterms=1: spectrally flat, only set CRVAL4
+        # nterms=1: spectrally flat, only set the spectral CRVAL
         adjust_spectral_reference(
             model_paths[0],
             old_ref_hz,
@@ -564,7 +565,7 @@ def prepare_continuum_i_alpha_for_casa(
         )
 
     # Pixel data was already scaled; we just use adjust_spectral_reference
-    # with alpha_map=None to log the new frequency and enforce CRVAL4.
+    # with alpha_map=None to log the new frequency and enforce the spectral CRVAL.
     alpha_mean = float(np.mean(alpha_data))
     adjust_spectral_reference(
         tt0_image,
@@ -653,7 +654,7 @@ def adjust_spectral_reference(
 ) -> float:
     """Adjust the spectral reference of a CASA image to the observation band centre.
 
-    For nterms=1 (alpha_map is None), set CRVAL4 to new_ref_hz only — the model
+    For nterms=1 (alpha_map is None), set the spectral CRVAL to new_ref_hz only — the model
     is spectrally flat and no pixel-data correction is needed.
 
     For nterms≥2 (alpha_map provided), correct the pixel data element-wise following
@@ -661,7 +662,7 @@ def adjust_spectral_reference(
 
         tt0'(x,y) = tt0(x,y) · (ν_new / ν_old) ^ α(x,y)
 
-    where α(x,y) = tt1(x,y) / tt0(x,y)   for each pixel.  CRVAL4 is also set.
+    where α(x,y) = tt1(x,y) / tt0(x,y)   for each pixel.  The spectral CRVAL is also set.
 
     Returns the adjusted reference frequency in Hz (always new_ref_hz).
     """
@@ -680,7 +681,7 @@ def adjust_spectral_reference(
         )
     else:
         logger.info(
-            f"Spectrally flat image {image_path}: updating CRVAL4 = {new_ref_hz:.3e}Hz "
+            f"Spectrally flat image {image_path}: updating spectral CRVAL = {new_ref_hz:.3e}Hz "
             "(no pixel-data correction)"
         )
 
@@ -688,8 +689,13 @@ def adjust_spectral_reference(
     return new_ref_hz
 
 
-def _image_has_spectral_axis(image_path: Path) -> bool:
-    """Return True if the CASA image has a frequency/spectral axis."""
+def _spectral_axis_number(image_path: Path) -> Optional[int]:
+    """Return the 1-based spectral pixel axis for imhead's crvalN, or None.
+
+    CASA images usually have RA/Dec/Stokes/Frequency axes, while FITS-derived
+    images can have RA/Dec/Frequency/Stokes axes. Read the coordinate mapping
+    rather than assuming frequency is on axis 4.
+    """
     try:
         table = require_casacore()
     except Exception as exc:
@@ -698,19 +704,17 @@ def _image_has_spectral_axis(image_path: Path) -> bool:
         ) from exc
 
     with table(str(image_path), readonly=True, ack=False) as tbl:
-        # check primary coordinate system dictionary for a 'spectralN' key
-        if "coords" in tbl.keywordnames():
-            coords = tbl.getkeyword("coords")
-            if any(key.startswith("spectral") for key in coords.keys()):
-                return True
-
-        # fallback to map column dimensional names
-        if "map" in tbl.colnames():
-            map_kws = tbl.getcolkeywords("map")
-            dim_names = [str(n).lower() for n in map_kws.get("dimnames", [])]
-            return any("freq" in name for name in dim_names)
-
-    return False
+        if "coords" not in tbl.keywordnames():
+            return None
+        coords = tbl.getkeyword("coords")
+    for key in coords:
+        if not key.startswith("spectral"):
+            continue
+        # Coordinate N maps onto pixelmapN; -1 denotes a removed pixel axis.
+        pixel_axes = list(coords.get(f"pixelmap{key[len('spectral') :]}", []))
+        if len(pixel_axes) == 1 and int(pixel_axes[0]) >= 0:
+            return int(pixel_axes[0]) + 1
+    return None
 
 
 def _set_crval4_via_script(
@@ -718,28 +722,29 @@ def _set_crval4_via_script(
     image_paths: list[Path],
     frequency_hz: float,
 ) -> None:
-    """Set CRVAL4 on CASA images — subprocess fallback for environments without casatasks."""
+    """Set the spectral CRVAL on CASA images, with a subprocess fallback."""
     # 2D images have no spectral axis; CASA ft will treat them as spectrally flat
-    # with the reference frequency passed as reffreq, so CRVAL4 cannot (and need not) be set.
-    image_paths = [p for p in image_paths if _image_has_spectral_axis(p)]
-    if not image_paths:
+    # with reffreq carrying the reference frequency, so no spectral CRVAL is needed.
+    axes = [(path, _spectral_axis_number(path)) for path in image_paths]
+    axes = [(path, axis) for path, axis in axes if axis is not None]
+    if not axes:
         logger.warning(
-            "Spectrally flat 2D image(s): skipping CRVAL4 update; ft reffreq carries the reference frequency"
+            "Spectrally flat 2D image(s): skipping spectral CRVAL update; ft reffreq carries the reference frequency"
         )
         return
 
     try:
         from casatasks import imhead
 
-        for image_path in image_paths:
+        for image_path, axis in axes:
             imhead(
                 imagename=str(image_path),
                 mode="put",
-                hdkey="crval4",
+                hdkey=f"crval{axis}",
                 hdvalue=f"{frequency_hz}Hz",
             )
         logger.info(
-            f"Set CRVAL4 in-process for {len(image_paths)} image(s) using casatasks.imhead"
+            f"Set spectral CRVAL in-process for {len(axes)} image(s) using casatasks.imhead"
         )
         return
     except Exception as exc:
@@ -747,9 +752,9 @@ def _set_crval4_via_script(
         # fall through to batch mode
 
     logger.info(
-        f"Set CRVAL4 falling back to CASA batch mode for {len(image_paths)} image(s)"
+        f"Set spectral CRVAL falling back to CASA batch mode for {len(axes)} image(s)"
     )
-    run_casa_set_spectral_coordinate(work_dir, image_paths, frequency_hz)
+    run_casa_set_spectral_coordinate(work_dir, [path for path, _ in axes], frequency_hz)
 
 
 def require_casa_executable() -> Path:
@@ -836,9 +841,13 @@ def run_casa_set_spectral_coordinate(
         "    pass",
     ]
     for image_path in image_paths:
+        axis = _spectral_axis_number(image_path)
+        if axis is None:
+            continue
         lines.append(
-            "imhead(imagename={!r}, mode='put', hdkey='crval4', hdvalue={!r})".format(
+            "imhead(imagename={!r}, mode='put', hdkey={!r}, hdvalue={!r})".format(
                 str(image_path),
+                f"crval{axis}",
                 hdvalue,
             )
         )
@@ -933,6 +942,19 @@ def run_casa_script(
                 f"CASA batch command failed with exit code {result.returncode}: "
                 f"{script_path}\n{tail}"
             )
+
+    # CASA tasks can log SEVERE failures yet exit zero; failed ft can leave
+    # MODEL_DATA at unity (a spurious 1 Jy point source at the phase centre).
+    severe = [
+        line
+        for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if "\tSEVERE\t" in line
+    ]
+    if severe:
+        raise RuntimeError(
+            f"CASA reported SEVERE errors in {script_path} (see {log_path}):\n"
+            + "\n".join(severe[-20:])
+        )
 
 
 def merge_model_data_into_data(visibility_path: Path) -> None:
